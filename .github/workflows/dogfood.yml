@@ -128,7 +128,7 @@ jobs:
         # be pinned to a full-length commit SHA" policy refuses to
         # run. Bump this back to a release tag once a v1.0.2+ (or
         # whatever cuts after) is published.
-        uses: dmartinochoa/pipeline-check@da927585a2c7898a85aba95a80bfc52221e1c6cc  # post-v1.0.1 SHA-pin fix
+        uses: dmartinochoa/pipeline-check@039a32c4484099c0a9ef136827b93ae736c3e654  # post-v1.0.1 SHA-pin fix
         with:
           pipeline: github
           path: .github/workflows
