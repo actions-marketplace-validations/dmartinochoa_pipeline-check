@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=82.0.1", "wheel"]
+requires = ["setuptools>=83.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -36,28 +36,28 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "jsonschema>=4.0",
-    "mypy>=2.1.0",
-    "pytest>=7.4.0",
+    "mypy>=2.2.0",
+    "pytest>=9.1.1",
     "pytest-cov>=4.1.0",
-    "ruff>=0.15.13",
+    "ruff>=0.15.21",
     "types-PyYAML>=6.0",
-    "typing-extensions>=4.4.0",
+    "typing-extensions>=4.16.0",
 ]
 # Opt-in AI augmentation (``--ai-explain CHECK-ID``). Each provider
 # is its own extra so the default install carries no LLM SDKs.
 # ``ai`` is a meta-extra that pulls in both hosted-provider SDKs at
 # once for users who don't want to think about it.
-ai-anthropic = ["anthropic>=0.102.0"]
-ai-openai = ["openai>=2.37.0"]
+ai-anthropic = ["anthropic>=0.116.0"]
+ai-openai = ["openai>=2.45.0"]
 ai = [
-    "anthropic>=0.102.0",
-    "openai>=2.37.0",
+    "anthropic>=0.116.0",
+    "openai>=2.45.0",
 ]
 # Opt-in MCP (Model Context Protocol) server (``--serve``). Lets
 # MCP-aware AI clients drive scans and query the rule catalog.
 # The default install carries no MCP SDK so the AWS-Lambda /
 # minimal-install paths stay slim.
-mcp = ["mcp>=1.27.1"]
+mcp = ["mcp>=1.28.1"]
 # Opt-in Language Server Protocol server (``python -m
 # pipeline_check.lsp``). Powers the Pipeline-Check VS Code
 # extension and any other LSP-aware editor. The default install
@@ -65,7 +65,7 @@ mcp = ["mcp>=1.27.1"]
 # stay slim. Floors match the versions the extension is built
 # against; older pygls/lsprotocol releases break the server.
 lsp = [
-    "pygls>=2.1.0",
+    "pygls>=2.1.1",
     "lsprotocol>=2025.0.0",
 ]
 
