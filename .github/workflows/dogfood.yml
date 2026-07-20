@@ -37,7 +37,7 @@ jobs:
       security-events: write
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           # Eat our own dogfood: GHA-002 covers checkout steps that
           # leave the GITHUB_TOKEN persisted in the git config. The
@@ -45,7 +45,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.12"
           cache: "pip"
@@ -77,7 +77,7 @@ jobs:
 
       - name: Upload SARIF to GitHub code scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@9e0d7b8d25671d64c341c19c0152d693099fb5ba  # v4.35.5
+        uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a  # v4.37.1
         with:
           sarif_file: pipeline-check.sarif
           category: pipeline-check-dogfood
@@ -115,7 +115,7 @@ jobs:
       security-events: write
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           persist-credentials: false
 
@@ -128,7 +128,7 @@ jobs:
         # be pinned to a full-length commit SHA" policy refuses to
         # run. Bump this back to a release tag once a v1.0.2+ (or
         # whatever cuts after) is published.
-        uses: dmartinochoa/pipeline-check@da927585a2c7898a85aba95a80bfc52221e1c6cc  # post-v1.0.1 SHA-pin fix
+        uses: dmartinochoa/pipeline-check@3727f4b8aa426ade52fb7976bc9a153a1489432e  # post-v1.0.1 SHA-pin fix
         with:
           pipeline: github
           path: .github/workflows
@@ -137,7 +137,7 @@ jobs:
 
       - name: Upload SARIF to GitHub code scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@9e0d7b8d25671d64c341c19c0152d693099fb5ba  # v4.35.5
+        uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a  # v4.37.1
         with:
           sarif_file: pipeline-check.sarif
           category: pipeline-check-dogfood-published
