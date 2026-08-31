@@ -29,6 +29,29 @@ RULE = Rule(
         "job require it. Without this gate, any push to the triggering "
         "branch deploys immediately with no human review."
     ),
+    exploit_example=(
+        "# Vulnerable: a deploy job with no approval gate.\n"
+        "workflows:\n"
+        "  release:\n"
+        "    jobs:\n"
+        "      - deploy:\n"
+        "          context: prod\n"
+        "\n"
+        "# Attack: nothing precedes `deploy` in the workflow, so any\n"
+        "# push to the triggering branch rolls it out immediately, no\n"
+        "# human clicks Approve in the CircleCI UI. A self-merged change\n"
+        "# ships to production unreviewed.\n"
+        "\n"
+        "# Safe: insert a type: approval job and require it.\n"
+        "workflows:\n"
+        "  release:\n"
+        "    jobs:\n"
+        "      - hold:\n"
+        "          type: approval\n"
+        "      - deploy:\n"
+        "          context: prod\n"
+        "          requires: [hold]"
+    ),
 )
 
 
@@ -62,7 +85,9 @@ def check(path: str, doc: dict[str, Any]) -> Finding:
         for _, other_name, other_cfg in iter_workflow_jobs(doc):
             if other_cfg.get("type") == "approval":
                 approval_jobs.add(other_name)
-        if any(req in approval_jobs for req in requires):
+        if any(
+            isinstance(req, str) and req in approval_jobs for req in requires
+        ):
             continue
         ungated.append(f"{wf_name}/{job_name}")
         # Anchor on the workflow's job entry, that's where the

@@ -23,6 +23,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import os
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -68,9 +69,11 @@ def _allowed_scan_roots() -> list[Path]:
 
 
 # Each provider's path-flag name. ``None`` means the provider takes
-# no on-disk path (live AWS scans the account directly via boto3).
+# no on-disk path (live AWS scans the account directly via boto3;
+# scm fetches the repo over the wire via ``scm_platform`` + ``scm_repo``).
 # Keep aligned with ``cli.py``'s flag set; if a new provider lands,
-# add it here too.
+# add it here too. ``tests/test_mcp_server.py`` asserts parity with the
+# rule registry so drift fails CI on the next provider add.
 _PROVIDER_PATH_KW: dict[str, str | None] = {
     "github":         "gha_path",
     "gitlab":         "gitlab_path",
@@ -83,24 +86,54 @@ _PROVIDER_PATH_KW: dict[str, str | None] = {
     "cloudbuild":     "cloudbuild_path",
     "buildkite":      "buildkite_path",
     "drone":          "drone_path",
+    "harness":        "harness_path",
     "tekton":         "tekton_path",
     "argo":           "argo_path",
+    "argocd":         "argocd_path",
     "dockerfile":     "dockerfile_path",
+    "modelfile":      "modelfile_path",
     "kubernetes":     "k8s_path",
     "helm":           "helm_path",
     "oci":            "oci_manifest",
+    "npm":            "npm_path",
+    "pypi":           "pypi_path",
+    "maven":          "maven_path",
+    "nuget":          "nuget_path",
+    "gomod":          "gomod_path",
+    "cargo":          "cargo_path",
+    "composer":       "composer_path",
+    "rubygems":       "rubygems_path",
+    "pulumi":         "pulumi_path",
+    "devenv":         "devenv_path",
     "aws":            None,
+    "azure_cloud":    None,
+    "gcp":            None,
+    "scm":            None,
+    "scm_org":        None,
+    "gitlab_group":   None,
+    "runs":           None,
+    "gitlab_runs":    None,
 }
 
 PROVIDERS: tuple[str, ...] = tuple(sorted(_PROVIDER_PATH_KW))
 
 
-def _provider_kwarg(provider: str, path: str | None) -> dict[str, Any]:
+def _provider_kwarg(
+    provider: str,
+    path: str | None,
+    *,
+    scm_platform: str | None = None,
+    scm_repo: str | None = None,
+    scm_fixture_dir: str | None = None,
+) -> dict[str, Any]:
     """Return the kwargs dict to forward to ``Scanner(...)``.
 
     Validates the provider name and the path requirement for that
     provider. Raises ``ValueError`` with a message safe to surface
     to the MCP client (no stack traces).
+
+    The ``scm_*`` kwargs are only consumed when *provider* is ``scm``
+    (live remote-repo scan); other providers ignore them.
     """
     if provider not in _PROVIDER_PATH_KW:
         raise ValueError(
@@ -109,6 +142,113 @@ def _provider_kwarg(provider: str, path: str | None) -> dict[str, Any]:
         )
     flag = _PROVIDER_PATH_KW[provider]
     if flag is None:
+        # ``scm`` is path-less but needs platform + repo (and optionally
+        # a fixture dir for offline tests). ``aws`` and any other
+        # path-less provider get the empty-kwargs path.
+        if provider == "scm":
+            if not scm_platform:
+                raise ValueError(
+                    "provider 'scm' requires scm_platform "
+                    "(one of: github, gitlab, bitbucket)."
+                )
+            if not scm_repo or "/" not in scm_repo:
+                raise ValueError(
+                    "provider 'scm' requires scm_repo in 'owner/name' form."
+                )
+            out: dict[str, Any] = {
+                "scm_platform": scm_platform,
+                "scm_repo":     scm_repo,
+            }
+            if scm_fixture_dir:
+                resolved_fx = Path(scm_fixture_dir).expanduser().resolve()
+                roots = _allowed_scan_roots()
+                if not any(_is_within(resolved_fx, root) for root in roots):
+                    raise ValueError(
+                        f"scm_fixture_dir {resolved_fx} is outside the MCP "
+                        f"server's allowed scan roots ("
+                        + ", ".join(str(r) for r in roots)
+                        + f"). Set {_SCAN_ROOTS_ENV} to widen."
+                    )
+                if not resolved_fx.exists():
+                    raise ValueError(
+                        f"scm_fixture_dir does not exist: {resolved_fx}"
+                    )
+                out["scm_fixture_dir"] = str(resolved_fx)
+            return out
+        if provider == "runs":
+            # ``runs`` is path-less and GitHub-only: it audits a repo's
+            # recent Actions runs over the REST API. It reuses ``scm_repo``
+            # (owner/name) but takes no ``scm_platform``. A fixture dir is
+            # honored the same way as ``scm`` for offline replay.
+            if not scm_repo or "/" not in scm_repo:
+                raise ValueError(
+                    "provider 'runs' requires scm_repo in 'owner/name' form."
+                )
+            runs_out: dict[str, Any] = {"scm_repo": scm_repo}
+            if scm_fixture_dir:
+                resolved_fx = Path(scm_fixture_dir).expanduser().resolve()
+                roots = _allowed_scan_roots()
+                if not any(_is_within(resolved_fx, root) for root in roots):
+                    raise ValueError(
+                        f"scm_fixture_dir {resolved_fx} is outside the MCP "
+                        f"server's allowed scan roots ("
+                        + ", ".join(str(r) for r in roots)
+                        + f"). Set {_SCAN_ROOTS_ENV} to widen."
+                    )
+                if not resolved_fx.exists():
+                    raise ValueError(
+                        f"scm_fixture_dir does not exist: {resolved_fx}"
+                    )
+                runs_out["scm_fixture_dir"] = str(resolved_fx)
+            return runs_out
+        if provider == "gitlab_runs":
+            # ``gitlab_runs`` is path-less: it audits a GitLab project's
+            # recent pipelines over the REST API, reusing ``scm_repo``
+            # (group/project). No fixture-dir replay (no portable filename
+            # for the ``?per_page=`` query); offline tests use a fake fetcher.
+            if not scm_repo:
+                raise ValueError(
+                    "provider 'gitlab_runs' requires scm_repo in "
+                    "'group/project' form."
+                )
+            return {"scm_repo": scm_repo}
+        if provider == "scm_org":
+            # ``scm_org`` is path-less: it audits a GitHub organization's
+            # settings over the REST API. The org login is passed through
+            # the ``scm_repo`` slot (a bare login, no '/'); a fixture dir
+            # is honored for offline replay.
+            if not scm_repo or "/" in scm_repo:
+                raise ValueError(
+                    "provider 'scm_org' requires scm_repo set to a bare "
+                    "GitHub org login (no '/')."
+                )
+            org_out: dict[str, Any] = {"scm_org": scm_repo}
+            if scm_fixture_dir:
+                resolved_fx = Path(scm_fixture_dir).expanduser().resolve()
+                roots = _allowed_scan_roots()
+                if not any(_is_within(resolved_fx, root) for root in roots):
+                    raise ValueError(
+                        f"scm_fixture_dir {resolved_fx} is outside the MCP "
+                        f"server's allowed scan roots ("
+                        + ", ".join(str(r) for r in roots)
+                        + f"). Set {_SCAN_ROOTS_ENV} to widen."
+                    )
+                if not resolved_fx.exists():
+                    raise ValueError(
+                        f"scm_fixture_dir does not exist: {resolved_fx}"
+                    )
+                org_out["scm_fixture_dir"] = str(resolved_fx)
+            return org_out
+        if provider == "gitlab_group":
+            # ``gitlab_group`` is path-less: it audits a GitLab group's
+            # settings over the REST API. The group path is passed through
+            # the ``scm_repo`` slot (a group or subgroup path, '/' allowed).
+            if not scm_repo:
+                raise ValueError(
+                    "provider 'gitlab_group' requires scm_repo set to a "
+                    "GitLab group path (e.g. my-group or my-group/platform)."
+                )
+            return {"scm_org": scm_repo}
         # AWS: no path, but accept ``path`` silently when supplied
         # so an agent guessing the call shape doesn't trip over it.
         return {}
@@ -179,27 +319,28 @@ def list_providers() -> dict[str, Any]:
 # ── Tool: list_checks ───────────────────────────────────────────────
 
 
-# Rules-package FQN per provider that exposes a discoverable
-# ``rules/`` subpackage. Aligns with ``scripts/gen_provider_docs.py``'s
-# ``SUPPORTED_PROVIDERS`` but lives here directly so the MCP tools
-# don't depend on the ``scripts/`` directory, which is excluded from
-# the pip distribution (``MANIFEST.in`` ``prune scripts``).
-_RULES_FQN: dict[str, str] = {
-    "github":     "pipeline_check.core.checks.github.rules",
-    "gitlab":     "pipeline_check.core.checks.gitlab.rules",
-    "bitbucket":  "pipeline_check.core.checks.bitbucket.rules",
-    "azure":      "pipeline_check.core.checks.azure.rules",
-    "jenkins":    "pipeline_check.core.checks.jenkins.rules",
-    "circleci":   "pipeline_check.core.checks.circleci.rules",
-    "cloudbuild": "pipeline_check.core.checks.cloudbuild.rules",
-    "kubernetes": "pipeline_check.core.checks.kubernetes.rules",
-    "buildkite":  "pipeline_check.core.checks.buildkite.rules",
-    "tekton":     "pipeline_check.core.checks.tekton.rules",
-    "argo":       "pipeline_check.core.checks.argo.rules",
-    "drone":      "pipeline_check.core.checks.drone.rules",
-    "oci":        "pipeline_check.core.checks.oci.rules",
-    "dockerfile": "pipeline_check.core.checks.dockerfile.rules",
-}
+def _discover_rules_fqns() -> dict[str, str]:
+    """Provider name -> rules-package FQN for every provider that ships a
+    discoverable ``checks/<provider>/rules/`` subpackage.
+
+    Derived from the filesystem (the same source the scanner's
+    custom-rule loader and ``scripts/gen_provider_docs.py`` walk) rather
+    than a hand-maintained list, so a new provider's rule pack is picked
+    up by the MCP tools automatically instead of having to be added in
+    two places. We glob the package directory directly rather than
+    importing ``scripts/``, which is pruned from the pip distribution
+    (``MANIFEST.in`` ``prune scripts``).
+    """
+    checks_root = Path(__file__).resolve().parent.parent / "core" / "checks"
+    return {
+        p.parent.parent.name: (
+            f"pipeline_check.core.checks.{p.parent.parent.name}.rules"
+        )
+        for p in sorted(checks_root.glob("*/rules/__init__.py"))
+    }
+
+
+_RULES_FQN: dict[str, str] = _discover_rules_fqns()
 
 
 def _discover(fqn: str) -> list[Any]:
@@ -387,6 +528,10 @@ def _run_scan(
     standards: list[str] | None = None,
     min_confidence: str = "LOW",
     severity_threshold: str | None = None,
+    diff_base: str | None = None,
+    scm_platform: str | None = None,
+    scm_repo: str | None = None,
+    scm_fixture_dir: str | None = None,
 ) -> tuple[Scanner, list[Finding]]:
     """Build a Scanner, run it, apply CLI-equivalent filters.
 
@@ -395,7 +540,12 @@ def _run_scan(
     JSON and pass them through to the markdown / threat-model
     reporters without a serialize / re-hydrate round trip.
     """
-    kwargs = _provider_kwarg(provider, path)
+    kwargs = _provider_kwarg(
+        provider, path,
+        scm_platform=scm_platform,
+        scm_repo=scm_repo,
+        scm_fixture_dir=scm_fixture_dir,
+    )
     threshold_rank = _CONFIDENCE_ORDER[Confidence(min_confidence.upper())]
 
     scanner = Scanner(
@@ -403,6 +553,7 @@ def _run_scan(
         region=region,
         profile=profile,
         chains_enabled=chains_enabled,
+        diff_base=diff_base,
         **kwargs,
     )
     findings = scanner.run(
@@ -433,6 +584,10 @@ def scan(
     no_chains: bool = False,
     min_confidence: str = "low",
     severity_threshold: str | None = None,
+    diff_base: str | None = None,
+    scm_platform: str | None = None,
+    scm_repo: str | None = None,
+    scm_fixture_dir: str | None = None,
 ) -> dict[str, Any]:
     """Run a scan and return findings + score + chains.
 
@@ -440,6 +595,14 @@ def scan(
     same structure for both this MCP tool and a stand-alone CLI
     invocation. Confidence and severity filters are applied here so
     the agent sees the same trimmed set the CLI gate would.
+
+    ``diff_base`` mirrors the CLI ``--diff-base`` flag: only files
+    touched since that git ref are scanned. Pair it with a feature
+    branch to mimic a PR-time scan; use ``scan_pr_diff`` for the
+    full base-vs-HEAD finding delta.
+
+    ``scm_platform`` / ``scm_repo`` are only consumed when
+    ``provider`` is ``scm``.
     """
     scanner, findings = _run_scan(
         provider, path,
@@ -448,6 +611,10 @@ def scan(
         checks=checks, standards=standards,
         min_confidence=min_confidence,
         severity_threshold=severity_threshold,
+        diff_base=diff_base,
+        scm_platform=scm_platform,
+        scm_repo=scm_repo,
+        scm_fixture_dir=scm_fixture_dir,
     )
     score_result = score(findings)
     chains_out: list[dict[str, Any]] = []
@@ -494,9 +661,17 @@ def inventory(
     region: str = "us-east-1",
     profile: str | None = None,
     type_pattern: str | None = None,
+    scm_platform: str | None = None,
+    scm_repo: str | None = None,
+    scm_fixture_dir: str | None = None,
 ) -> dict[str, Any]:
     """Return the component inventory for *provider*."""
-    kwargs = _provider_kwarg(provider, path)
+    kwargs = _provider_kwarg(
+        provider, path,
+        scm_platform=scm_platform,
+        scm_repo=scm_repo,
+        scm_fixture_dir=scm_fixture_dir,
+    )
     scanner = Scanner(
         pipeline=provider,
         region=region,
@@ -533,6 +708,9 @@ def threat_model(
     region: str = "us-east-1",
     profile: str | None = None,
     standards: list[str] | None = None,
+    scm_platform: str | None = None,
+    scm_repo: str | None = None,
+    scm_fixture_dir: str | None = None,
 ) -> dict[str, Any]:
     """Run a scan and return the STRIDE threat-model markdown.
 
@@ -545,6 +723,9 @@ def threat_model(
         region=region, profile=profile,
         chains_enabled=True,
         standards=standards,
+        scm_platform=scm_platform,
+        scm_repo=scm_repo,
+        scm_fixture_dir=scm_fixture_dir,
     )
     score_result = score(findings)
     components = scanner.inventory()
@@ -575,6 +756,9 @@ def scan_markdown(
     *,
     region: str = "us-east-1",
     profile: str | None = None,
+    scm_platform: str | None = None,
+    scm_repo: str | None = None,
+    scm_fixture_dir: str | None = None,
 ) -> dict[str, Any]:
     """Run a scan and return the GitHub-Flavored Markdown report.
 
@@ -583,6 +767,9 @@ def scan_markdown(
     """
     scanner, findings = _run_scan(
         provider, path, region=region, profile=profile,
+        scm_platform=scm_platform,
+        scm_repo=scm_repo,
+        scm_fixture_dir=scm_fixture_dir,
     )
     score_result = score(findings)
     chains = list(getattr(scanner, "chains", []) or [])
@@ -595,6 +782,355 @@ def scan_markdown(
             "total":  len(findings),
             "failed": sum(1 for f in findings if not f.passed),
             "passed": sum(1 for f in findings if f.passed),
+        },
+    }
+
+
+# ── Tool: scan_pr_diff ──────────────────────────────────────────────
+
+
+def _build_pr_diff_argv(
+    *,
+    provider: str,
+    path: str | None,
+    checks: list[str] | None,
+    standards: list[str] | None,
+    severity_threshold: str | None,
+    min_confidence: str,
+) -> list[str]:
+    """Build the minimal argv the BASE subprocess scan needs.
+
+    Mirrors the flags ``cli.py``'s ``_build_pr_diff_subprocess_argv``
+    propagates, scoped to the parameters the MCP ``scan_pr_diff`` tool
+    accepts. Anything that would shift the BASE finding set has to be
+    here; gate / output / fix / inventory flags are deliberately out.
+    """
+    argv: list[str] = ["--pipeline", provider]
+    flag = _PROVIDER_PATH_KW.get(provider)
+    if path and flag:
+        argv.extend([f"--{flag.replace('_', '-')}", path])
+    for c in checks or ():
+        argv.extend(["--checks", c])
+    for s in standards or ():
+        argv.extend(["--standard", s])
+    if severity_threshold:
+        argv.extend(["--severity-threshold", severity_threshold.upper()])
+    argv.extend(["--min-confidence", min_confidence.upper()])
+    # Chains aren't compared by the delta layer yet; suppressing them
+    # mirrors the CLI subprocess (faster, no functional difference).
+    argv.append("--no-chains")
+    return argv
+
+
+def scan_pr_diff(
+    provider: str,
+    base_ref: str,
+    path: str | None = None,
+    *,
+    region: str = "us-east-1",
+    profile: str | None = None,
+    checks: list[str] | None = None,
+    standards: list[str] | None = None,
+    min_confidence: str = "LOW",
+    severity_threshold: str | None = None,
+) -> dict[str, Any]:
+    """Compute the PR-diff delta between *base_ref* and HEAD.
+
+    Mirrors the CLI ``--pr-diff REF`` flow: scan HEAD in-process,
+    materialize *base_ref* in a throwaway ``git worktree``, scan that
+    in a subprocess, then partition findings into introduced /
+    resolved / preserved. Returns both the structured delta and the
+    rendered Markdown an agent can paste into a PR comment.
+
+    Notes for callers:
+
+    * Live providers (``aws``, ``scm``, ``runs``, ``gitlab_runs``) don't
+      have a meaningful BASE side and are rejected up front, the CLI
+      rejects the same combination.
+    * ``fail-on`` semantics aren't applied here; the agent can read
+      ``summary.introduced_by_severity`` and decide itself whether
+      to block the PR.
+    """
+    if provider in ("aws", "scm", "scm_org", "runs", "gitlab_runs"):
+        raise ValueError(
+            f"provider {provider!r} has no local BASE ref to diff against; "
+            f"scan_pr_diff is only meaningful for file-based providers."
+        )
+    # Lazy import so a bare ``import pipeline_check.mcp_server.tools``
+    # doesn't pull in the pr_diff module's git/subprocess plumbing.
+    from .. import __version__ as _version
+    from ..core.pr_diff import (
+        any_at_or_above as _any_at_or_above,
+    )
+    from ..core.pr_diff import (
+        run_pr_diff,
+    )
+    from ..core.pr_diff import (
+        severity_counts as _severity_counts,
+    )
+    from ..core.pr_diff_reporter import report_pr_diff
+
+    _scanner, head_findings = _run_scan(
+        provider, path,
+        region=region, profile=profile,
+        chains_enabled=False,
+        checks=checks, standards=standards,
+        min_confidence=min_confidence,
+        severity_threshold=severity_threshold,
+    )
+    head_findings_raw = [f.to_dict() for f in head_findings]
+    forwarded_argv = _build_pr_diff_argv(
+        provider=provider,
+        path=path,
+        checks=checks,
+        standards=standards,
+        severity_threshold=severity_threshold,
+        min_confidence=min_confidence,
+    )
+    delta = run_pr_diff(
+        base_ref,
+        head_findings_raw,
+        forwarded_argv,
+        cwd=".",
+    )
+    markdown = report_pr_diff(delta, tool_version=_version)
+    return {
+        "provider":   provider,
+        "base_ref":   delta.base_ref,
+        "base_commit": delta.base_commit,
+        "head_commit": delta.head_commit,
+        "markdown":   markdown,
+        "introduced": [_finding_ref_to_dict(f) for f in delta.introduced],
+        "resolved":   [_finding_ref_to_dict(f) for f in delta.resolved],
+        "preserved":  [_finding_ref_to_dict(f) for f in delta.preserved],
+        "warnings":   list(delta.warnings),
+        "summary": {
+            "introduced": len(delta.introduced),
+            "resolved":   len(delta.resolved),
+            "preserved":  len(delta.preserved),
+            "introduced_by_severity": dict(_severity_counts(delta.introduced)),
+            "gate_high_or_above": _any_at_or_above(delta.introduced, "HIGH"),
+            "gate_critical":      _any_at_or_above(delta.introduced, "CRITICAL"),
+        },
+    }
+
+
+def _finding_ref_to_dict(f: Any) -> dict[str, Any]:
+    """Project a ``pr_diff.FindingRef`` onto a JSON-safe dict."""
+    return {
+        "check_id":       f.check_id,
+        "title":          f.title,
+        "severity":       f.severity,
+        "confidence":     f.confidence,
+        "resource":       f.resource,
+        "description":    f.description,
+        "recommendation": f.recommendation,
+        "location_line":  f.location_line,
+    }
+
+
+# ── Tool: analyze_manifest ──────────────────────────────────────────
+#
+# Scan a raw pipeline snippet passed as *text* rather than a path, so an
+# AI coding assistant can validate the pipeline YAML / Dockerfile /
+# manifest it just generated before the human commits it. The snippet is
+# written to a throwaway temp file at the provider's canonical name (so
+# the file-based scanners pick it up unchanged), scanned, and the temp
+# path is stripped back out of the reported resource.
+
+
+# Where to drop a snippet for each snippet-analyzable provider:
+# ``(relative_write_path, relative_scan_path)``. When the two differ the
+# scan path is a directory the scanner globs (the file lives inside it);
+# when they're equal the scanner reads the file directly. Only file-based
+# providers appear here (live providers like aws / scm / runs have no
+# single-snippet form). Derived from ``detect.PROVIDER_DETECT_FILES`` so a
+# new file-based provider's canonical name is reused, with an explicit
+# filename supplied for the directory-globbing providers.
+_SNIPPET_PLACEMENT: dict[str, tuple[str, str]] = {}
+
+
+def _build_snippet_placement() -> dict[str, tuple[str, str]]:
+    from ..core.detect import PROVIDER_DETECT_FILES
+
+    # Filename to write inside a directory-globbing provider's folder.
+    dir_filenames = {
+        "github": "snippet.yml",
+        "gitea": "snippet.yml",
+        "harness": "snippet.yml",
+        "kubernetes": "snippet.yaml",
+    }
+    out: dict[str, tuple[str, str]] = {}
+    for provider, files, dirs in PROVIDER_DETECT_FILES:
+        if provider not in _PROVIDER_PATH_KW:
+            continue
+        if files:
+            out[provider] = (files[0], files[0])
+        elif dirs:
+            fname = dir_filenames.get(provider, "snippet.yml")
+            out[provider] = (f"{dirs[0]}/{fname}", dirs[0])
+    return out
+
+
+_SNIPPET_PLACEMENT = _build_snippet_placement()
+
+SNIPPET_PROVIDERS: tuple[str, ...] = tuple(sorted(_SNIPPET_PLACEMENT))
+
+
+def _sniff_provider(content: str, filename: str | None = None) -> str | None:
+    """Best-effort provider guess for a raw snippet.
+
+    ``core.detect`` keys off files present on disk, which a text snippet
+    has none of, so this reads the content itself. It only returns a
+    provider on a high-confidence, provider-unique signal (a Dockerfile
+    ``FROM``, a Kubernetes ``apiVersion`` + ``kind``, a GitHub
+    ``runs-on:`` / ``uses:``); ambiguous YAML (GitHub vs Azure vs GitLab
+    all use ``steps:``) returns ``None`` so the caller supplies an
+    explicit ``provider`` rather than risk a wrong-scanner result. A
+    ``filename`` hint, when given, is matched first.
+    """
+    if filename:
+        base = os.path.basename(filename).lower()
+        for provider, (write_rel, _) in _SNIPPET_PLACEMENT.items():
+            if os.path.basename(write_rel).lower() == base:
+                return provider
+        if base in ("dockerfile", "containerfile"):
+            return "dockerfile"
+
+    text = content
+    lowered = text.lower()
+
+    def _has(pattern: str) -> bool:
+        return re.search(pattern, text, re.MULTILINE) is not None
+
+    # Unambiguous, provider-unique signals first.
+    if _has(r"^\s*FROM\s+\S") and "apiversion:" not in lowered:
+        return "dockerfile"
+    if "awstemplateformatversion" in lowered or _has(r"Type:\s*['\"]?AWS::"):
+        return "cloudformation"
+    if _has(r"^\s*apiVersion:\s*\S") and _has(r"^\s*kind:\s*\S"):
+        return "kubernetes"
+    if _has(r"^\s*pipeline\s*\{") or _has(r"^\s*node\s*\{"):
+        return "jenkins"
+    if _has(r'^\s*(resource|provider|module)\s+"'):
+        return "terraform"
+    # GitHub is identifiable by its unique keys (``runs-on`` / ``uses``)
+    # combined with ``jobs:``; GitLab / Azure lack both.
+    if _has(r"^\s*jobs:") and (_has(r"runs-on:") or _has(r"uses:")):
+        return "github"
+    if _has(r"^\s*orbs:") or (_has(r"^\s*version:\s*2") and _has(r"^\s*workflows:")):
+        return "circleci"
+    return None
+
+
+def analyze_manifest(
+    content: str,
+    provider: str | None = None,
+    filename: str | None = None,
+    *,
+    no_chains: bool = False,
+    min_confidence: str = "LOW",
+    severity_threshold: str | None = None,
+) -> dict[str, Any]:
+    """Scan a raw pipeline snippet passed as text and return findings.
+
+    The guardrail for AI-generated pipelines: hand it the YAML /
+    Dockerfile / manifest text an assistant just produced and get the
+    same findings a committed-file scan would, before anything lands on
+    disk. ``provider`` is the reliable selector; omit it and a
+    high-confidence content sniff (or the ``filename`` hint) picks one,
+    falling back to a ``ValueError`` that names the supported providers
+    when the snippet is ambiguous.
+    """
+    if not content or not content.strip():
+        raise ValueError("content is empty; pass the pipeline snippet text.")
+
+    resolved = (provider or _sniff_provider(content, filename) or "").strip()
+    if not resolved:
+        raise ValueError(
+            "could not determine the provider from the snippet; pass "
+            "``provider`` explicitly. Snippet-analyzable providers: "
+            + ", ".join(SNIPPET_PROVIDERS)
+        )
+    if resolved not in _SNIPPET_PLACEMENT:
+        raise ValueError(
+            f"provider {resolved!r} does not support snippet analysis "
+            f"(it has no single-file form). Snippet-analyzable providers: "
+            + ", ".join(SNIPPET_PROVIDERS)
+        )
+
+    write_rel, scan_rel = _SNIPPET_PLACEMENT[resolved]
+    flag = _PROVIDER_PATH_KW[resolved]
+    assert flag is not None  # every snippet provider is file-based
+
+    import tempfile
+
+    threshold_rank = _CONFIDENCE_ORDER[Confidence(min_confidence.upper())]
+    with tempfile.TemporaryDirectory(prefix="pc-snippet-") as tmp:
+        tmp_root = Path(tmp)
+        target = tmp_root / write_rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        scan_path = tmp_root / scan_rel
+
+        # Call the Scanner directly (the temp path is server-generated, so
+        # the client-path root guard in ``_provider_kwarg`` doesn't apply).
+        scan_kwargs: dict[str, Any] = {flag: str(scan_path)}
+        scanner = Scanner(
+            pipeline=resolved,
+            chains_enabled=not no_chains,
+            **scan_kwargs,
+        )
+        findings = scanner.run()
+        findings = [
+            f for f in findings
+            if _CONFIDENCE_ORDER[f.confidence] >= threshold_rank
+        ]
+        if severity_threshold:
+            sev_rank = _severity_rank(Severity(severity_threshold.upper()))
+            findings = [
+                f for f in findings if _severity_rank(f.severity) >= sev_rank
+            ]
+        chains = list(getattr(scanner, "chains", []) or [])
+        prefix = str(tmp_root) + os.sep
+
+    def _relabel(resource: str) -> str:
+        # Strip the throwaway temp prefix so the agent sees the canonical
+        # snippet path, not a ``/tmp/pc-snippet-xxxx/`` leak.
+        if resource.startswith(prefix):
+            return resource[len(prefix):].replace(os.sep, "/")
+        return resource
+
+    score_result = score(findings)
+    findings_out: list[dict[str, Any]] = []
+    for f in findings:
+        d = _finding_to_dict(f)
+        d["resource"] = _relabel(d["resource"])
+        if "locations" in d:
+            for loc in d["locations"]:
+                loc["path"] = _relabel(loc["path"])
+        findings_out.append(d)
+    chains_out = [
+        {
+            "id": c.chain_id,
+            "title": c.title,
+            "severity": c.severity.value,
+            "summary": c.summary,
+            "triggering_check_ids": list(c.triggering_check_ids),
+        }
+        for c in chains
+    ]
+    return {
+        "provider": resolved,
+        "detected": provider is None,
+        "score": dict(score_result),
+        "findings": findings_out,
+        "chains": chains_out,
+        "summary": {
+            "total": len(findings),
+            "failed": sum(1 for f in findings if not f.passed),
+            "passed": sum(1 for f in findings if f.passed),
+            "by_severity": _severity_summary(findings),
         },
     }
 
@@ -615,6 +1151,36 @@ def _enum_severity() -> list[str]:
 
 def _enum_confidence() -> list[str]:
     return [c.value for c in Confidence]
+
+
+# Shared schema fragments. Inlined into each tool's ``input_schema``
+# at module-import time so the JSON-Schema view a client sees is
+# self-contained (no $ref indirection).
+_SCM_PROPS: dict[str, Any] = {
+    "scm_platform": {
+        "type": "string",
+        "enum": ["github", "gitlab", "bitbucket"],
+        "description": (
+            "Live SCM platform. Required when ``provider`` is "
+            "``scm``; ignored otherwise."
+        ),
+    },
+    "scm_repo": {
+        "type": "string",
+        "description": (
+            "``owner/name`` slug of the live SCM repo. Required "
+            "when ``provider`` is ``scm``."
+        ),
+    },
+    "scm_fixture_dir": {
+        "type": "string",
+        "description": (
+            "Optional local fixture directory used in place of "
+            "live SCM API calls (offline / replay testing). "
+            "Honored only when ``provider`` is ``scm``."
+        ),
+    },
+}
 
 
 TOOL_SPECS: list[dict[str, Any]] = [
@@ -744,7 +1310,9 @@ TOOL_SPECS: list[dict[str, Any]] = [
                     "description": (
                         "Path to the file or directory to scan. "
                         "Required for every provider except "
-                        "``aws`` (which scans the live account)."
+                        "``aws`` (live account scan) and ``scm`` "
+                        "(live SCM-repo scan via scm_platform / "
+                        "scm_repo)."
                     ),
                 },
                 "region": {"type": "string", "default": "us-east-1"},
@@ -777,6 +1345,17 @@ TOOL_SPECS: list[dict[str, Any]] = [
                         "the result."
                     ),
                 },
+                "diff_base": {
+                    "type": "string",
+                    "description": (
+                        "Optional git ref. When set, only files "
+                        "touched since this ref are scanned "
+                        "(mirrors --diff-base). For the full "
+                        "base-vs-HEAD finding delta use "
+                        "``scan_pr_diff`` instead."
+                    ),
+                },
+                **_SCM_PROPS,
             },
             "required": ["provider"],
             "additionalProperties": False,
@@ -807,6 +1386,7 @@ TOOL_SPECS: list[dict[str, Any]] = [
                         "component type field."
                     ),
                 },
+                **_SCM_PROPS,
             },
             "required": ["provider"],
             "additionalProperties": False,
@@ -834,6 +1414,7 @@ TOOL_SPECS: list[dict[str, Any]] = [
                     "type": "array",
                     "items": {"type": "string"},
                 },
+                **_SCM_PROPS,
             },
             "required": ["provider"],
             "additionalProperties": False,
@@ -856,11 +1437,141 @@ TOOL_SPECS: list[dict[str, Any]] = [
                 "path": {"type": "string"},
                 "region": {"type": "string", "default": "us-east-1"},
                 "profile": {"type": "string"},
+                **_SCM_PROPS,
             },
             "required": ["provider"],
             "additionalProperties": False,
         },
         "fn": lambda **kw: scan_markdown(**kw),
+    },
+    {
+        "name": "scan_pr_diff",
+        "description": (
+            "Compute the PR-time finding delta between a git base ref "
+            "and HEAD (mirrors --pr-diff). HEAD is scanned in-process; "
+            "BASE is scanned in a throwaway ``git worktree`` "
+            "subprocess. Returns structured introduced / resolved / "
+            "preserved lists plus the rendered Markdown PR comment. "
+            "Not supported for the ``aws``, ``scm``, ``runs``, or "
+            "``gitlab_runs`` live providers."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "provider": {
+                    "type": "string",
+                    "enum": [
+                        p for p in _PROVIDER_ENUM
+                        if p not in ("aws", "scm", "scm_org", "runs", "gitlab_runs")
+                    ],
+                },
+                "base_ref": {
+                    "type": "string",
+                    "description": (
+                        "Git ref to diff against (branch, tag, or "
+                        "commit). Common values: ``origin/main``, "
+                        "``HEAD~1``, the PR's merge-base."
+                    ),
+                },
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "Path to scan on the HEAD side; the BASE "
+                        "scan re-uses the same path inside the "
+                        "worktree."
+                    ),
+                },
+                "region": {"type": "string", "default": "us-east-1"},
+                "profile": {"type": "string"},
+                "checks": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Optional list of check ids to run "
+                        "exclusively on both sides."
+                    ),
+                },
+                "standards": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional standards filter.",
+                },
+                "min_confidence": {
+                    "type": "string",
+                    "enum": _enum_confidence(),
+                    "default": "LOW",
+                },
+                "severity_threshold": {
+                    "type": "string",
+                    "enum": _enum_severity(),
+                    "description": (
+                        "Optional minimum severity applied to "
+                        "both sides before delta computation."
+                    ),
+                },
+            },
+            "required": ["provider", "base_ref"],
+            "additionalProperties": False,
+        },
+        "fn": lambda **kw: scan_pr_diff(**kw),
+    },
+    {
+        "name": "analyze_manifest",
+        "description": (
+            "Scan a raw pipeline snippet passed as TEXT (not a path) and "
+            "return findings + fix recommendations. The guardrail for "
+            "AI-generated pipelines: validate the workflow YAML / "
+            "Dockerfile / manifest you just generated before it lands on "
+            "disk. Pass ``provider`` when known; omit it and a "
+            "high-confidence content sniff (or a ``filename`` hint) picks "
+            "one, erroring with the supported list when the snippet is "
+            "ambiguous."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "description": (
+                        "The raw pipeline snippet text (a workflow YAML, "
+                        "Dockerfile, Kubernetes manifest, etc.)."
+                    ),
+                },
+                "provider": {
+                    "type": "string",
+                    "enum": list(SNIPPET_PROVIDERS),
+                    "description": (
+                        "The provider the snippet targets. Omit to "
+                        "auto-detect from the content / filename."
+                    ),
+                },
+                "filename": {
+                    "type": "string",
+                    "description": (
+                        "Optional filename hint (e.g. ``Dockerfile``, "
+                        "``.gitlab-ci.yml``) used to pick a provider when "
+                        "``provider`` is omitted."
+                    ),
+                },
+                "no_chains": {"type": "boolean", "default": False},
+                "min_confidence": {
+                    "type": "string",
+                    "enum": _enum_confidence(),
+                    "default": "LOW",
+                },
+                "severity_threshold": {
+                    "type": "string",
+                    "enum": _enum_severity(),
+                    "description": (
+                        "Optional minimum severity. Findings below it are "
+                        "dropped from the result."
+                    ),
+                },
+            },
+            "required": ["content"],
+            "additionalProperties": False,
+        },
+        "fn": lambda **kw: analyze_manifest(**kw),
     },
 ]
 

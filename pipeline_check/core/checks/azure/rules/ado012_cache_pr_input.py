@@ -27,6 +27,26 @@ RULE = Rule(
         "lets a PR seed a poisoned cache entry that a later default-"
         "branch pipeline restores."
     ),
+    exploit_example=(
+        "# Vulnerable: Cache@2 key derives from a PR-controlled variable.\n"
+        "steps:\n"
+        "  - task: Cache@2\n"
+        "    inputs:\n"
+        "      key: 'npm | $(System.PullRequest.SourceBranch)'\n"
+        "      path: $(npm_config_cache)\n"
+        "  - script: npm ci\n"
+        "\n"
+        "# Attack: on a PR-validated pipeline the attacker controls\n"
+        "# SourceBranch. Their PR run seeds a cache entry under their\n"
+        "# key; a later default-branch pipeline that resolves the same\n"
+        "# key restores the poisoned cache and treats it as clean.\n"
+        "\n"
+        "# Safe: key on the lockfile hash, not PR-controlled input.\n"
+        "  - task: Cache@2\n"
+        "    inputs:\n"
+        "      key: 'npm | \"$(Agent.OS)\" | package-lock.json'\n"
+        "      path: $(npm_config_cache)"
+    ),
 )
 
 
@@ -44,9 +64,15 @@ def check(path: str, doc: dict[str, Any]) -> Finding:
                 raw = inputs.get(key_field)
                 if raw is None:
                     continue
-                text = raw if isinstance(raw, str) else "\n".join(
-                    str(v) for v in (raw or [])
-                )
+                if isinstance(raw, str):
+                    text = raw
+                elif isinstance(raw, list):
+                    text = "\n".join(str(v) for v in raw)
+                else:
+                    # A numeric or otherwise scalar key (e.g. ``key: 2024``)
+                    # can't carry a PR-controlled expression; stringify it
+                    # rather than iterating a non-iterable.
+                    text = str(raw)
                 if CACHE_TAINT_RE.search(text):
                     offenders.append(f"{job_loc}.{step_loc}.inputs.{key_field}")
     passed = not offenders

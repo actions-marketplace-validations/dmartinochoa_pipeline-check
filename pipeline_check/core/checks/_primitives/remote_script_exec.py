@@ -10,15 +10,19 @@ Idioms detected:
 
 1. **Direct pipe**: ``curl … | bash`` / ``wget … | sh`` (also
    ``python[23]``, ``perl``, ``ruby``, and ``sudo`` variants).
-2. **Process-substitution pipe**: ``bash -c "$(curl …)"`` /
+2. **Command substitution**: ``bash -c "$(curl …)"`` /
    ``sh -c "$(wget …)"``, the shell re-enters itself on the
    downloaded content.
-3. **Python inline fetcher**: ``python -c "urllib…get(url).read…"``
+3. **Process substitution**: ``bash <(curl …)`` / ``sh <(wget …)`` /
+   ``source <(curl …)``, the interpreter runs the fetched content via
+   a ``/dev/fd`` handle, no pipe character involved (so the direct-pipe
+   matcher never sees it).
+4. **Python inline fetcher**: ``python -c "urllib…get(url).read…"``
    and the ``requests.get`` variant, typically used to grab a
    loader on minimal images.
-4. **Download-then-execute**: ``curl > x.sh && bash x.sh``, the
+5. **Download-then-execute**: ``curl > x.sh && bash x.sh``, the
    script hits disk but is still attacker-controlled.
-5. **PowerShell**: ``irm <url> | iex`` / ``Invoke-WebRequest | iex``
+6. **PowerShell**: ``irm <url> | iex`` / ``Invoke-WebRequest | iex``
    / ``Invoke-RestMethod | iex``, the Windows analogue.
 
 Vendor-trusted classification
@@ -70,14 +74,25 @@ _VENDOR_HOSTS = frozenset({
 
 # ── Pattern catalog ────────────────────────────────────────────
 
-# A URL captured up to the first whitespace / pipe / redirect / term.
-_URL = r"https?://[^\s|;&'\">`]+"
+# ReDoS bound. Every fill below (the run between the fetcher, the URL,
+# and the closing token: a pipe, a paren, a redirect) is length-capped.
+# Left unbounded, a crafted line like ``curl https://x/<60 000 chars>``
+# with no trailing token drives the engine into O(n²) backtracking
+# (~5 s at 60 kB). These patterns run on PR-controlled CI files, so that
+# is a denial-of-service vector. No real command line approaches the
+# cap; it only defuses adversarial input. The regexes below write the
+# value literally to stay readable; keep them in sync with this constant.
+_MAX_FILL = 2048
+
+# A URL captured up to the first whitespace / pipe / redirect / term,
+# length-bounded per ``_MAX_FILL``.
+_URL = r"https?://[^\s|;&'\">`]{1,2048}"
 
 # curl/wget ... URL ... | (sudo )? bash|sh|python|perl|ruby
 _PIPE_RE = re.compile(
-    r"\b(?P<fetcher>curl|wget)\b[^|]*?"
+    r"\b(?P<fetcher>curl|wget)\b[^|]{0,2048}?"
     r"(?P<url>" + _URL + r")"
-    r"[^|]*\|\s*(?:sudo\s+)?"
+    r"[^|]{0,2048}\|\s*(?:sudo\s+)?"
     r"(?P<interp>(?:ba)?sh|python[23]?|perl|ruby)\b",
     re.IGNORECASE,
 )
@@ -86,10 +101,24 @@ _PIPE_RE = re.compile(
 # content. Single or double quotes.
 _SHELL_SUBSHELL_RE = re.compile(
     r"\b(?P<interp>(?:ba)?sh)\s+-c\s+"
-    r"[\"']\$\(\s*(?P<fetcher>curl|wget)\b[^)]*?"
+    r"[\"']\$\(\s*(?P<fetcher>curl|wget)\b[^)]{0,2048}?"
     r"(?P<url>" + _URL + r")"
-    r"[^)]*\)[\"']",
+    r"[^)]{0,2048}\)[\"']",
     re.IGNORECASE,
+)
+
+# interp <(curl|wget URL) , process substitution: the interpreter runs
+# the fetched content through a ``/dev/fd`` handle. No pipe, so _PIPE_RE
+# never sees it. ``source`` / ``.`` (dot) source the fetched file into
+# the current shell. A leading separator anchors ``interp`` as its own
+# token without a ``\b`` (which doesn't work for the ``.`` form).
+_PROCESS_SUBST_RE = re.compile(
+    r"(?:^|[\s;&|(])"
+    r"(?P<interp>(?:ba)?sh|python[23]?|perl|ruby|source|\.)\s+"
+    r"<\(\s*(?P<fetcher>curl|wget)\b[^)]{0,2048}?"
+    r"(?P<url>" + _URL + r")"
+    r"[^)]{0,2048}\)",
+    re.IGNORECASE | re.MULTILINE,
 )
 
 # python -c "… urllib|requests.get( URL ).read() …"
@@ -98,9 +127,9 @@ _SHELL_SUBSHELL_RE = re.compile(
 # quote style so single-quoted URL literals inside the double-quoted
 # ``-c`` payload still match.
 _PYTHON_INLINE_RE = re.compile(
-    r"\bpython[23]?\s+-c\s+[\"'][^\n]*?"
-    r"(?:urllib[^\n]*?\.urlopen|requests[^\n]*?\.get)"
-    r"[^\n]*?(?P<url>https?://[^\s'\"()\]]+)",
+    r"\bpython[23]?\s+-c\s+[\"'][^\n]{0,2048}?"
+    r"(?:urllib[^\n]{0,2048}?\.urlopen|requests[^\n]{0,2048}?\.get)"
+    r"[^\n]{0,2048}?(?P<url>https?://[^\s'\"()\]]{1,2048})",
     re.IGNORECASE,
 )
 
@@ -109,9 +138,9 @@ _PYTHON_INLINE_RE = re.compile(
 # on the same line after a statement separator, capturing the exact
 # filename is fragile across `&& / ; / newline` variants.
 _DOWNLOAD_EXEC_RE = re.compile(
-    r"\b(?P<fetcher>curl|wget)\b[^;&\n]*?"
+    r"\b(?P<fetcher>curl|wget)\b[^;&\n]{0,2048}?"
     r"(?P<url>" + _URL + r")"
-    r"[^;&\n]*>\s*\S+\.sh\s*[;&]+\s*"
+    r"[^;&\n]{0,2048}>\s*\S+\.sh\s*[;&]+\s*"
     r"(?P<interp>(?:ba)?sh|python[23]?|perl|ruby)\b",
     re.IGNORECASE,
 )
@@ -119,9 +148,24 @@ _DOWNLOAD_EXEC_RE = re.compile(
 # PowerShell: irm <url> | iex  /  Invoke-WebRequest / Invoke-RestMethod
 _POWERSHELL_RE = re.compile(
     r"\b(?P<fetcher>irm|iwr|Invoke-WebRequest|Invoke-RestMethod)\b"
-    r"\s+[^|]*?(?P<url>" + _URL + r")"
-    r"[^|]*\|\s*(?P<interp>iex|Invoke-Expression)\b",
+    r"\s+[^|]{0,2048}?(?P<url>" + _URL + r")"
+    r"[^|]{0,2048}\|\s*(?P<interp>iex|Invoke-Expression)\b",
     re.IGNORECASE,
+)
+
+
+# A lightweight ``<fetcher> … | <interpreter>`` matcher for providers
+# whose step text is already command-scoped (drone / harness ``commands``
+# arrays), where the rich URL-aware ``scan()`` above is overkill and
+# requiring a literal ``http://`` URL would miss ``curl $URL | sh``. It
+# keeps the ``fetch`` (BSD) variant and stays URL-agnostic, but matches the
+# same interpreter set as ``_PIPE_RE`` (``sh`` / ``bash`` / ``python`` /
+# ``perl`` / ``ruby``, optional ``sudo``) so ``curl … | sudo bash`` and
+# ``… | python`` don't slip through a bare ``sh|bash`` matcher. ``[^|]+\|``
+# is linear (the negated class can't cross a pipe), so no ReDoS.
+SIMPLE_PIPE_TO_SHELL_RE = re.compile(
+    r"(?:curl|wget|fetch)\s+[^|]+\|\s*(?:sudo\s+)?"
+    r"(?:(?:ba)?sh|python[23]?|perl|ruby)(?:\s|$)",
 )
 
 
@@ -132,8 +176,8 @@ _POWERSHELL_RE = re.compile(
 class RemoteExecFinding:
     """A single remote-script-to-interpreter hit."""
 
-    kind: str              # "curl-pipe", "shell-subshell", "python-inline",
-                           # "download-exec", "powershell"
+    kind: str              # "curl-pipe", "shell-subshell", "process-subst",
+                           # "python-inline", "download-exec", "powershell"
     interpreter: str       # bash / sh / python3 / perl / ruby / iex / ...
     url: str               # the fetched URL literal
     host: str              # parsed host (``""`` if URL is malformed)
@@ -185,6 +229,8 @@ def scan(text: str) -> list[RemoteExecFinding]:
     # matcher only catches genuine ``curl | bash`` one-liners.
     for m in _SHELL_SUBSHELL_RE.finditer(text):
         _emit("shell-subshell", m)
+    for m in _PROCESS_SUBST_RE.finditer(text):
+        _emit("process-subst", m)
     for m in _DOWNLOAD_EXEC_RE.finditer(text):
         _emit("download-exec", m)
     for m in _PIPE_RE.finditer(text):

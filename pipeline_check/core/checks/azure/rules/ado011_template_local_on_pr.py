@@ -27,17 +27,44 @@ RULE = Rule(
         "body. Cross-repo templates (`template: foo.yml@my-repo`) "
         "are version-pinned and not affected."
     ),
+    exploit_example=(
+        "# Vulnerable: the pipeline includes a local template that\n"
+        "# any PR can modify, on a PR-validated pipeline. An MR\n"
+        "# can rewrite ``ci/build.yml`` and have its own version\n"
+        "# of the build run with the pipeline's full credential\n"
+        "# set in scope.\n"
+        "trigger: [main]\n"
+        "pr: [main]   # PR-validated\n"
+        "steps:\n"
+        "  - template: ci/build.yml   # local, editable per PR\n"
+        "\n"
+        "# Safe: split the PR-validated leg from any deploy /\n"
+        "# release work. The PR-validation YAML inlines the build\n"
+        "# (or templates from a separate, protected repo); the\n"
+        "# deploy YAML runs only on the protected branch + with\n"
+        "# environment approval.\n"
+        "trigger: [main]\n"
+        "pr: [main]\n"
+        "resources:\n"
+        "  repositories:\n"
+        "    - repository: templates\n"
+        "      type: git\n"
+        "      name: myorg/ci-templates\n"
+        "      ref: refs/tags/v1.4.2   # SHA-stable template ref\n"
+        "steps:\n"
+        "  - template: build.yml@templates"
+    ),
 )
 
 
 def check(path: str, doc: dict[str, Any]) -> Finding:
     pr = doc.get("pr")
     on_pr = False
-    if isinstance(pr, list) and pr:
-        on_pr = True
-    elif isinstance(pr, dict):
-        on_pr = True
-    elif isinstance(pr, str) and pr.lower() not in ("none", "false"):
+    if (
+        isinstance(pr, list) and pr
+        or isinstance(pr, dict)
+        or isinstance(pr, str) and pr.lower() not in ("none", "false")
+    ):
         on_pr = True
     if not on_pr:
         return Finding(
@@ -48,16 +75,19 @@ def check(path: str, doc: dict[str, Any]) -> Finding:
         )
     local_templates: list[str] = []
 
-    def _walk(node: Any) -> None:
+    def _walk(node: Any, in_inputs: bool = False) -> None:
         if isinstance(node, dict):
-            t = node.get("template")
-            if isinstance(t, str) and "@" not in t:
-                local_templates.append(t)
-            for v in node.values():
-                _walk(v)
+            # A ``template:`` inside a task ``inputs:`` mapping is a task
+            # input, not a pipeline template include, so don't flag it.
+            if not in_inputs:
+                t = node.get("template")
+                if isinstance(t, str) and "@" not in t:
+                    local_templates.append(t)
+            for k, v in node.items():
+                _walk(v, in_inputs=in_inputs or k == "inputs")
         elif isinstance(node, list):
             for v in node:
-                _walk(v)
+                _walk(v, in_inputs=in_inputs)
 
     _walk(doc)
     passed = not local_templates

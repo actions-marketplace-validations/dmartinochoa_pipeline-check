@@ -19,7 +19,7 @@ that lack a publicly-documented shape.
 
 Four signal types can fire:
 
-  1. **Token-shape match.** Tokenised value matches a built-in
+  1. **Token-shape match.** Tokenized value matches a built-in
      credential regex. Hit label: ``<detector>:<token>``.
   2. **PEM private-key block.** Multi-line ``-----BEGIN PRIVATE
      KEY-----`` marker anywhere in the document. Hit label:
@@ -50,6 +50,7 @@ from ._patterns import (
     PLACEHOLDER_MARKER_RE,
     SECRET_DETECTORS,
     SECRET_VALUE_RE,
+    VENDOR_EXAMPLE_TOKENS,
 )
 
 # Mutable registry, appended to by :func:`register_pattern` so users
@@ -62,7 +63,7 @@ def register_pattern(pattern: str | Pattern[str]) -> None:
     """Add ``pattern`` to the set of regexes :func:`find_secret_values` checks.
 
     The pattern is anchored by the caller, tokens are whole-string
-    matched (``re.fullmatch``) after tokenisation, so a pattern like
+    matched (``re.fullmatch``) after tokenization, so a pattern like
     ``^acme_[a-z0-9]{32}$`` matches the token ``acme_…`` but not a
     substring of a larger blob. Duplicate patterns are ignored.
     """
@@ -363,6 +364,45 @@ def _find_entropy_hits(doc: Any) -> list[str]:
     return hits
 
 
+def classify_tokens_raw(doc: Any) -> list[tuple[str, str]]:
+    """Return ``(detector_name, raw_value)`` pairs for every classified token.
+
+    Unlike :func:`find_secret_values`, the raw value is NOT redacted.
+    This function exists solely for the live-verification pipeline
+    (``--verify-secrets``), which needs the actual credential value to
+    probe the upstream API. Callers must never persist, log, or surface
+    the raw values in output.
+
+    Only the deterministic prefix-shape catalog participates; PEM
+    blocks, keyed-hex, and entropy hits are excluded because they
+    don't have corresponding verifier endpoints.
+    """
+    from .base import walk_strings
+
+    results: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    pre_collected = isinstance(doc, list) and doc and isinstance(doc[0], str)
+    strings: Iterable[str] = doc if pre_collected else walk_strings(doc)
+
+    for s in strings:
+        candidate = s.strip()
+        if not candidate:
+            continue
+        for token in _tokenize(candidate):
+            if token in seen:
+                continue
+            if PLACEHOLDER_MARKER_RE.search(token):
+                continue
+            label = _classify(token)
+            if label is None:
+                continue
+            if token in VENDOR_EXAMPLE_TOKENS:
+                continue
+            seen.add(token)
+            results.append((label, token))
+    return results
+
+
 def find_secret_values(doc: Any) -> list[str]:
     """Return labeled credential hits found anywhere in ``doc``.
 
@@ -424,6 +464,8 @@ def find_secret_values(doc: Any) -> list[str]:
             token_label = _classify(token)
             if token_label is None:
                 continue
+            if token in VENDOR_EXAMPLE_TOKENS:
+                continue
             seen_tokens.add(token)
             hits.append(f"{token_label}:{_redact(token)}")
 
@@ -483,7 +525,7 @@ def _build_prefix_dispatch() -> tuple[
     # Maps detector name → list of 2-char prefixes it can match.
     _MULTI_PREFIX: dict[str, list[str]] = {
         "aws_access_key":     ["AK", "AS"],       # A(?:KIA|SIA)
-        "github_token":       ["gh"],              # gh[pousr]_
+        "github_token":       ["gh", "gi"],        # gh[pousr]_ / github_pat_
         "slack_token":        ["xo"],              # xox[abprs]-
         "jwt":                ["ey"],              # eyJ
         "stripe_secret":      ["sk", "rk"],        # (?:sk|rk)_
@@ -531,7 +573,7 @@ def _tokenize(s: str) -> Iterable[str]:
     """Split ``s`` on whitespace + common shell separators.
 
     Yields each token for pattern-matching. Built-in patterns are
-    anchored (``^...$``), so tokenising lets a secret embedded in
+    anchored (``^...$``), so tokenizing lets a secret embedded in
     ``echo "AKIA…"`` still fire.
     """
     for tok in _TOKENIZE_RE.split(s):
@@ -553,6 +595,7 @@ __all__ = [
     "MIN_ENTROPY_LENGTH",
     "SECRET_DETECTORS",
     "SECRET_VALUE_RE",
+    "classify_tokens_raw",
     "enable_entropy_detection",
     "find_secret_values",
     "register_pattern",

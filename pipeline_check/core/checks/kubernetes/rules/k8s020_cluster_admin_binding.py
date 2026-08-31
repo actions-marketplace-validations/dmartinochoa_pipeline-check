@@ -1,4 +1,4 @@
-"""K8S-020. ClusterRoleBinding grants ``cluster-admin`` or ``system:masters``."""
+"""K8S-020. ClusterRoleBinding grants ``cluster-admin``, ``admin``, or ``system:masters``."""
 from __future__ import annotations
 
 from typing import Any
@@ -18,7 +18,7 @@ _ADMIN_ROLES: frozenset[str] = frozenset({
 
 RULE = Rule(
     id="K8S-020",
-    title="ClusterRoleBinding grants cluster-admin or system:masters",
+    title="ClusterRoleBinding grants cluster-admin, admin, or system:masters",
     severity=Severity.CRITICAL,
     owasp=("CICD-SEC-2", "CICD-SEC-5"),
     esf=("ESF-D-LEAST-PRIV",),
@@ -56,6 +56,55 @@ RULE = Rule(
         "post-fix was to scope the controller's RBAC away from "
         "cluster-admin so a similar future bug couldn't escalate "
         "the same way.",
+    ),
+    exploit_example=(
+        "# Vulnerable: any pod that uses the ``default`` ServiceAccount\n"
+        "# in the ``app`` namespace gets cluster-admin. A compromised\n"
+        "# pod (RCE, poisoned image, malicious sidecar) can list\n"
+        "# every secret across every namespace, ``kubectl exec`` into\n"
+        "# kube-system, and delete every workload. ServiceAccount\n"
+        "# tokens auto-mount into pods by default, so the blast\n"
+        "# radius is the union of every pod that runs as this SA.\n"
+        "apiVersion: rbac.authorization.k8s.io/v1\n"
+        "kind: ClusterRoleBinding\n"
+        "metadata: { name: default-cluster-admin }\n"
+        "subjects:\n"
+        "  - kind: ServiceAccount\n"
+        "    name: default\n"
+        "    namespace: app\n"
+        "roleRef:\n"
+        "  kind: ClusterRole\n"
+        "  name: cluster-admin\n"
+        "  apiGroup: rbac.authorization.k8s.io\n"
+        "\n"
+        "# Safe: namespace-scoped Role + RoleBinding granting only\n"
+        "# the verbs the workload actually needs. Cluster-admin\n"
+        "# bindings should be audit-reviewed and reduced to the\n"
+        "# minimum set; the rule's intent is that the binding\n"
+        "# disappear, not just narrow its subject.\n"
+        "apiVersion: rbac.authorization.k8s.io/v1\n"
+        "kind: Role\n"
+        "metadata:\n"
+        "  name: app-pod-reader\n"
+        "  namespace: app\n"
+        "rules:\n"
+        "  - apiGroups: [\"\"]\n"
+        "    resources: [\"pods\"]\n"
+        "    verbs: [\"get\", \"list\"]\n"
+        "---\n"
+        "apiVersion: rbac.authorization.k8s.io/v1\n"
+        "kind: RoleBinding\n"
+        "metadata:\n"
+        "  name: app-default-pod-reader\n"
+        "  namespace: app\n"
+        "subjects:\n"
+        "  - kind: ServiceAccount\n"
+        "    name: default\n"
+        "    namespace: app\n"
+        "roleRef:\n"
+        "  kind: Role\n"
+        "  name: app-pod-reader\n"
+        "  apiGroup: rbac.authorization.k8s.io"
     ),
 )
 

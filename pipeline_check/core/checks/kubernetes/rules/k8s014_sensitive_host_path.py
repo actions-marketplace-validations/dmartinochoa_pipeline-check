@@ -1,15 +1,24 @@
 """K8S-014. Pod ``hostPath`` references a sensitive host directory."""
 from __future__ import annotations
 
-from ...base import Finding, Severity
+from ...base import Finding, Location, Severity
 from ...rule import Rule
-from ..base import KubernetesContext, iter_volumes, iter_workload_pod_specs
+from ..base import KubernetesContext, iter_volumes, iter_workload_pod_specs, manifest_location
 
 #: Host paths whose mount inside a container amounts to cluster takeover.
+#: The runtime sockets are listed under both ``/var/run`` and ``/run``:
+#: ``/var/run`` is a symlink to ``/run`` on every modern distro, and
+#: containerd's documented default socket is the ``/run`` form, which
+#: real DaemonSets (log collectors, builders, monitoring) mount routinely.
 _SENSITIVE_PREFIXES: tuple[str, ...] = (
     "/var/run/docker.sock",
+    "/run/docker.sock",
     "/var/run/crio/crio.sock",
+    "/run/crio/crio.sock",
     "/var/run/containerd/containerd.sock",
+    "/run/containerd/containerd.sock",
+    "/var/run/cri-dockerd.sock",
+    "/run/cri-dockerd.sock",
     "/var/lib/kubelet",
     "/var/lib/docker",
     "/etc/kubernetes",
@@ -45,6 +54,44 @@ RULE = Rule(
         "one upgrades to CRITICAL when the path is one of the "
         "well-known cluster-escape vectors."
     ),
+    exploit_example=(
+        "# Vulnerable: ``/var/run/docker.sock`` mounted into the\n"
+        "# container exposes the Docker API as root on the node.\n"
+        "# A compromised pod (RCE in app, malicious image) runs\n"
+        "# ``docker run -v /:/host --privileged`` and now owns the\n"
+        "# entire node — kubelet credentials, every co-tenant pod's\n"
+        "# filesystem, every secret mounted into a pod scheduled on\n"
+        "# this node.\n"
+        "apiVersion: v1\n"
+        "kind: Pod\n"
+        "metadata: { name: build }\n"
+        "spec:\n"
+        "  containers:\n"
+        "    - name: builder\n"
+        "      image: docker:latest\n"
+        "      volumeMounts:\n"
+        "        - name: docker-sock\n"
+        "          mountPath: /var/run/docker.sock\n"
+        "  volumes:\n"
+        "    - name: docker-sock\n"
+        "      hostPath:\n"
+        "        path: /var/run/docker.sock\n"
+        "\n"
+        "# Safe: don't mount the runtime socket. Use a sandboxed\n"
+        "# builder (Kaniko, BuildKit rootless, img) that produces\n"
+        "# images from a Dockerfile without root access to the\n"
+        "# node's container runtime.\n"
+        "apiVersion: v1\n"
+        "kind: Pod\n"
+        "metadata: { name: build }\n"
+        "spec:\n"
+        "  containers:\n"
+        "    - name: builder\n"
+        "      image: gcr.io/kaniko-project/executor:v1.21.0\n"
+        "      args:\n"
+        "        - --context=git://github.com/myorg/myapp\n"
+        "        - --destination=registry.example.com/myapp:tag"
+    ),
 )
 
 
@@ -59,6 +106,7 @@ def _is_sensitive(path: str) -> bool:
 
 def check(ctx: KubernetesContext) -> Finding:
     offenders: list[str] = []
+    locations: list[Location] = []
     for m, ps in iter_workload_pod_specs(ctx):
         for v in iter_volumes(ps):
             hp = v.get("hostPath")
@@ -69,6 +117,7 @@ def check(ctx: KubernetesContext) -> Finding:
                 continue
             if _is_sensitive(path):
                 offenders.append(f"{m.kind}/{m.name}: {path}")
+                locations.append(manifest_location(m, v))
     passed = not offenders
     desc = (
         "No hostPath volume references a sensitive host directory."
@@ -82,4 +131,5 @@ def check(ctx: KubernetesContext) -> Finding:
         resource="kubernetes/manifests",
         description=desc,
         recommendation=RULE.recommendation, passed=passed,
+        locations=locations,
     )

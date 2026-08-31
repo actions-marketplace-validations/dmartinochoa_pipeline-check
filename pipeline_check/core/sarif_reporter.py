@@ -42,10 +42,19 @@ import hashlib
 import json
 import os
 import re
+import urllib.parse
 from typing import Any
 
 from .chains import Chain
-from .checks.base import Confidence, Finding, Location, Severity
+from .checks.base import (
+    Confidence,
+    Finding,
+    Location,
+    Severity,
+    inline_exploit,
+    markdown_code_fence,
+)
+from .report_view import ReportView
 from .scorer import ScoreResult
 
 # SARIF 2.1.0 ``rank`` is a 0–100 float conveying "how important this
@@ -111,6 +120,8 @@ def report_sarif(
     score_result: ScoreResult,
     tool_version: str = "",
     chains: list[Chain] | None = None,
+    inline_explain: bool = False,
+    scan_status: dict[str, Any] | None = None,
 ) -> str:
     """Serialize findings to a SARIF 2.1.0 JSON string.
 
@@ -133,11 +144,16 @@ def report_sarif(
         carried in ``properties.triggering_checks`` for programmatic
         consumers; MITRE ATT&CK techniques are encoded as ``tags``
         prefixed with ``mitre/``.
+    scan_status:
+        Optional completeness summary (``complete`` plus the
+        files-scanned / unparsed / degraded counts). Surfaced under the
+        run's ``properties.scan_status`` so a consumer can detect a scan
+        that parsed only part of what it was given.
     """
-    rules = _build_rules(findings)
+    rules = _build_rules(findings, inline_explain=inline_explain)
     rule_index = {rule["id"]: idx for idx, rule in enumerate(rules)}
 
-    results = [_finding_to_result(f, rule_index) for f in findings if not f.passed]
+    results = [_finding_to_result(f, rule_index) for f in ReportView(findings).failed]
 
     if chains:
         chain_rules = _build_chain_rules(chains)
@@ -163,6 +179,12 @@ def report_sarif(
                 "results": results,
                 "properties": {
                     "score": score_result,
+                    # ``scan_status`` (when supplied) lets a SARIF
+                    # consumer tell a complete scan from one where a file
+                    # failed to parse or a cloud module degraded, the same
+                    # signal the JSON output and terminal report carry.
+                    **({"scan_status": scan_status}
+                       if scan_status is not None else {}),
                 },
             }
         ],
@@ -200,8 +222,7 @@ def _normalize_path(path: str) -> str:
     the scan.
     """
     norm = path.replace("\\", "/")
-    if os.name == "nt":
-        norm = norm.lower()
+    norm = norm.lower()
     return norm
 
 
@@ -370,6 +391,12 @@ def _chain_to_result(chain: Chain, rule_index: dict[str, int]) -> dict[str, Any]
             "kill_chain_phase": chain.kill_chain_phase,
             "references": list(chain.references),
             "confirmed_reachable": chain.confirmed_reachable,
+            # Distinguish the proven dataflow tier and the structural-
+            # identity tier (both confirmed) from the weaker shared-job
+            # co-location fallback so machine consumers can gate on the
+            # stronger signals (mirrors --chains-require-dataflow).
+            "via_dataflow": chain.via_dataflow,
+            "via_structural": chain.via_structural,
             "reachability_note": chain.reachability_note,
         },
     }
@@ -380,13 +407,19 @@ def _chain_to_result(chain: Chain, rule_index: dict[str, int]) -> dict[str, Any]
 # ────────────────────────────────────────────────────────────────────────────
 
 
-def _build_rules(findings: list[Finding]) -> list[dict[str, Any]]:
+def _build_rules(
+    findings: list[Finding], inline_explain: bool = False,
+) -> list[dict[str, Any]]:
     """Build one rule per distinct check_id.
 
     Severity + help text are taken from the first occurrence. Later
     findings with the same check_id reuse the rule; they may differ in
     their per-resource description, which lives on the result, not the
     rule.
+
+    When *inline_explain* is set, the rule's ``exploit_example`` (a
+    rule-level property, identical across that rule's findings) is
+    appended to both the plain and markdown ``help`` text.
     """
     seen: dict[str, dict[str, Any]] = {}
     for f in findings:
@@ -412,6 +445,16 @@ def _build_rules(findings: list[Finding]) -> list[dict[str, Any]]:
         help_parts = [f"**Recommendation**\n\n{f.recommendation}"]
         if f.cwe:
             help_parts.append(f"**CWE:** {', '.join(f.cwe)}")
+        # ``--inline-explain`` appends the proof-of-exploit snippet to
+        # the rule help so GitHub code-scanning's rule pane carries it.
+        help_text = f.recommendation or f.title
+        exploit = inline_exploit(f, inline_explain)
+        if exploit:
+            fence = markdown_code_fence(exploit)
+            help_parts.append(
+                f"**Proof of exploit**\n\n{fence}\n{exploit}\n{fence}"
+            )
+            help_text = f"{help_text}\n\nProof of exploit:\n{exploit}"
         help_md = "\n\n---\n\n".join(help_parts)
 
         seen[f.check_id] = {
@@ -420,7 +463,7 @@ def _build_rules(findings: list[Finding]) -> list[dict[str, Any]]:
             "shortDescription": {"text": f.title},
             "fullDescription": {"text": f.recommendation or f.title},
             "help": {
-                "text": f.recommendation,
+                "text": help_text,
                 "markdown": help_md,
             },
             "defaultConfiguration": {"level": level},
@@ -461,15 +504,21 @@ def _finding_to_result(f: Finding, rule_index: dict[str, int]) -> dict[str, Any]
             phys: dict[str, Any] = {
                 "artifactLocation": {"uri": _artifact_uri(loc.path)},
             }
+            # SARIF anchors a region on ``startLine``: ``startColumn`` is
+            # defined relative to it, and ``endLine`` / ``endColumn``
+            # without it produce an invalid region that GitHub code
+            # scanning rejects. Only emit the column/end fields when a
+            # start line is known; otherwise fall back to a file-level
+            # location (no region).
             region: dict[str, Any] = {}
             if loc.start_line is not None:
                 region["startLine"] = loc.start_line
-            if loc.end_line is not None and loc.end_line != loc.start_line:
-                region["endLine"] = loc.end_line
-            if loc.start_column is not None:
-                region["startColumn"] = loc.start_column
-            if loc.end_column is not None:
-                region["endColumn"] = loc.end_column
+                if loc.end_line is not None and loc.end_line != loc.start_line:
+                    region["endLine"] = loc.end_line
+                if loc.start_column is not None:
+                    region["startColumn"] = loc.start_column
+                if loc.end_column is not None:
+                    region["endColumn"] = loc.end_column
             if region:
                 phys["region"] = region
             locations.append({
@@ -488,16 +537,23 @@ def _finding_to_result(f: Finding, rule_index: dict[str, int]) -> dict[str, Any]
             "logicalLocations": [logical_location],
         })
 
+    # SARIF ``rank`` (0–100 float) lets GitHub/GitLab Code Scanning
+    # sort results by how much the scanner trusts them, orthogonal
+    # to severity. HIGH-confidence findings surface first; LOW are
+    # de-ranked so noisy rules don't drown out the signal.
+    # SARIF 2.1.0 defines ``rank`` on ``reportingDescriptor``, not on
+    # ``result`` (which sets ``additionalProperties: false``). Carry it
+    # in ``properties`` so strict validators accept the output.
+    properties["rank"] = _CONFIDENCE_RANK.get(f.confidence, 100.0)
+
     result: dict[str, Any] = {
         "ruleId": f.check_id,
         "ruleIndex": rule_index.get(f.check_id, 0),
         "level": level,
-        # SARIF ``rank`` (0–100 float) lets GitHub/GitLab Code Scanning
-        # sort results by how much the scanner trusts them, orthogonal
-        # to severity. HIGH-confidence findings surface first; LOW are
-        # de-ranked so noisy rules don't drown out the signal.
-        "rank": _CONFIDENCE_RANK.get(f.confidence, 100.0),
-        "message": {"text": f.description},
+        # SARIF 2.1.0 requires message.text to be a string; fall back to
+        # the title so an empty description can't emit ``"text": null``
+        # (every sibling reporter guards this the same way).
+        "message": {"text": f.description or f.title},
         "locations": locations,
         # ``partialFingerprints`` lets GHCS / GitLab / Azure DevOps
         # match the same finding across runs so an unchanged repo
@@ -649,12 +705,21 @@ def _artifact_uri(resource: str) -> str:
     """
     if not resource:
         return "unknown"
-    # Heuristic: anything that contains a path separator, starts with a
-    # drive letter, or ends in .yml/.yaml/.tf/.json is probably a file.
     lowered = resource.lower()
+    _file_exts = (
+        ".yml", ".yaml", ".tf", ".json", ".xml", ".toml", ".txt",
+        ".cfg", ".config", ".csproj", ".props", ".lock", ".npmrc",
+    )
+    _bare_names = {
+        "dockerfile", "containerfile", "jenkinsfile", "makefile",
+        "gemfile", "rakefile", "vagrantfile",
+    }
     if (
-        "/" in resource or "\\" in resource
-        or lowered.endswith((".yml", ".yaml", ".tf", ".json"))
+        "/" in resource
+        or "\\" in resource
+        or lowered.endswith(_file_exts)
+        or lowered in _bare_names
+        or lowered.startswith(("dockerfile", "containerfile"))
     ):
-        return resource.replace("\\", "/")
+        return urllib.parse.quote(resource.replace("\\", "/"), safe="/")
     return f"resource:///{resource}"

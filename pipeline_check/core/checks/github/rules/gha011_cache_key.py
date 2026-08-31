@@ -42,6 +42,30 @@ RULE = Rule(
         "later default-branch run restores and treats as a clean "
         "build cache."
     ),
+    exploit_example=(
+        "# Vulnerable: the cache key namespace derives from the PR head ref.\n"
+        "on: [pull_request]\n"
+        "jobs:\n"
+        "  build:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - uses: actions/cache@v4\n"
+        "        with:\n"
+        "          path: ~/.cache/build\n"
+        "          key: build-${{ github.head_ref }}\n"
+        "          restore-keys: |\n"
+        "            build-\n"
+        "\n"
+        "# Attack: open a PR from a branch you name. Your PR run writes\n"
+        "# poisoned artifacts under `build-<your-branch>`. Caches are\n"
+        "# shared across a repo's branches, so a later push to the\n"
+        "# default branch misses its own key and falls through\n"
+        "# `restore-keys: build-` to your entry, restoring attacker-\n"
+        "# controlled content into the release build before it runs.\n"
+        "\n"
+        "# Safe: key only on values the attacker can't control.\n"
+        "          key: build-${{ runner.os }}-${{ hashFiles('**/*.lock') }}"
+    ),
 )
 
 
@@ -56,7 +80,11 @@ def check(path: str, doc: dict[str, Any]) -> Finding:
     for job_id, job in iter_jobs(doc):
         for idx, step in enumerate(iter_steps(job)):
             uses = step.get("uses") or ""
-            if not isinstance(uses, str) or "actions/cache@" not in uses:
+            if not isinstance(uses, str) or not (
+                "actions/cache@" in uses
+                or "actions/cache/restore@" in uses
+                or "actions/cache/save@" in uses
+            ):
                 continue
             with_block = step.get("with") or {}
             if not isinstance(with_block, dict):
@@ -65,7 +93,14 @@ def check(path: str, doc: dict[str, Any]) -> Finding:
                 raw = with_block.get(key_name)
                 if raw is None:
                     continue
-                text = raw if isinstance(raw, str) else "\n".join(str(v) for v in raw)
+                if isinstance(raw, str):
+                    text = raw
+                elif isinstance(raw, (list, tuple)):
+                    text = "\n".join(str(v) for v in raw)
+                else:
+                    # Numeric/boolean scalar key (e.g. ``key: 123``):
+                    # stringify rather than iterate it.
+                    text = str(raw)
                 if CACHE_TAINT_RE.search(text):
                     offenders.append(f"{job_id}[{idx}].{key_name}")
                     anchor_jobs[job_id] = None

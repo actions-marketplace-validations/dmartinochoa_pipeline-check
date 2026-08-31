@@ -30,6 +30,53 @@ RULE = Rule(
         "PPE: a malicious PR uploads a tampered artifact, the "
         "privileged workflow_run downloads and executes it."
     ),
+    exploit_example=(
+        "# Vulnerable: the workflow_run trigger runs in the\n"
+        "# privileged default-branch context (write GITHUB_TOKEN,\n"
+        "# secrets accessible) but the artifact came from the\n"
+        "# triggering workflow — on a fork PR that's attacker-\n"
+        "# controlled. The fork's build job uploads anything it\n"
+        "# wants as ``build-output``; the parent downloads and\n"
+        "# executes it inside its own credential scope.\n"
+        "name: deploy-on-success\n"
+        "on:\n"
+        "  workflow_run:\n"
+        "    workflows: [\"pr-build\"]\n"
+        "    types: [completed]\n"
+        "jobs:\n"
+        "  deploy:\n"
+        "    if: github.event.workflow_run.conclusion == 'success'\n"
+        "    runs-on: ubuntu-latest\n"
+        "    permissions: { contents: write, id-token: write }\n"
+        "    steps:\n"
+        "      - uses: actions/download-artifact@<sha>\n"
+        "        with:\n"
+        "          name: build-output\n"
+        "          run-id: ${{ github.event.workflow_run.id }}\n"
+        "          github-token: ${{ secrets.GITHUB_TOKEN }}\n"
+        "      - run: ./build-output/release.sh    # attacker's code\n"
+        "\n"
+        "# Safe: verify a SLSA / Sigstore attestation produced by\n"
+        "# the trusted upstream before consuming the artifact. The\n"
+        "# verification step must come BEFORE any step that reads\n"
+        "# or executes anything from the downloaded directory.\n"
+        "jobs:\n"
+        "  deploy:\n"
+        "    if: github.event.workflow_run.conclusion == 'success'\n"
+        "    runs-on: ubuntu-latest\n"
+        "    permissions:\n"
+        "      contents: write\n"
+        "      id-token: write\n"
+        "      attestations: read\n"
+        "    steps:\n"
+        "      - uses: actions/download-artifact@<sha>\n"
+        "        with:\n"
+        "          name: build-output\n"
+        "          run-id: ${{ github.event.workflow_run.id }}\n"
+        "          github-token: ${{ secrets.GITHUB_TOKEN }}\n"
+        "      - run: gh attestation verify --owner ${{ github.repository_owner }} ./build-output/*\n"
+        "      - run: ./build-output/release.sh"
+    ),
 )
 
 
@@ -63,6 +110,12 @@ def check(path: str, doc: dict[str, Any]) -> Finding:
             blob = f"{uses} {run}".lower()
             if (
                 isinstance(uses, str) and "actions/download-artifact" in uses
+                # ``dawidd6/action-download-artifact`` is the canonical
+                # cross-run downloader for ``workflow_run`` workflows (the
+                # only option before ``download-artifact@v4`` grew
+                # ``run-id``), i.e. this rule's exact target scenario.
+                or isinstance(uses, str)
+                and "dawidd6/action-download-artifact" in uses
                 or "gh run download" in blob
                 or "gh api repos/" in blob and "/artifacts/" in blob
             ):

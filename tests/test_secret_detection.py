@@ -35,10 +35,12 @@ def _clean_user_patterns():
 _FILLER = "0123456789abcdefghijABCDEFGHIJ" * 10  # plenty of variety
 
 DETECTORS: list[tuple[str, str]] = [
-    ("aws_access_key",        "AKIAIOSFODNN7EXAMPLE"),
-    ("aws_access_key",        "ASIAIOSFODNN7EXAMPLE"),
+    ("aws_access_key",        "AKIAZ3MHALF2TESTHIJK"),
+    ("aws_access_key",        "ASIAZ3MHALF2TESTHIJK"),
     ("github_token",          "ghp_" + _FILLER[:40]),
     ("github_token",          "gho_" + _FILLER[:36]),
+    # Fine-grained PAT: ``github_pat_`` + 82-char body.
+    ("github_token",          "github_pat_" + _FILLER[:82]),
     ("slack_token",           "xoxb-1234567890123-1234567890123"),
     ("jwt",                   "eyJabcdefghij.eyJklmnopqrst.signaturesignaturex"),
     ("stripe_secret",         "sk_live_" + _FILLER[:30]),
@@ -92,6 +94,25 @@ DETECTORS: list[tuple[str, str]] = [
     ("square_access_token",   "sq0atp-" + _FILLER[:25]),
     ("square_access_token",   "sq0csp-" + _FILLER[:25]),
     ("terraform_cloud_token", "abcdef1234567g.atlasv1." + _FILLER[:65]),
+    # ── New detectors (round 4) ──
+    ("openai_api_key",        "sk-svcacct-" + _FILLER[:45]),
+    ("postman_api_key",       "PMAK-" + "0123456789abcdef01234567" + "-" + "0123456789abcdef0123456789abcdef01"),
+    ("tailscale_key",         "tskey-auth-k1A2B3C4CNTRL-" + _FILLER[:30]),
+    ("tailscale_key",         "tskey-api-k9Z8Y7X6CNTRL-" + _FILLER[:30]),
+    ("sentry_auth_token",     "sntrys_" + _FILLER[:55]),
+    ("sentry_auth_token",     "sntryu_" + _FILLER[:55]),
+    # ── New detectors (round 5): LLM provider API keys ──
+    ("groq_api_key",          "gsk_" + _FILLER[:52]),
+    ("xai_api_key",           "xai-" + _FILLER[:80]),
+    ("perplexity_api_key",    "pplx-" + _FILLER[:48]),
+    # ── New detectors (round 6): incoming-webhook URLs ──
+    ("slack_webhook",
+     "https://hooks.slack.com/services/T00000000/B00000000/" + _FILLER[:24]),
+    ("discord_webhook",
+     "https://discord.com/api/webhooks/123456789012345678/" + _FILLER[:68]),
+    # ── New detectors (round 7): Figma + Notion tokens ──
+    ("figma_token",           "figd_" + _FILLER[:42]),
+    ("notion_token",          "ntn_" + _FILLER[:46]),
 ]
 
 
@@ -157,6 +178,23 @@ def test_detector_fires_on_real_shape_token(name, token):
     ("1/12345:short",                      "Asana PAT needs 15-18 digit ID and 32-hex secret"),
     ("sq0atp-short",                       "Square token needs 20+ chars after sq0atp-"),
     ("abc.atlasv1.short",                  "Terraform Cloud token needs 14 alnum + .atlasv1. + 60+ chars"),
+    # ── New detectors (round 4) ──
+    ("sk-svcacct-short",                   "OpenAI svcacct key needs 40+ chars after prefix"),
+    ("PMAK-short",                         "Postman key needs 24 hex + - + 34 hex"),
+    ("tskey-auth-short",                   "Tailscale key needs <keyID>-<secret 24+>"),
+    ("sntrys_short",                       "Sentry token needs 40+ chars after prefix"),
+    # ── New detectors (round 5): LLM provider API keys ──
+    ("gsk_short",                          "Groq key needs 48+ chars after gsk_"),
+    ("xai-short",                          "xAI key needs 64+ chars after xai-"),
+    ("pplx-short",                         "Perplexity key needs 40+ chars after pplx-"),
+    # ── New detectors (round 6): incoming-webhook URLs ──
+    ("https://hooks.slack.com/services/T0/B0/short",
+     "Slack webhook needs T../B../24+ secret"),
+    ("https://discord.com/api/webhooks/123/short",
+     "Discord webhook needs 17-20 digit id + 60+ token"),
+    # ── New detectors (round 7): Figma + Notion tokens ──
+    ("figd_short",                          "Figma token needs 40+ chars after figd_"),
+    ("ntn_short",                           "Notion token needs 40+ chars after ntn_"),
 ])
 def test_detectors_reject_undersized_tokens(token, reason):
     """Loose detector regexes are a constant source of false positives.
@@ -187,14 +225,28 @@ def test_placeholder_tokens_are_suppressed(token):
     )
 
 
-def test_aws_canonical_example_is_still_flagged():
-    """``AKIAIOSFODNN7EXAMPLE`` is the canonical AWS docs example. It
-    is DELIBERATELY left in the flag set — if it shows up in a real
-    workflow it almost certainly means someone copy-pasted from docs
-    and forgot to substitute. That's exactly the case the scanner
-    exists to catch."""
-    hits = secrets_mod.find_secret_values({"k": "AKIAIOSFODNN7EXAMPLE"})
-    assert hits and hits[0].startswith("aws_access_key:")
+def test_vendor_example_tokens_suppressed():
+    """Vendor-published example keys should not produce findings."""
+    stripe_key = "sk_test_" + "4eC39HqLyjWDarjtT1zdp7dc"
+    doc = {
+        "env": {
+            "AWS_KEY": "AKIAIOSFODNN7EXAMPLE",
+            "STRIPE": stripe_key,
+        }
+    }
+    hits = secrets_mod.find_secret_values(doc)
+    # Neither vendor example should fire.
+    for h in hits:
+        assert "AKIAIOSFODNN7EXAMPLE" not in h
+        assert stripe_key not in h
+
+
+def test_vendor_example_tokens_suppressed_in_classify_raw():
+    """The raw classifier used by --verify-secrets also skips vendor
+    example tokens so the verifier doesn't waste probes on them."""
+    doc = {"k": "AKIAIOSFODNN7EXAMPLE"}
+    results = secrets_mod.classify_tokens_raw(doc)
+    assert all(tok != "AKIAIOSFODNN7EXAMPLE" for _, tok in results)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -273,13 +325,13 @@ def test_pem_body_does_not_emit_token_hits():
 def test_hit_label_format_is_detector_then_redacted():
     """Stable contract: ``<detector>:<redacted-value>``. Reports and
     ignore-rule tooling parse these by splitting on the first ``:``."""
-    hits = secrets_mod.find_secret_values({"k": "AKIAIOSFODNN7EXAMPLE"})
+    hits = secrets_mod.find_secret_values({"k": "AKIAZ3MHALF2TESTHIJK"})
     assert hits
     name, _, redacted = hits[0].partition(":")
     assert name == "aws_access_key"
     # Redaction shape: first 4 + ellipsis + last 2.
     assert redacted.startswith("AKIA")
-    assert redacted.endswith("LE")
+    assert redacted.endswith("JK")
     assert "…" in redacted
 
 
@@ -298,8 +350,8 @@ def test_user_pattern_uses_custom_label():
 def test_dedup_within_doc():
     """Repeated occurrences of the same token collapse to one hit."""
     hits = secrets_mod.find_secret_values({
-        "a": "AKIAIOSFODNN7EXAMPLE",
-        "b": "AKIAIOSFODNN7EXAMPLE",
+        "a": "AKIAZ3MHALF2TESTHIJK",
+        "b": "AKIAZ3MHALF2TESTHIJK",
     })
     assert len(hits) == 1
 

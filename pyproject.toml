@@ -4,21 +4,48 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pipeline-check"
-version = "1.2.0"
-description = "CI/CD Security Posture Scanner — scores AWS, Terraform, CloudFormation, GitHub Actions, GitLab CI, Azure DevOps, Bitbucket Pipelines, Jenkins, CircleCI, Google Cloud Build, Buildkite, Drone CI, Tekton, Argo Workflows, Dockerfile, Kubernetes manifests, Helm charts, OCI image manifests, SCM repo posture (GitHub / GitLab / Bitbucket), npm and pypi dependency files against OWASP Top 10 CI/CD Risks and 14 other compliance frameworks"
+version = "1.19.0"
+description = "Security scanner for CI/CD pipelines, IaC, and cloud: GitHub Actions, GitLab CI, Terraform, Kubernetes, and more, scored against the OWASP CI/CD Top 10."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
 authors = [
     { name = "Daniel Martin" },
 ]
+keywords = [
+    "security",
+    "security-scanner",
+    "devsecops",
+    "ci-cd",
+    "cicd",
+    "github-actions",
+    "gitlab-ci",
+    "sast",
+    "static-analysis",
+    "supply-chain-security",
+    "vulnerability-scanner",
+    "terraform",
+    "cloudformation",
+    "kubernetes",
+    "dockerfile",
+    "iac",
+    "owasp",
+    "compliance",
+    "sarif",
+    "pipeline-security",
+]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
     "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
     "Topic :: Security",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Build Tools",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Operating System :: OS Independent",
 ]
 dependencies = [
@@ -68,12 +95,56 @@ lsp = [
     "pygls>=2.1.0",
     "lsprotocol>=2025.0.0",
 ]
+# Opt-in direct-HCL Terraform parsing (``--tf-source``). Lets the
+# scanner read raw *.tf files without requiring ``terraform plan``
+# + ``terraform show -json``. Variable resolution is best-effort.
+hcl = ["python-hcl2>=4.0"]
+# Opt-in Azure Cloud posture scanning (``--pipeline azure_cloud``).
+# Requires an Azure subscription and ``az login`` authentication.
+azure-cloud = [
+    "azure-identity>=1.17.0",
+    "azure-keyvault-keys>=4.9.0",
+    "azure-keyvault-secrets>=4.8.0",
+    "azure-mgmt-authorization>=4.0.0",
+    "azure-mgmt-compute>=31.0.0",
+    "azure-mgmt-containerregistry>=10.0.0",
+    "azure-mgmt-keyvault>=10.0.0",
+    "azure-mgmt-monitor>=6.0.0",
+    "azure-mgmt-network>=25.0.0",
+    "azure-mgmt-resource>=23.0.0",
+    "azure-mgmt-sql>=4.0.0",
+    "azure-mgmt-storage>=21.0.0",
+    "azure-mgmt-web>=7.0.0",
+    "requests>=2.31.0",
+]
+# Opt-in GCP cloud posture scanning (``--pipeline gcp``). Requires
+# a GCP project and ``gcloud auth application-default login``.
+gcp = [
+    "google-auth>=2.29.0",
+    "google-cloud-artifact-registry>=1.11.0",
+    "google-cloud-compute>=1.19.0",
+    "google-cloud-functions>=1.16.0",
+    "google-cloud-iam>=2.15.0",
+    "google-cloud-kms>=2.21.0",
+    "google-cloud-logging>=3.10.0",
+    "google-cloud-org-policy>=1.11.0",
+    "google-cloud-resource-manager>=1.12.0",
+    "google-cloud-run>=0.10.0",
+    "google-cloud-storage>=2.16.0",
+    "requests>=2.31.0",
+]
 
 [project.scripts]
+# Both spellings resolve to the same entry point. ``pipeline-check``
+# (hyphen) matches the PyPI/Docker/brand name users install, so typing
+# the name they just installed works; ``pipeline_check`` (underscore) is
+# kept for back-compat with every existing doc and script.
+pipeline-check = "pipeline_check.cli:main"
 pipeline_check = "pipeline_check.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/dmartinochoa/pipeline-check"
+Homepage = "https://dmartinochoa.github.io/pipeline-check/"
+Documentation = "https://dmartinochoa.github.io/pipeline-check/"
 Repository = "https://github.com/dmartinochoa/pipeline-check"
 Issues = "https://github.com/dmartinochoa/pipeline-check/issues"
 Changelog = "https://github.com/dmartinochoa/pipeline-check/blob/master/CHANGELOG.md"
@@ -90,6 +161,8 @@ include = ["pipeline_check*"]
 [tool.setuptools.package-data]
 "pipeline_check.core" = ["*.css"]
 "pipeline_check.core.checks.aws.rules" = ["*.yml"]
+"pipeline_check.core.checks.azure_cloud.rules" = ["*.yml"]
+"pipeline_check.core.checks.gcp.rules" = ["*.yml"]
 
 [tool.ruff]
 target-version = "py311"
@@ -115,11 +188,14 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+"bench/run.py" = ["E402"]                          # sys.path setup before pipeline_check import
 "pipeline_check/core/html_reporter.py" = ["E501"]  # inline CSS/JS templates
 "pipeline_check/core/checks/base.py" = ["E402"]    # deferred re import after dataclass
 "scripts/gen_provider_docs.py" = ["E402", "E501"]  # sys.path setup + markdown-table template strings
 "scripts/gen_standards_docs.py" = ["E402"]         # sys.path setup before pipeline_check import
-"tests/**" = ["E501"]                               # test strings often exceed line length
+"scripts/gen_attack_chains_doc.py" = ["E402"]      # sys.path setup before pipeline_check import
+"tests/**" = ["E501", "E402"]                        # test strings + mid-file imports for extended test classes
+"tests/terraform/test_hcl_parser.py" = ["E402"]     # importorskip guard before project imports
 
 [tool.mypy]
 python_version = "3.11"
@@ -211,5 +287,27 @@ module = [
     "pipeline_check.core.checks.aws.workflows",
     "pipeline_check.core.checks.aws.base",
     "pipeline_check.core.providers.aws",
+]
+disable_error_code = ["no-any-return", "call-overload", "var-annotated", "union-attr", "arg-type", "type-arg"]
+
+# Azure Cloud provider: same situation as AWS — azure-mgmt-* SDKs
+# return untyped model objects.
+[[tool.mypy.overrides]]
+module = [
+    "pipeline_check.core.checks.azure_cloud._catalog",
+    "pipeline_check.core.checks.azure_cloud.workflows",
+    "pipeline_check.core.checks.azure_cloud.base",
+    "pipeline_check.core.providers.azure_cloud",
+]
+disable_error_code = ["no-any-return", "call-overload", "var-annotated", "union-attr", "arg-type", "type-arg"]
+
+# GCP provider: same situation — google-cloud-* SDKs return protobuf
+# objects that resolve to Any.
+[[tool.mypy.overrides]]
+module = [
+    "pipeline_check.core.checks.gcp._catalog",
+    "pipeline_check.core.checks.gcp.workflows",
+    "pipeline_check.core.checks.gcp.base",
+    "pipeline_check.core.providers.gcp",
 ]
 disable_error_code = ["no-any-return", "call-overload", "var-annotated", "union-attr", "arg-type", "type-arg"]

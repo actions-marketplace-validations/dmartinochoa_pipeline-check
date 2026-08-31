@@ -15,11 +15,46 @@ RULE = Rule(
     cwe=("CWE-269",),
     recommendation="Replace wildcard actions with specific IAM actions.",
     docs_note=(
-        "``Action: '*'`` (or service-prefix wildcards like "
-        "``s3:*``) on an attached policy is functionally equivalent "
-        "to AdministratorAccess for that resource. The wildcard "
-        "absorbs every new IAM action AWS adds, so the role's "
-        "authority grows without any local change."
+        "``Action: '*'`` on an attached policy is functionally "
+        "equivalent to AdministratorAccess: the role can call every "
+        "API in every service. The wildcard absorbs every new IAM "
+        "action AWS adds, so the role's authority grows without any "
+        "local change. Service-prefix wildcards like ``s3:*`` are "
+        "caught by IAM-006, not this rule."
+    ),
+    exploit_example=(
+        "# Vulnerable: the role can call any API in any AWS service.\n"
+        "# Any compromise of any pipeline that assumes this role\n"
+        "# (poisoned action, leaked credential, malicious build\n"
+        "# step) has full administrative access to the account.\n"
+        "{\n"
+        '  "Version": "2012-10-17",\n'
+        '  "Statement": [{\n'
+        '    "Effect": "Allow",\n'
+        '    "Action": "*",\n'
+        '    "Resource": "*"\n'
+        "  }]\n"
+        "}\n"
+        "\n"
+        "# Safe: enumerate the actions the pipeline actually needs\n"
+        "# and scope ``Resource`` to specific ARNs. A new\n"
+        "# requirement then triggers a policy review instead of\n"
+        "# silently widening authority.\n"
+        "{\n"
+        '  "Version": "2012-10-17",\n'
+        '  "Statement": [{\n'
+        '    "Effect": "Allow",\n'
+        '    "Action": [\n'
+        '      "s3:GetObject",\n'
+        '      "s3:PutObject",\n'
+        '      "s3:ListBucket"\n'
+        "    ],\n"
+        '    "Resource": [\n'
+        '      "arn:aws:s3:::my-build-artifacts",\n'
+        '      "arn:aws:s3:::my-build-artifacts/*"\n'
+        "    ]\n"
+        "  }]\n"
+        "}"
     ),
 )
 

@@ -12,11 +12,11 @@ Mirrors ``checks/terraform/services.py``. Notes:
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
+from .._context import statement_is_constrained
 from .._iam_policy import as_list, iter_allow, public_principal
-from .._patterns import SECRET_NAME_RE, SECRET_VALUE_RE
+from .._patterns import SECRET_NAME_RE, SECRET_VALUE_RE, arn_account_id
 from ..base import Finding, Severity
 from .base import (
     CloudFormationBaseCheck,
@@ -25,6 +25,32 @@ from .base import (
     is_intrinsic,
     is_true,
 )
+
+
+def _principal_is_only_account_root(stmt: dict[str, Any]) -> bool:
+    """True when a statement's principal is exclusively the account root.
+
+    The default/required KMS key policy grants ``kms:*`` to
+    ``arn:aws:iam::<acct>:root`` (literal or via ``Fn::Sub`` with
+    ``${AWS::AccountId}``). That root statement is AWS's recommended
+    baseline (it lets IAM policies govern access), not an over-broad
+    grant, so KMS-002 must not flag it.
+    """
+    principal = stmt.get("Principal")
+    if not isinstance(principal, dict) or set(principal) - {"AWS"}:
+        return False
+    aws = principal.get("AWS")
+    values = aws if isinstance(aws, list) else [aws]
+    if not values:
+        return False
+    for v in values:
+        if isinstance(v, str) and v.endswith(":root"):
+            continue
+        if (isinstance(v, dict) and isinstance(v.get("Fn::Sub"), str)
+                and v["Fn::Sub"].endswith(":root")):
+            continue
+        return False
+    return True
 
 
 class ServiceChecks(CloudFormationBaseCheck):
@@ -48,7 +74,17 @@ def _codeartifact(ctx: CloudFormationContext) -> list[Finding]:
     for d in ctx.resources("AWS::CodeArtifact::Domain"):
         key = d.properties.get("EncryptionKey")
         key_str = as_str(key)
-        passed = bool(key_str) and "alias/aws/" not in key_str
+        if key_str:
+            # Literal string: pass unless it's an AWS-owned alias.
+            passed = "alias/aws/" not in key_str
+        elif is_intrinsic(key) and _is_cmk_intrinsic(key, ctx):
+            # Ref/GetAtt to an in-template KMS::Key/Alias is the only
+            # practical way to point at a stack-defined CMK (CCM-002
+            # handles it the same way).
+            passed = True
+            key_str = "<intrinsic CMK reference>"
+        else:
+            passed = False
         out.append(Finding(
             check_id="CA-001",
             title="CodeArtifact domain not encrypted with customer KMS CMK",
@@ -64,7 +100,12 @@ def _codeartifact(ctx: CloudFormationContext) -> list[Finding]:
         doc = d.properties.get("PermissionsPolicyDocument")
         if doc is not None:
             policy = _parse_policy(doc)
-            offenders = [i for i, s in enumerate(iter_allow(policy)) if public_principal(s)]
+            # A wildcard principal narrowed by aws:PrincipalOrgID (the
+            # documented org-sharing idiom) is not cross-account exposure.
+            offenders = [
+                i for i, s in enumerate(iter_allow(policy))
+                if public_principal(s) and not statement_is_constrained(s)
+            ]
             out.append(Finding(
                 check_id="CA-003",
                 title="CodeArtifact domain policy allows cross-account wildcard",
@@ -80,7 +121,15 @@ def _codeartifact(ctx: CloudFormationContext) -> list[Finding]:
                 passed=not offenders,
             ))
     for r in ctx.resources("AWS::CodeArtifact::Repository"):
-        conns = r.properties.get("ExternalConnections") or []
+        raw_conns = r.properties.get("ExternalConnections")
+        # CFN types this as a list, but a single connection may be
+        # written as a scalar string; normalize so it isn't iterated
+        # character by character.
+        conns = (
+            [raw_conns] if isinstance(raw_conns, str)
+            else raw_conns if isinstance(raw_conns, list)
+            else []
+        )
         public = [c for c in conns if isinstance(c, str) and c.startswith("public:")]
         out.append(Finding(
             check_id="CA-002",
@@ -129,15 +178,58 @@ def _codeartifact(ctx: CloudFormationContext) -> list[Finding]:
 # CCM-001 omitted (no CFN resource for approval-rule template association).
 # ---------------------------------------------------------------------------
 
-_ARN_ACCOUNT_RE = re.compile(r"^arn:aws:[^:]+:[^:]*:(\d{12}):")
+_KMS_RESOURCE_TYPES = frozenset({
+    "AWS::KMS::Key",
+    "AWS::KMS::Alias",
+})
+
+
+def _is_cmk_intrinsic(value: Any, ctx: CloudFormationContext) -> bool:
+    """Return True when *value* is an intrinsic that references a KMS resource.
+
+    Handles ``{"Ref": "LogicalId"}`` and ``{"Fn::GetAtt": ["LogicalId", ...]}``
+    when the logical ID maps to an ``AWS::KMS::Key`` or ``AWS::KMS::Alias``
+    resource in the template. If the intrinsic targets something else or is
+    unresolvable, returns False so the rule keeps its conservative default.
+    """
+    if not isinstance(value, dict) or len(value) != 1:
+        return False
+    (intrinsic_key, inner) = next(iter(value.items()))
+    if intrinsic_key == "Ref" and isinstance(inner, str):
+        logical_id = inner
+    elif intrinsic_key == "Fn::GetAtt":
+        if isinstance(inner, list) and inner:
+            logical_id = inner[0]
+        elif isinstance(inner, str) and "." in inner:
+            logical_id = inner.split(".", 1)[0]
+        else:
+            return False
+    else:
+        return False
+    kms_logical_ids = {
+        res.logical_id
+        for res in ctx.resources()
+        if res.type in _KMS_RESOURCE_TYPES
+    }
+    return logical_id in kms_logical_ids
 
 
 def _codecommit(ctx: CloudFormationContext) -> list[Finding]:
     out: list[Finding] = []
+    self_accounts = _cfn_self_accounts(ctx)
     for r in ctx.resources("AWS::CodeCommit::Repository"):
         key = r.properties.get("KmsKeyId")
         key_str = as_str(key)
-        passed = bool(key_str) and "alias/aws/codecommit" not in key_str
+        if key_str:
+            # Literal string: pass only when it is not the AWS-owned alias.
+            passed = "alias/aws/codecommit" not in key_str
+        elif is_intrinsic(key) and _is_cmk_intrinsic(key, ctx):
+            # Ref/GetAtt to a KMS resource in the template is the standard
+            # CFN idiom for a customer-managed key. Treat it as a CMK.
+            passed = True
+            key_str = "<intrinsic CMK reference>"
+        else:
+            passed = False
         out.append(Finding(
             check_id="CCM-002",
             title="CodeCommit repository not encrypted with customer KMS CMK",
@@ -150,37 +242,107 @@ def _codecommit(ctx: CloudFormationContext) -> list[Finding]:
             recommendation="Set KmsKeyId to a customer-managed KMS key ARN.",
             passed=passed,
         ))
-        # CCM-003, literal cross-account ARNs in Triggers.DestinationArn
-        # signal potential cross-account drift. CFN's Triggers prop is a
-        # list of {Name, DestinationArn, Events, ...} entries.
+        # CCM-003: a CodeCommit trigger with a literal DestinationArn is
+        # only a finding when that ARN's account differs from the
+        # account the stack deploys into. A same-account literal ARN is
+        # the common case and must not fire. When the template carries
+        # no in-account signal (a sibling literal ARN or a parameter
+        # default), cross-account membership can't be proven statically,
+        # so the trigger is not failed.
         triggers = r.properties.get("Triggers") or []
-        offenders: list[str] = []
+        cross_account: list[str] = []
+        uncorrelated: list[str] = []
         for trig in triggers:
             if not isinstance(trig, dict):
                 continue
             dest = trig.get("DestinationArn")
-            if isinstance(dest, str) and dest.count(":") >= 4:
-                # Literal ARN. We can't resolve what account; flag for audit.
-                offenders.append(dest)
+            if not (isinstance(dest, str) and dest.count(":") >= 4):
+                continue
+            acct = arn_account_id(dest)
+            if not acct:
+                continue
+            if not self_accounts:
+                uncorrelated.append(dest)
+            elif acct not in self_accounts:
+                cross_account.append(dest)
         if triggers:
+            if cross_account:
+                desc = (
+                    f"Trigger DestinationArn(s) in another account "
+                    f"({cross_account}); the template's in-account ARNs "
+                    f"resolve to {sorted(self_accounts)}."
+                )
+                passed = False
+            elif uncorrelated:
+                desc = (
+                    f"Literal DestinationArn(s) in Triggers: {uncorrelated}. "
+                    "The template carries no in-account ARN or parameter "
+                    "default to resolve the deploy account against, so "
+                    "cross-account membership can't be proven statically; "
+                    "not failing on an uncorrelatable literal."
+                )
+                passed = True
+            else:
+                desc = (
+                    "All trigger destinations reference template resources "
+                    "or resolve to the template's own account."
+                )
+                passed = True
             out.append(Finding(
                 check_id="CCM-003",
                 title="CodeCommit trigger targets SNS/Lambda in a different account",
                 severity=Severity.MEDIUM,
                 resource=r.address,
-                description=(
-                    f"Literal DestinationArn(s) in Triggers: {offenders}, verify "
-                    "these stay within the repository's account."
-                    if offenders else
-                    "All trigger destinations reference template resources, not literal ARNs."
-                ),
+                description=desc,
                 recommendation=(
                     "Reference trigger destinations via Fn::GetAtt / Ref on in-template "
                     "SNS/Lambda resources instead of literal cross-account ARNs."
                 ),
-                passed=not offenders,
+                passed=passed,
             ))
     return out
+
+
+def _cfn_self_accounts(ctx: CloudFormationContext) -> set[str]:
+    """Account IDs the template demonstrably deploys into.
+
+    Sourced from literal ARNs on resources *other than* CodeCommit
+    repositories (whose only literal ARNs are the trigger destinations
+    under evaluation) and from parameter defaults that are literal ARNs
+    or bare 12-digit account ids. A trigger destination whose account is
+    in this set is same-account; one whose account is outside it is
+    cross-account.
+    """
+    accounts: set[str] = set()
+    for value in ctx.parameter_defaults.values():
+        if isinstance(value, str):
+            acct = arn_account_id(value)
+            if acct:
+                accounts.add(acct)
+            elif value.isdigit() and len(value) == 12:
+                accounts.add(value)
+    for res in ctx.resources():
+        if res.type == "AWS::CodeCommit::Repository":
+            continue
+        for acct in _iter_arn_accounts(res.properties):
+            accounts.add(acct)
+    return accounts
+
+
+def _iter_arn_accounts(node: object) -> list[str]:
+    """Yield every account id from literal ARN strings anywhere in *node*."""
+    found: list[str] = []
+    if isinstance(node, dict):
+        for v in node.values():
+            found.extend(_iter_arn_accounts(v))
+    elif isinstance(node, list):
+        for v in node:
+            found.extend(_iter_arn_accounts(v))
+    elif isinstance(node, str):
+        acct = arn_account_id(node)
+        if acct:
+            found.append(acct)
+    return found
 
 
 # ---------------------------------------------------------------------------
@@ -228,6 +390,15 @@ def _lambda(ctx: CloudFormationContext) -> list[Finding]:
             if not isinstance(k, str):
                 continue
             if SECRET_NAME_RE.search(k):
+                # A secret-like NAME is a finding only when the VALUE is a
+                # plaintext literal. A value that merely references a secret
+                # (an intrinsic Ref/GetAtt/Sub, a {{resolve:...}} dynamic
+                # reference, or a literal ARN) is the recommended pattern,
+                # e.g. ``DB_SECRET_ARN: !Ref DbSecret``.
+                if is_intrinsic(v):
+                    continue
+                if isinstance(v, str) and v.startswith(("{{resolve:", "arn:aws:")):
+                    continue
                 suspicious.append(k)
                 continue
             if isinstance(v, str) and SECRET_VALUE_RE.match(v):
@@ -263,6 +434,43 @@ def _lambda(ctx: CloudFormationContext) -> list[Finding]:
                 recommendation='Set AuthType: "AWS_IAM" and grant invoke via IAM.',
                 passed=auth == "AWS_IAM",
             ))
+
+    # Second pass: AWS::Lambda::Url resources whose TargetFunctionArn is a
+    # literal cross-stack ARN (no local function to match) are missed by the
+    # fn-loop above. Emit LMB-002 directly from the Url resource for any Url
+    # that was not already matched by a local function.
+    matched_url_addresses: set[str] = set()
+    # Collect addresses of Url resources that ARE already covered above.
+    for fn in ctx.resources("AWS::Lambda::Function"):
+        url_props = url_by_fn_logical.get(fn.logical_id)
+        if url_props is None:
+            fn_name = as_str(fn.properties.get("FunctionName"))
+            if fn_name:
+                url_props = url_by_fn_name.get(fn_name)
+        if url_props is not None:
+            # Record this url's address so we skip it below.
+            for u in ctx.resources("AWS::Lambda::Url"):
+                if u.properties is url_props:
+                    matched_url_addresses.add(u.address)
+
+    for u in ctx.resources("AWS::Lambda::Url"):
+        if u.address in matched_url_addresses:
+            continue
+        # This Url targets a function that is not defined in the template
+        # (e.g. a literal cross-stack ARN). Evaluate AuthType directly.
+        auth = as_str(u.properties.get("AuthType"))
+        out.append(Finding(
+            check_id="LMB-002",
+            title="Lambda function URL has AuthType=NONE",
+            severity=Severity.HIGH,
+            resource=u.address,
+            description=(
+                f"AuthType: {auth}." if auth == "AWS_IAM"
+                else f"AuthType: {auth or 'NONE'}; URL is public."
+            ),
+            recommendation='Set AuthType: "AWS_IAM" and grant invoke via IAM.',
+            passed=auth == "AWS_IAM",
+        ))
 
     for p in ctx.resources("AWS::Lambda::Permission"):
         principal = as_str(p.properties.get("Principal"))
@@ -314,8 +522,14 @@ def _kms(ctx: CloudFormationContext) -> list[Finding]:
         offenders: list[str] = []
         for stmt in iter_allow(doc):
             actions = as_list(stmt.get("Action"))
-            if any(a in ("*", "kms:*") for a in actions if isinstance(a, str)):
-                offenders.append(stmt.get("Sid") or "<unsid>")
+            if not any(a in ("*", "kms:*") for a in actions if isinstance(a, str)):
+                continue
+            # The default/required KMS key policy grants kms:* to the
+            # account root so IAM policies can delegate; that root
+            # statement is the recommended baseline, not a finding.
+            if _principal_is_only_account_root(stmt):
+                continue
+            offenders.append(stmt.get("Sid") or "<unsid>")
         out.append(Finding(
             check_id="KMS-002",
             title="KMS key policy grants wildcard KMS actions",

@@ -1,9 +1,8 @@
 """BB-013, docker run with insecure flags (privileged / host mount)."""
 from __future__ import annotations
 
-from typing import Any
-
-from ...base import DOCKER_INSECURE_RE, Finding, Severity, blob_lower
+from ..._primitives.blob_rule import yaml_blob_check
+from ...base import DOCKER_INSECURE_RE, Severity
 from ...rule import Rule
 
 RULE = Rule(
@@ -23,20 +22,38 @@ RULE = Rule(
         "container full access to the build runner, enabling container "
         "escape and lateral movement."
     ),
+    exploit_example=(
+        "# Vulnerable: ``docker run --privileged`` plus the host\n"
+        "# Docker socket inside a Bitbucket step. The step is\n"
+        "# already a container; granting it privileged access\n"
+        "# and the runner's docker.sock collapses every isolation\n"
+        "# boundary the pipeline had.\n"
+        "pipelines:\n"
+        "  default:\n"
+        "    - step:\n"
+        "        services: [docker]\n"
+        "        script:\n"
+        "          - docker run --privileged -v /var/run/docker.sock:/var/run/docker.sock \\\n"
+        "              myapp:test ./integration.sh\n"
+        "\n"
+        "# Safe: drop ``--privileged`` and the socket mount. If\n"
+        "# the build needs to build an image, use Kaniko /\n"
+        "# BuildKit rootless instead.\n"
+        "pipelines:\n"
+        "  default:\n"
+        "    - step:\n"
+        "        services: [docker]\n"
+        "        script:\n"
+        "          - docker run myapp@sha256:abc123... ./integration.sh"
+    ),
 )
 
 
-def check(path: str, doc: dict[str, Any]) -> Finding:
-    blob = blob_lower(doc)
-    matches = DOCKER_INSECURE_RE.findall(blob)
-    passed = not matches
-    desc = (
-        "No insecure docker run flags detected in this pipeline."
-        if passed else
+check = yaml_blob_check(
+    RULE,
+    scanner=DOCKER_INSECURE_RE.findall,
+    pass_desc="No insecure docker run flags detected in this pipeline.",
+    fail_desc=lambda matches: (
         f"Insecure docker run flags detected: {', '.join(matches[:3])}"
-    )
-    return Finding(
-        check_id=RULE.id, title=RULE.title, severity=RULE.severity,
-        resource=path, description=desc,
-        recommendation=RULE.recommendation, passed=passed,
-    )
+    ),
+)

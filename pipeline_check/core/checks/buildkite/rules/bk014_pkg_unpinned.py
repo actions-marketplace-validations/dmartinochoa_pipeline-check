@@ -35,8 +35,8 @@ RULE = Rule(
         "``PKG_INSECURE_RE`` and ``PKG_NO_LOCKFILE_RE`` from "
         "``checks/base.py``. Same rule pack already exists for "
         "GHA (``GHA-021`` / ``GHA-022``), GitLab (``GL-021`` / "
-        "``GL-022``), Bitbucket / Azure DevOps / Jenkins / "
-        "CircleCI / Cloud Build / Drone. Buildkite was a gap; "
+        "``GL-022``), Bitbucket Pipelines / Azure DevOps / Jenkins / "
+        "CircleCI / Google Cloud Build / Drone. Buildkite was a gap; "
         "this closes it.\n\n"
         "Insecure variants (``PKG_INSECURE_RE``): ``pip "
         "--index-url http://``, ``pip --trusted-host``, ``npm "
@@ -47,8 +47,8 @@ RULE = Rule(
         "install <pkg>`` without ``-r`` or ``--require-hashes``, "
         "``yarn install`` without ``--frozen-lockfile``, "
         "``bundle install`` without ``--frozen``, ``cargo "
-        "install``, ``go install`` without an ``@vN.N`` pin, "
-        "``poetry install`` without ``--no-update``."
+        "install`` without ``--locked``, ``go install`` without an "
+        "``@vN.N`` pin."
     ),
     known_fp=(
         "Bootstrap-stage installs that intentionally pull "
@@ -58,6 +58,20 @@ RULE = Rule(
         "specific step label when this is the deliberate "
         "shape; the broader pinning policy still covers the "
         "rest of the pipeline.",
+    ),
+    exploit_example=(
+        "# Vulnerable: an unpinned package install in a step command.\n"
+        "steps:\n"
+        "  - command: \"npm install && npm run build\"\n"
+        "\n"
+        "# Attack: `npm install` resolves dependencies fresh against the\n"
+        "# registry instead of honoring the committed lockfile, so a\n"
+        "# newly published malicious version (typosquat, dependency-\n"
+        "# confusion, or a compromised maintainer) is pulled into the\n"
+        "# build and runs with the agent's credentials.\n"
+        "\n"
+        "# Safe: install from the lockfile exactly.\n"
+        "  - command: \"npm ci && npm run build\""
     ),
 )
 

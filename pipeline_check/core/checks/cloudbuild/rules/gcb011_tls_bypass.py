@@ -10,10 +10,9 @@ detector so the idiom catalog stays aligned with GHA-023 / GL-023
 """
 from __future__ import annotations
 
-from typing import Any
-
 from ..._primitives import tls_bypass
-from ...base import Finding, Severity, blob_lower
+from ..._primitives.blob_rule import yaml_blob_check
+from ...base import Severity
 from ...rule import Rule
 
 RULE = Rule(
@@ -38,21 +37,41 @@ RULE = Rule(
         "``kubectl --insecure-skip-tls-verify``, and "
         "``ssh -o StrictHostKeyChecking=no``."
     ),
+    exploit_example=(
+        "# Vulnerable: ``curl -k`` disables certificate verification\n"
+        "# for the duration of the call. An attacker on the network\n"
+        "# path (compromised proxy, malicious VPN exit) MITMs the\n"
+        "# response and ships substituted bytes into the build.\n"
+        "steps:\n"
+        "  - name: gcr.io/cloud-builders/curl@sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08\n"
+        "    entrypoint: bash\n"
+        "    args:\n"
+        "      - -c\n"
+        "      - curl -k -O https://internal-mirror.example.com/artifact.tar.gz\n"
+        "\n"
+        "# Safe: keep TLS verification on. If the internal mirror\n"
+        "# uses a private CA, install the CA into the step image's\n"
+        "# trust store rather than papering over with ``-k``.\n"
+        "steps:\n"
+        "  - name: gcr.io/cloud-builders/curl@sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08\n"
+        "    args: [-O, https://internal-mirror.example.com/artifact.tar.gz]"
+    ),
 )
 
 
-def check(path: str, doc: dict[str, Any]) -> Finding:
-    hits = tls_bypass.scan(blob_lower(doc))
-    passed = not hits
-    desc = (
-        "No TLS verification bypass patterns detected in this pipeline."
-        if passed else
+def _fail_desc(hits: list[tls_bypass.TlsBypassFinding]) -> str:
+    snippets = sorted({h.snippet for h in hits})
+    return (
         f"{len(hits)} TLS verification bypass(es) detected: "
-        f"{', '.join(sorted({h.snippet for h in hits})[:3])}"
-        f"{'…' if len({h.snippet for h in hits}) > 3 else ''}."
+        f"{', '.join(snippets[:3])}"
+        f"{'…' if len(snippets) > 3 else ''}."
     )
-    return Finding(
-        check_id=RULE.id, title=RULE.title, severity=RULE.severity,
-        resource=path, description=desc,
-        recommendation=RULE.recommendation, passed=passed,
-    )
+
+
+check = yaml_blob_check(
+    RULE,
+    scanner=tls_bypass.scan,
+    pass_desc="No TLS verification bypass patterns detected in this pipeline.",
+    fail_desc=_fail_desc,
+    lowercase=False,
+)

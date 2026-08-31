@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ...base import Finding, Severity, blob_lower
+from ...base import Finding, Severity
 from ...rule import Rule
 from ..base import iter_jobs, iter_steps
 
@@ -37,11 +37,34 @@ def _has_timeout(doc: dict[str, Any]) -> bool:
                 run = step.get("run")
                 if isinstance(run, dict) and "no_output_timeout" in run:
                     return True
-    # Fallback: check blob for the token (covers anchors, orb params, etc.)
-    return "no_output_timeout" in blob_lower(doc)
+    return False
+
+
+def _has_author_run_step(doc: dict[str, Any]) -> bool:
+    """Whether the config declares at least one author ``run:`` step.
+
+    ``no_output_timeout`` is a run-step-only parameter, so a config whose
+    work is done entirely through orb steps (or only defines workflows)
+    has nothing to set it on.
+    """
+    for _job_id, job in iter_jobs(doc):
+        for step in iter_steps(job):
+            if isinstance(step, dict) and "run" in step:
+                return True
+    return False
 
 
 def check(path: str, doc: dict[str, Any]) -> Finding:
+    if not _has_author_run_step(doc):
+        return Finding(
+            check_id=RULE.id, title=RULE.title, severity=RULE.severity,
+            resource=path,
+            description=(
+                "Config has no author `run:` steps (orb-only / "
+                "workflow-only); no_output_timeout is not applicable."
+            ),
+            recommendation="No action required.", passed=True,
+        )
     passed = _has_timeout(doc)
     desc = (
         "Config contains `no_output_timeout` configuration."

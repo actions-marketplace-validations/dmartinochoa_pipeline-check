@@ -27,13 +27,35 @@ RULE = Rule(
         "an MR-controlled variable, an attacker can poison a cache "
         "entry that a later default-branch pipeline restores."
     ),
+    exploit_example=(
+        "# Vulnerable: cache key prefix derives from the MR branch slug.\n"
+        "build:\n"
+        "  cache:\n"
+        "    key:\n"
+        "      prefix: \"$CI_COMMIT_REF_SLUG\"\n"
+        "      files:\n"
+        "        - package-lock.json\n"
+        "  script:\n"
+        "    - npm ci\n"
+        "\n"
+        "# Attack: open an MR from a branch you name. Your MR pipeline\n"
+        "# writes a cache entry under your prefix. GitLab restores caches\n"
+        "# by key prefix, so a later default-branch pipeline can restore\n"
+        "# your poisoned entry (tampered node_modules / build output) and\n"
+        "# treat it as a clean cache.\n"
+        "\n"
+        "# Safe: derive the key only from values the MR can't control.\n"
+        "    key:\n"
+        "      files:\n"
+        "        - package-lock.json"
+    ),
 )
 
 
 def check(path: str, doc: dict[str, Any]) -> Finding:
     offenders: list[str] = []
 
-    def _scan_cache(cache: Any, where: str) -> None:
+    def _scan_cache_entry(cache: Any, where: str) -> None:
         if not isinstance(cache, dict):
             return
         key = cache.get("key")
@@ -45,7 +67,17 @@ def check(path: str, doc: dict[str, Any]) -> Finding:
             if isinstance(prefix, str) and CACHE_TAINT_RE.search(prefix):
                 offenders.append(f"{where}.cache.key.prefix")
 
+    def _scan_cache(cache: Any, where: str) -> None:
+        if isinstance(cache, list):
+            for i, entry in enumerate(cache):
+                _scan_cache_entry(entry, f"{where}[{i}]")
+        else:
+            _scan_cache_entry(cache, where)
+
     _scan_cache(doc.get("cache"), "<top>")
+    default = doc.get("default")
+    if isinstance(default, dict):
+        _scan_cache(default.get("cache"), "<default>")
     for name, job in iter_jobs(doc):
         _scan_cache(job.get("cache"), name)
     passed = not offenders

@@ -208,7 +208,7 @@ class TestDR003ParameterInjection:
         assert r3.check(p).passed
 
     def test_passes_when_single_quoted(self) -> None:
-        # Single quotes also tokenise as one argument.
+        # Single quotes also tokenize as one argument.
         p = _pipeline(steps=[
             {"name": "build", "image": f"x{_DIGEST}",
              "commands": ["echo '${DRONE_COMMIT_MESSAGE}'"]},
@@ -271,11 +271,22 @@ class TestDR004LiteralSecret:
     def test_fails_on_aws_akia_key_regardless_of_key_name(self) -> None:
         p = _pipeline(steps=[
             {"name": "deploy", "image": f"x{_DIGEST}",
-             "environment": {"FOO": "AKIAIOSFODNN7EXAMPLE"}},
+             "environment": {"FOO": "AKIAZ3MHALF2TESTHIJK"}},
         ])
         f = r4.check(p)
         assert not f.passed
-        assert "AKIA prefix" in f.description
+        assert "token shape" in f.description
+
+    def test_fails_on_modern_token_regardless_of_key_name(self) -> None:
+        # A GitLab PAT under a non-credential key name: caught by the
+        # shared vendor-token catalog (the AKIA-only check missed it).
+        p = _pipeline(steps=[
+            {"name": "deploy", "image": f"x{_DIGEST}",
+             "environment": {"FOO": "glpat-abcdefghij1234567890"}},
+        ])
+        f = r4.check(p)
+        assert not f.passed
+        assert "token shape" in f.description
 
     def test_passes_on_non_credential_keys(self) -> None:
         p = _pipeline(steps=[

@@ -17,6 +17,9 @@ from .blob import blob_lower
 SIGN_TOKENS = (
     "cosign", "sigstore", "slsa-github-generator",
     "slsa-framework/slsa-", "notation-sign",
+    # ADO-006 FN fix: ``notation sign <ref>`` (space-separated CLI form)
+    # was not matched because only ``notation-sign`` (hyphenated) was listed.
+    "notation sign",
 )
 
 # SBOM tokens: direct hits pass on their own. Trivy only passes when combined
@@ -24,6 +27,9 @@ SIGN_TOKENS = (
 SBOM_DIRECT_TOKENS = (
     "cyclonedx", "syft", "anchore/sbom-action",
     "spdx-sbom-generator", "microsoft/sbom-tool",
+    # ARGO-010 FN fix: ``cdxgen`` (CycloneDX-generator CLI) was named in
+    # the recommendation but absent from detection.
+    "cdxgen",
 )
 
 # Provenance tokens, narrower than SIGN_TOKENS. SLSA Build L3 requires
@@ -41,6 +47,10 @@ PROVENANCE_TOKENS = (
     "in-toto-attestation",           # in-toto library/CLI
     "intoto.jsonl",                  # standard provenance filename
     "provenance.intoto",             # common provenance output name
+    # CC-024 FN fix: the circleci/attestation orb (canonical CircleCI SLSA
+    # provenance mechanism) was named in the recommendation but absent here.
+    "circleci/attestation",
+    "attestation/attest",
 )
 
 
@@ -62,6 +72,31 @@ _ARTIFACT_TOKENS = (
     "docker/build-push-action",
     "docker/metadata-action",
     "buildah push", "podman push",
+    # ARGO-009 FN fix: kaniko builds and pushes a container image directly;
+    # it was documented in the ARGO-009 docs_note but absent from detection.
+    # Match the short name and the canonical image ref so both ``image: kaniko``
+    # (custom image) and ``name: gcr.io/kaniko-project/executor`` (GCB/Argo)
+    # are recognized.
+    "kaniko",
+    "gcr.io/kaniko-project/executor",
+    # DR-019/020/021 FN fix: Drone's canonical image-build/push plugins
+    # build and push a container image via a ``settings:`` block, so the
+    # doc blob never carries a ``docker build`` / ``docker push`` command.
+    # These are unambiguous image refs (``image: plugins/docker``), and
+    # ``plugins/kaniko`` already matched on the ``kaniko`` token above.
+    "plugins/docker",
+    "plugins/ecr",
+    "plugins/gcr",
+    "plugins/acr",
+    # HARNESS-016/017 FN fix: Harness's native CIE build steps
+    # (``type: BuildAndPushDockerRegistry`` / ECR / GCR / ACR / GAR)
+    # build+push an image with no ``docker build`` command in the doc.
+    # The lowercased step-type slug is unambiguous.
+    "buildandpushdockerregistry",
+    "buildandpushecr",
+    "buildandpushgcr",
+    "buildandpushacr",
+    "buildandpushgar",
     # GitHub Actions artifact + release flows. ``upload-artifact@`` is
     # anchored with ``@`` so ``actions/upload-pages-artifact@<ref>`` (a
     # docs/Pages site, not a software artifact) doesn't match.
@@ -74,6 +109,10 @@ _ARTIFACT_TOKENS = (
     "archiveartifacts",
     # CircleCI
     "store_artifacts", "persist_to_workspace",
+    # Buildkite: the canonical artifact mechanism
+    # BK-009 FN fix: a pipeline that only uploads via ``buildkite-agent
+    # artifact upload`` was not recognized as artifact-producing.
+    "buildkite-agent artifact upload",
     # Cloud deploys
     "aws s3 cp", "aws s3 sync",
     "aws cloudformation deploy",
@@ -116,6 +155,27 @@ VULN_SCAN_TOKENS = (
     "cargo audit", "bundler-audit", "bundle audit",
     "docker scout", "codeql-action", "github/codeql-action",
     "semgrep ", "bandit ", "checkov ", "tfsec ",
+    # Reusable-action, container-image, and native-step forms of the
+    # same scanners. The space-delimited CLI tokens above only match a
+    # ``run:`` / ``commands:`` invocation, so they miss how Trivy /
+    # Grype / Snyk are most often wired in CI: a pinned ``uses:`` action
+    # (``aquasecurity/trivy-action``), a scanner container image
+    # (``aquasec/trivy``), or a Harness STO step ``type: AquaTrivy``.
+    # Each slug is an unambiguous identifier, so prose can't trip it.
+    # GHA-004 / GHA-098 already treat these refs as scanners.
+    "aquasecurity/trivy-action", "aquasec/trivy", "aquatrivy",
+    "anchore/scan-action", "anchore/grype",
+    "snyk/actions",
+    # GitLab's built-in security templates (``include: template:
+    # Security/Dependency-Scanning.gitlab-ci.yml`` etc.) are the canonical
+    # way GitLab pipelines wire scanning — the include value lands in the
+    # blob. Matched lowercase (``blob_lower``); the ``.gitlab-ci.yml``
+    # suffix keeps them unambiguous.
+    "dependency-scanning.gitlab-ci.yml",
+    "container-scanning.gitlab-ci.yml",
+    "sast.gitlab-ci.yml",
+    "secret-detection.gitlab-ci.yml",
+    "dast.gitlab-ci.yml",
 )
 
 
@@ -142,8 +202,6 @@ def produces_artifacts(doc: Any) -> bool:
     contribute.
     """
     blob = blob_lower(doc)
-    if "actions/deploy-pages" in blob:
-        return False
     for zone in _ARTIFACT_TOKEN_EXCLUDE_ZONES:
         blob = blob.replace(zone, "")
     return any(tok in blob for tok in _ARTIFACT_TOKENS)

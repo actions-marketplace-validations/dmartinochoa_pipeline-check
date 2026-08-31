@@ -1,28 +1,14 @@
 """ADO-004, deployment jobs must bind an environment."""
 from __future__ import annotations
 
-import re
 from typing import Any
 
+from ..._primitives.deploy_names import DEPLOY_CMD_RE as _DEPLOY_CMD_RE
+from ..._primitives.deploy_names import DEPLOY_RE as _DEPLOY_NAME_RE
 from ..._primitives.oci_refs import extract_image_anchors_from_strings
 from ...base import Finding, ResourceAnchor, Severity
 from ...rule import Rule
 from ..base import iter_jobs, iter_steps
-
-_DEPLOY_CMD_RE = re.compile(
-    r"(?:kubectl\s+(?:apply|create|set\s+image|rollout\s+restart)"
-    r"|terraform\s+(?:apply|destroy)"
-    r"|aws\s+(?:s3\s+(?:cp|sync)|cloudformation\s+deploy|ecs\s+update-service)"
-    r"|docker\s+push"
-    r"|helm\s+(?:upgrade|install)"
-    r"|gcloud\s+(?:app\s+deploy|run\s+deploy|functions\s+deploy)"
-    r"|ansible-playbook"
-    r"|serverless\s+deploy"
-    r"|az\s+(?:webapp\s+deploy|functionapp\s+deploy|containerapp\s+update))",
-    re.IGNORECASE,
-)
-
-_DEPLOY_NAME_RE = re.compile(r"(?i)\b(deploy|release|publish|promote)\b")
 
 RULE = Rule(
     id="ADO-004",
@@ -51,6 +37,33 @@ RULE = Rule(
         "or ``helm template`` for validation. Suppress those jobs "
         "per-resource via ``--ignore-file`` once you've verified "
         "they don't actually mutate any environment.",
+    ),
+    exploit_example=(
+        "# Vulnerable: a deployment job with no environment: binding.\n"
+        "jobs:\n"
+        "  - deployment: DeployProd\n"
+        "    pool: { vmImage: ubuntu-latest }\n"
+        "    strategy:\n"
+        "      runOnce:\n"
+        "        deploy:\n"
+        "          steps:\n"
+        "            - script: aws s3 sync ./dist s3://prod-site\n"
+        "\n"
+        "# Attack: with no `environment:`, ADO can't enforce approvals,\n"
+        "# branch-control checks, or business-hours gates. Any run on\n"
+        "# the trigger branch rolls out to production with no reviewer\n"
+        "# and no deployment record.\n"
+        "\n"
+        "# Safe: bind an environment (approvals + checks configured on\n"
+        "# the Environment resource in the ADO UI).\n"
+        "  - deployment: DeployProd\n"
+        "    environment: production\n"
+        "    pool: { vmImage: ubuntu-latest }\n"
+        "    strategy:\n"
+        "      runOnce:\n"
+        "        deploy:\n"
+        "          steps:\n"
+        "            - script: aws s3 sync ./dist s3://prod-site"
     ),
 )
 

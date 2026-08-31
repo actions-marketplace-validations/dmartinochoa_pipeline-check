@@ -19,6 +19,7 @@ from typing import Any
 
 from ..checks.base import BaseCheck
 from ..inventory import Component
+from ..sbom import BuildDependency
 
 
 class BaseProvider(abc.ABC):
@@ -41,7 +42,7 @@ class BaseProvider(abc.ABC):
 
     @property
     @abc.abstractmethod
-    def check_classes(self) -> list[type[BaseCheck]]:
+    def check_classes(self) -> list[type[BaseCheck[Any]]]:
         """Return the ordered list of check classes for this provider.
 
         Adding a new check to an existing provider only requires updating this
@@ -55,6 +56,16 @@ class BaseProvider(abc.ABC):
         expose an asset view still satisfy the contract. Override to
         surface the resources / files / workflows the context is
         built from, the Scanner's ``inventory()`` delegates here.
+        """
+        return []
+
+    def build_dependencies(self, context: Any) -> list[BuildDependency]:
+        """Return the build-time dependencies the pipeline consumes.
+
+        Default implementation returns ``[]``. Override to extract
+        action references, Docker base images, package-manager
+        dependencies, etc. The Scanner's ``sbom()`` delegates here;
+        the CycloneDX reporter formats the result.
         """
         return []
 
@@ -74,4 +85,4 @@ class BaseProvider(abc.ABC):
         ``context.warnings`` rather than raised, the rest of the
         scan should still complete.
         """
-        return None
+        return

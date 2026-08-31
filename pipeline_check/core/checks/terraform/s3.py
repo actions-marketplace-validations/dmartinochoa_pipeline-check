@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from .._iam_policy import iter_statements
 from ..base import Finding, Severity
 from .base import TerraformBaseCheck
 
@@ -64,7 +65,44 @@ class S3Checks(TerraformBaseCheck):
         return out
 
 
-def _s3001_pab(values: dict[str, Any] | None, bucket: str) -> Finding:
+def _uncorrelated_finding(
+    check_id: str, title: str, severity: Severity, bucket: str,
+    recommendation: str, side_resource: str,
+) -> Finding:
+    """Pass-with-note when the artifact-bucket join couldn't be made
+    because a side-resource's ``bucket`` is unknown at plan time.
+
+    Reporting a hard failure here would false-fire on every fresh
+    ``terraform plan`` that creates the bucket and its ``side_resource``
+    together (the join key is a computed value ``planned_values``
+    omits). We can't confirm the setting either way, so we surface an
+    informational pass instead of a false CRITICAL/HIGH.
+    """
+    return Finding(
+        check_id=check_id, title=title, severity=severity, resource=bucket,
+        description=(
+            f"Could not correlate a {side_resource} to this artifact "
+            f"bucket: its ``bucket`` is a value computed at apply time, "
+            f"which ``terraform plan`` leaves unresolved. Re-scan the "
+            f"applied state (or a plan where the bucket name is known) "
+            f"to evaluate this control; not failing on an unresolved "
+            f"plan-time reference."
+        ),
+        recommendation=recommendation, passed=True,
+    )
+
+
+def _s3001_pab(
+    values: dict[str, Any] | None, bucket: str, *, unresolved: bool = False,
+) -> Finding:
+    if not values and unresolved:
+        return _uncorrelated_finding(
+            "S3-001",
+            "Artifact bucket public access block not fully enabled",
+            Severity.CRITICAL, bucket,
+            "Attach aws_s3_bucket_public_access_block with all four flags true.",
+            "aws_s3_bucket_public_access_block",
+        )
     if not values:
         fully_blocked = False
         missing = ["BlockPublicAcls", "IgnorePublicAcls", "BlockPublicPolicy", "RestrictPublicBuckets"]
@@ -93,15 +131,27 @@ def _s3001_pab(values: dict[str, Any] | None, bucket: str) -> Finding:
     )
 
 
-def _s3002_encryption(values: dict[str, Any] | None, bucket: str) -> Finding:
+def _s3002_encryption(
+    values: dict[str, Any] | None, bucket: str, *, unresolved: bool = False,
+) -> Finding:
+    if not values and unresolved:
+        return _uncorrelated_finding(
+            "S3-002",
+            "Artifact bucket server-side encryption not configured",
+            Severity.HIGH, bucket,
+            "Add aws_s3_bucket_server_side_encryption_configuration.",
+            "aws_s3_bucket_server_side_encryption_configuration",
+        )
     encrypted = False
     algo = "unknown"
     if values:
-        rules = values.get("rule", []) or []
-        if rules:
-            apply = _first(rules[0].get("apply_server_side_encryption_by_default"))
-            algo = apply.get("sse_algorithm") or "unknown"
-            encrypted = bool(algo and algo != "unknown")
+        # ``_first`` guards a non-list / scalar ``rule`` (best-effort HCL
+        # parsing can surface an attribute-form dict or a bare string) so
+        # ``rule[0]`` never raises.
+        rule0 = _first(values.get("rule"))
+        apply = _first(rule0.get("apply_server_side_encryption_by_default"))
+        algo = apply.get("sse_algorithm") or "unknown"
+        encrypted = bool(algo and algo != "unknown")
     desc = (
         f"Artifact bucket is encrypted with {algo}."
         if encrypted else
@@ -118,7 +168,16 @@ def _s3002_encryption(values: dict[str, Any] | None, bucket: str) -> Finding:
     )
 
 
-def _s3003_versioning(values: dict[str, Any] | None, bucket: str) -> Finding:
+def _s3003_versioning(
+    values: dict[str, Any] | None, bucket: str, *, unresolved: bool = False,
+) -> Finding:
+    if not values and unresolved:
+        return _uncorrelated_finding(
+            "S3-003", "Artifact bucket versioning not enabled",
+            Severity.MEDIUM, bucket,
+            "Add aws_s3_bucket_versioning with status = \"Enabled\".",
+            "aws_s3_bucket_versioning",
+        )
     status = ""
     if values:
         vcfg = _first(values.get("versioning_configuration"))
@@ -140,7 +199,16 @@ def _s3003_versioning(values: dict[str, Any] | None, bucket: str) -> Finding:
     )
 
 
-def _s3004_logging(values: dict[str, Any] | None, bucket: str) -> Finding:
+def _s3004_logging(
+    values: dict[str, Any] | None, bucket: str, *, unresolved: bool = False,
+) -> Finding:
+    if not values and unresolved:
+        return _uncorrelated_finding(
+            "S3-004", "Artifact bucket access logging not enabled",
+            Severity.LOW, bucket,
+            "Add aws_s3_bucket_logging targeting a central logging bucket.",
+            "aws_s3_bucket_logging",
+        )
     target = (values or {}).get("target_bucket")
     enabled = bool(target)
     desc = (
@@ -182,9 +250,11 @@ def _s3005_secure_transport(values: dict[str, Any] | None, bucket: str) -> Findi
         doc = json.loads(policy_text) if isinstance(policy_text, str) else policy_text
     except (TypeError, json.JSONDecodeError):
         doc = {}
+    if not isinstance(doc, dict):
+        doc = {}
 
     has_deny = False
-    for stmt in doc.get("Statement", []):
+    for stmt in iter_statements(doc):
         if stmt.get("Effect") != "Deny":
             continue
         conditions = stmt.get("Condition", {}) or {}

@@ -1,27 +1,14 @@
 """BB-004, deploy-like steps must declare `deployment:`."""
 from __future__ import annotations
 
-import re
 from typing import Any
 
+from ..._primitives.deploy_names import DEPLOY_CMD_RE as _DEPLOY_CMD_RE
 from ..._primitives.oci_refs import extract_image_anchors_from_strings
 from ...base import Finding, ResourceAnchor, Severity
 from ...rule import Rule
 from ..base import iter_steps, step_scripts
 from ._helpers import DEPLOY_RE
-
-_DEPLOY_CMD_RE = re.compile(
-    r"(?:kubectl\s+(?:apply|create|set\s+image|rollout\s+restart)"
-    r"|terraform\s+(?:apply|destroy)"
-    r"|aws\s+(?:s3\s+(?:cp|sync)|cloudformation\s+deploy|ecs\s+update-service)"
-    r"|docker\s+push"
-    r"|helm\s+(?:upgrade|install)"
-    r"|gcloud\s+(?:app\s+deploy|run\s+deploy|functions\s+deploy)"
-    r"|ansible-playbook"
-    r"|serverless\s+deploy"
-    r"|az\s+(?:webapp\s+deploy|functionapp\s+deploy|containerapp\s+update))",
-    re.IGNORECASE,
-)
 
 RULE = Rule(
     id="BB-004",
@@ -41,6 +28,29 @@ RULE = Rule(
         "`release` / `publish` / `promote` should declare a "
         "`deployment:` field so Bitbucket enforces deployment-scoped "
         "variables, approvals, and history."
+    ),
+    exploit_example=(
+        "# Vulnerable: a deploy step with no deployment: environment.\n"
+        "pipelines:\n"
+        "  branches:\n"
+        "    main:\n"
+        "      - step:\n"
+        "          name: Deploy to prod\n"
+        "          script:\n"
+        "            - aws s3 sync ./dist s3://prod-site\n"
+        "\n"
+        "# Attack: with no `deployment:` field, Bitbucket can't scope\n"
+        "# deployment variables, require a reviewer, or record\n"
+        "# deployment history. Any push to main ships straight to\n"
+        "# production, no approval and no audit trail.\n"
+        "\n"
+        "# Safe: declare a deployment environment (required reviewers\n"
+        "# configured in the repo's Deployments settings).\n"
+        "      - step:\n"
+        "          name: Deploy to prod\n"
+        "          deployment: production\n"
+        "          script:\n"
+        "            - aws s3 sync ./dist s3://prod-site"
     ),
 )
 

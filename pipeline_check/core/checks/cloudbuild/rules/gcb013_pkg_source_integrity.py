@@ -40,17 +40,72 @@ RULE = Rule(
         "the source of truth is whatever the git ref / filesystem / "
         "tarball URL served most recently."
     ),
+    exploit_example=(
+        "# Vulnerable: a build step installs a dependency straight\n"
+        "# from a git branch, bypassing the registry and lockfile.\n"
+        "steps:\n"
+        "  - name: python:3.12@sha256:abc123...\n"
+        "    entrypoint: bash\n"
+        "    args:\n"
+        "      - -c\n"
+        "      - pip install git+https://github.com/acme/helper.git\n"
+        "\n"
+        "# Attack: the install resolves the branch head at build\n"
+        "# time, so whoever can move that branch (a maintainer, a\n"
+        "# repo compromise, a typosquatted fork) controls the code\n"
+        "# that runs in the build with the build's service account\n"
+        "# and any mounted secrets. No registry signature or lockfile\n"
+        "# digest gates it.\n"
+        "\n"
+        "# Safe: pin the git dependency to an immutable commit (or\n"
+        "# publish it to Artifact Registry and install from there).\n"
+        "steps:\n"
+        "  - name: python:3.12@sha256:abc123...\n"
+        "    entrypoint: bash\n"
+        "    args:\n"
+        "      - -c\n"
+        "      - pip install git+https://github.com/acme/helper.git@<commit-sha>"
+    ),
 )
 
 
+def _step_args_blobs(doc: dict[str, Any]) -> list[str]:
+    """Space-join each step's ``entrypoint`` + ``args`` list so an
+    install verb and its target that sit on separate ``args`` entries
+    (``entrypoint: pip, args: [install, "git+https://..."]``) end up
+    adjacent for the scanner. ``blob_lower`` newline-joins list items,
+    which splits them apart."""
+    out: list[str] = []
+    steps = doc.get("steps")
+    if not isinstance(steps, list):
+        return out
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        parts: list[str] = []
+        ep = step.get("entrypoint")
+        if isinstance(ep, str):
+            parts.append(ep)
+        args = step.get("args")
+        if isinstance(args, list):
+            parts.extend(a for a in args if isinstance(a, str))
+        elif isinstance(args, str):
+            parts.append(args)
+        if parts:
+            out.append(" ".join(parts))
+    return out
+
+
 def check(path: str, doc: dict[str, Any]) -> Finding:
-    hits = lockfile_integrity.scan(blob_lower(doc))
+    combined = "\n".join([blob_lower(doc), *_step_args_blobs(doc)]).lower()
+    hits = lockfile_integrity.scan(combined)
     passed = not hits
     kinds = sorted({h.kind for h in hits})
+    unique = {(h.kind, h.snippet) for h in hits}
     desc = (
         "No integrity-bypassing package installs detected in this pipeline."
         if passed else
-        f"{len(hits)} integrity-bypassing package install(s) detected "
+        f"{len(unique)} integrity-bypassing package install(s) detected "
         f"({', '.join(kinds)}): "
         f"{'; '.join(sorted({h.snippet for h in hits})[:3])}"
         f"{'…' if len({h.snippet for h in hits}) > 3 else ''}."

@@ -3,11 +3,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from ...base import Finding, Severity
+from ...base import Finding, Location, Severity
 from ...rule import Rule
 from ..base import (
     KubernetesContext,
     iter_workload_pod_specs,
+    manifest_location,
 )
 
 #: Node-role labels that mark a control-plane node. ``master`` is the
@@ -57,6 +58,38 @@ RULE = Rule(
         "control plane outside kube-system is rare enough to warrant "
         "an explicit ``.pipelinecheckignore`` rationale.",
     ),
+    exploit_example=(
+        "# Vulnerable: a workload has a ``tolerations`` entry\n"
+        "# for ``node-role.kubernetes.io/control-plane`` AND\n"
+        "# the matching ``nodeSelector``. The Pod gets\n"
+        "# scheduled onto the control-plane node, sharing the\n"
+        "# kernel with kube-apiserver / etcd / kube-controller-\n"
+        "# manager. A container escape from the app reaches\n"
+        "# every API request and every Secret in etcd.\n"
+        "apiVersion: v1\n"
+        "kind: Pod\n"
+        "metadata: { name: app }\n"
+        "spec:\n"
+        "  nodeSelector:\n"
+        "    node-role.kubernetes.io/control-plane: \"\"\n"
+        "  tolerations:\n"
+        "    - key: node-role.kubernetes.io/control-plane\n"
+        "      operator: Exists\n"
+        "      effect: NoSchedule\n"
+        "  containers:\n"
+        "    - name: app\n"
+        "      image: app@sha256:abc123...\n"
+        "\n"
+        "# Safe: workloads schedule onto worker nodes. The\n"
+        "# control-plane stays isolated.\n"
+        "apiVersion: v1\n"
+        "kind: Pod\n"
+        "metadata: { name: app }\n"
+        "spec:\n"
+        "  containers:\n"
+        "    - name: app\n"
+        "      image: app@sha256:abc123..."
+    ),
 )
 
 
@@ -80,6 +113,7 @@ def _toleration_targets_cp(tolerations: Any) -> bool:
 
 def check(ctx: KubernetesContext) -> Finding:
     offenders: list[str] = []
+    locations: list[Location] = []
     for m, ps in iter_workload_pod_specs(ctx):
         if m.namespace in _EXEMPT_NAMESPACES:
             continue
@@ -90,6 +124,7 @@ def check(ctx: KubernetesContext) -> Finding:
             hits.append("tolerations")
         if hits:
             offenders.append(f"{m.kind}/{m.name}: {'+'.join(hits)}")
+            locations.append(manifest_location(m, ps))
     passed = not offenders
     desc = (
         "No non-system workload targets the control-plane node role."
@@ -103,4 +138,5 @@ def check(ctx: KubernetesContext) -> Finding:
         resource="kubernetes/manifests",
         description=desc,
         recommendation=RULE.recommendation, passed=passed,
+        locations=locations,
     )

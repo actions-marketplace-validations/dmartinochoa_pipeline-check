@@ -13,11 +13,13 @@ is a posture-reporter, not a remediation tool).
 """
 from __future__ import annotations
 
+import concurrent.futures
 import fnmatch
 import json
 import os
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -30,6 +32,16 @@ _DEFAULT_TIMEOUT = 10.0
 #: larger is either a misrouted endpoint or attacker-controlled and
 #: we'd rather treat the fetch as a failure than blow scanner memory.
 _MAX_RESPONSE_BYTES = 5 * 1024 * 1024
+#: Larger cap for binary endpoints (the Actions run-logs ZIP, fetched by
+#: ``fetch_bytes``). Run logs are bigger than JSON metadata but still
+#: bounded so a pathological response can't exhaust memory.
+_MAX_BINARY_RESPONSE_BYTES = 25 * 1024 * 1024
+#: Concurrency for the ``--scm-org`` per-repo fan-out. Each repo needs
+#: ~10 sequential API calls, so a serial scan of a large org is slow;
+#: a small bounded thread pool overlaps the per-repo I/O. Kept modest so
+#: the fan-out stays well under GitHub's authenticated rate ceiling. The
+#: ``HttpSCMFetcher`` is stateless per call, so concurrent fetches are safe.
+_FAN_OUT_WORKERS = 8
 
 
 # ── Fetcher protocol + implementations ────────────────────────────────
@@ -64,14 +76,14 @@ class HttpSCMFetcher:
 
     def fetch(self, path: str) -> dict[str, Any] | list[Any] | None:
         url = f"{self.BASE_URL}/{path.lstrip('/')}"
-        req = urllib.request.Request(url)  # noqa: S310, fixed scheme + host
+        req = urllib.request.Request(url)
         req.add_header("Accept", "application/vnd.github+json")
         req.add_header("X-GitHub-Api-Version", "2022-11-28")
         req.add_header("User-Agent", "pipeline-check-scm")
         if self.token:
             req.add_header("Authorization", f"Bearer {self.token}")
         try:
-            with urllib.request.urlopen(  # noqa: S310, fixed scheme + host
+            with urllib.request.urlopen(
                 req, timeout=self.timeout,
             ) as resp:
                 body = resp.read(_MAX_RESPONSE_BYTES + 1)
@@ -85,6 +97,32 @@ class HttpSCMFetcher:
         if isinstance(parsed, (dict, list)):
             return parsed
         return None
+
+    def fetch_bytes(
+        self, path: str, *, max_bytes: int = _MAX_BINARY_RESPONSE_BYTES,
+    ) -> bytes | None:
+        """Fetch a raw binary response (the Actions run-logs ZIP).
+
+        urllib follows the logs endpoint's 302 redirect to the signed
+        blob URL automatically. Returns ``None`` on any error or when the
+        body exceeds *max_bytes*, mirroring :meth:`fetch`'s
+        degrade-don't-raise contract.
+        """
+        url = f"{self.BASE_URL}/{path.lstrip('/')}"
+        req = urllib.request.Request(url)
+        req.add_header("Accept", "application/vnd.github+json")
+        req.add_header("X-GitHub-Api-Version", "2022-11-28")
+        req.add_header("User-Agent", "pipeline-check-scm")
+        if self.token:
+            req.add_header("Authorization", f"Bearer {self.token}")
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                body: bytes = resp.read(max_bytes + 1)
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+            return None
+        if len(body) > max_bytes:
+            return None
+        return body
 
 
 class DiskSCMFetcher:
@@ -242,6 +280,31 @@ class SCMRepoSnapshot:
     #: from default scanning. ``None`` when the endpoint failed;
     #: empty dict when the repo has no detectable source.
     repo_languages: dict[str, int] | None = None
+    #: ``GET /orgs/{owner}/codespaces/secrets``. List of org-level
+    #: codespace secrets, each ``{"name", "visibility",
+    #: "selected_repositories_url", ...}``. SCM-048 flags secrets
+    #: whose ``visibility`` is ``"all"`` (exposed to every repo in
+    #: the org). ``None`` when the endpoint failed (token lacks
+    #: ``admin:org`` scope, owner is a user not an org, etc.);
+    #: empty list ``[]`` when no org codespace secrets are configured.
+    codespace_secrets: list[dict[str, Any]] | None = None
+    #: Token type used for API authentication, inferred from the
+    #: token prefix. ``"classic"`` for ``ghp_`` classic PATs,
+    #: ``"fine-grained"`` for ``github_pat_`` fine-grained PATs,
+    #: ``"oauth"`` for ``gho_`` OAuth tokens, ``"app"`` for
+    #: ``ghs_`` / ``ghr_`` GitHub App tokens, ``"unknown"`` when
+    #: the prefix doesn't match a known pattern, ``None`` when no
+    #: token was provided. SCM-049 reads this slot.
+    token_type: str | None = None
+    #: ``GET /repos/{owner}/{repo}/private-vulnerability-reporting``.
+    #: Returns ``{"enabled": bool}``. This is a dedicated endpoint —
+    #: private vulnerability reporting is NOT part of the repo_meta
+    #: ``security_and_analysis`` block, so SCM-016 reads it here rather
+    #: than off ``repo_meta``. ``None`` when the endpoint failed (token
+    #: lacks scope, GHES version without the feature, fetch error), in
+    #: which case SCM-016 passes with an "unavailable" note instead of
+    #: firing on every repo.
+    private_vulnerability_reporting: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)
@@ -332,6 +395,7 @@ class SCMContext:
         outside_collaborators: list[dict[str, Any]] | None = None
         rulesets: list[dict[str, Any]] | None = None
         repo_languages: dict[str, int] | None = None
+        private_vulnerability_reporting: dict[str, Any] | None = None
         if isinstance(repo_meta, dict):
             raw_ap = fetcher.fetch(f"repos/{owner}/{name}/actions/permissions")
             if isinstance(raw_ap, dict):
@@ -418,6 +482,54 @@ class SCMContext:
                     k: v for k, v in raw_languages.items()
                     if isinstance(k, str) and isinstance(v, int)
                 }
+            # Private vulnerability reporting has its own endpoint; it
+            # is NOT in the repo_meta ``security_and_analysis`` block.
+            # 200 returns ``{"enabled": bool}``; 404 / failure -> None,
+            # so SCM-016 passes with an "unavailable" note rather than
+            # firing on every repo (the field never appears in the
+            # ``GET /repos`` payload it used to read).
+            raw_pvr = fetcher.fetch(
+                f"repos/{owner}/{name}/private-vulnerability-reporting"
+            )
+            if isinstance(raw_pvr, dict):
+                private_vulnerability_reporting = raw_pvr
+        # Infer the token type from its prefix so SCM-049 can
+        # recommend fine-grained tokens over classic PATs.
+        token_type: str | None = None
+        token_value: str | None = None
+        if isinstance(fetcher, HttpSCMFetcher):
+            token_value = fetcher.token
+        if token_value:
+            if token_value.startswith("ghp_"):
+                token_type = "classic"
+            elif token_value.startswith("github_pat_"):
+                token_type = "fine-grained"
+            elif token_value.startswith("gho_"):
+                token_type = "oauth"
+            elif token_value.startswith(("ghs_", "ghr_")):
+                token_type = "app"
+            else:
+                token_type = "unknown"
+        # Org-level codespace secrets. The endpoint is org-scoped
+        # (``/orgs/{owner}/...``), not repo-scoped; it returns 404
+        # for user-owned repos and 403 without ``admin:org`` scope.
+        # Both failures land as ``None`` so the SCM-048 rule passes
+        # silently with an "unavailable" note.
+        codespace_secrets: list[dict[str, Any]] | None = None
+        if isinstance(repo_meta, dict):
+            raw_cs_secrets = fetcher.fetch(
+                f"orgs/{owner}/codespaces/secrets?per_page=100"
+            )
+            if isinstance(raw_cs_secrets, dict):
+                secrets_list = raw_cs_secrets.get("secrets")
+                if isinstance(secrets_list, list):
+                    codespace_secrets = [
+                        s for s in secrets_list if isinstance(s, dict)
+                    ]
+            elif isinstance(raw_cs_secrets, list):
+                codespace_secrets = [
+                    s for s in raw_cs_secrets if isinstance(s, dict)
+                ]
         snapshot = SCMRepoSnapshot(
             owner=owner,
             name=name,
@@ -433,14 +545,159 @@ class SCMContext:
             outside_collaborators=outside_collaborators,
             rulesets=rulesets,
             repo_languages=repo_languages,
+            codespace_secrets=codespace_secrets,
+            token_type=token_type,
+            private_vulnerability_reporting=private_vulnerability_reporting,
         )
         ctx = cls(repos=[snapshot])
         ctx.files_scanned = 1
         ctx.warnings = warnings
         return ctx
 
+    @classmethod
+    def for_org(
+        cls,
+        org: str,
+        fetcher: SCMFetcher,
+        include: tuple[str, ...] = (),
+        exclude: tuple[str, ...] = (),
+        max_repos: int = 0,
+    ) -> SCMContext:
+        """Hydrate a snapshot for every non-archived repo in a GitHub org.
 
-class SCMBaseCheck(BaseCheck):
+        Paginates ``GET /orgs/{org}/repos`` to enumerate the org's
+        repositories, then builds a per-repo snapshot for each via
+        :meth:`for_repo`. The resulting multi-repo context runs the full
+        per-repo posture pack across the whole organization, one finding
+        per repo per rule (the org-wide fan-out the ``repos`` list shape
+        was designed for). A failed or empty enumeration degrades to an
+        empty context with a warning so the scan reports cleanly rather
+        than crashing. Archived repos are skipped: GitHub auto-relaxes
+        several governance toggles on archive, so they would only produce
+        noise.
+
+        ``include`` / ``exclude`` are repeatable ``fnmatch`` globs over the
+        repo name, applied after enumeration (include first, then exclude),
+        so a real org scopes the fan-out to the repos that matter.
+        ``max_repos`` caps how many repos are audited (0 = unlimited), a
+        safety net so a thousand-repo org doesn't silently fan out to
+        thousands of API calls; truncation is recorded as a warning so the
+        cap is never silent.
+        """
+        names: list[str] = []
+        page = 1
+        while True:
+            result = fetcher.fetch(
+                f"orgs/{org}/repos?per_page=100&page={page}&type=all"
+            )
+            if not isinstance(result, list) or not result:
+                break
+            for r in result:
+                if not isinstance(r, dict) or r.get("archived"):
+                    continue
+                name = r.get("name")
+                if isinstance(name, str) and name:
+                    names.append(name)
+            if len(result) < 100:
+                break
+            page += 1
+        return _build_fan_out_context(
+            [(n, n) for n in names],
+            lambda n: cls.for_repo(org, n, fetcher),
+            org_label=org,
+            enumerate_empty_warning=(
+                f"[scm] enumerated no repositories for org {org} — check "
+                "the token's ``read:org`` / ``repo`` scope, or the org has "
+                "no (non-archived) repositories."
+            ),
+            include=include,
+            exclude=exclude,
+            max_repos=max_repos,
+        )
+
+
+def _build_fan_out_context(
+    repos: list[tuple[str, str]],
+    build_one: Callable[[str], SCMContext],
+    *,
+    org_label: str,
+    enumerate_empty_warning: str,
+    include: tuple[str, ...] = (),
+    exclude: tuple[str, ...] = (),
+    max_repos: int = 0,
+    warnings: list[str] | None = None,
+) -> SCMContext:
+    """Filter, cap, and concurrently build a multi-repo ``SCMContext``.
+
+    ``repos`` is a list of ``(name_for_filtering, build_arg)`` pairs; each
+    ``build_arg`` is passed to ``build_one`` to hydrate that repo's
+    single-repo context. Shared by the GitHub / GitLab / Bitbucket
+    ``--scm-org`` fan-outs: only the per-platform enumeration and the
+    single-repo build differ, so the include / exclude globbing, the
+    ``max_repos`` cap, the bounded-concurrency build, and the warning
+    bookkeeping all live here once.
+
+    ``include`` / ``exclude`` are ``fnmatch`` globs over the filter name
+    (include first, then exclude). ``max_repos`` caps the count (0 =
+    unlimited); truncation and filter-to-empty are recorded as warnings so
+    neither is ever silent. An empty enumeration emits
+    ``enumerate_empty_warning`` (platform-specific, supplied by the caller).
+    """
+    out_warnings = list(warnings or [])
+    enumerated = len(repos)
+    if include:
+        repos = [
+            r for r in repos
+            if any(fnmatch.fnmatch(r[0], p) for p in include)
+        ]
+    if exclude:
+        repos = [
+            r for r in repos
+            if not any(fnmatch.fnmatch(r[0], p) for p in exclude)
+        ]
+    if (include or exclude) and enumerated and not repos:
+        out_warnings.append(
+            f"[scm] org {org_label}: all {enumerated} enumerated repo(s) "
+            "were filtered out by --scm-include / --scm-exclude; nothing to "
+            "scan."
+        )
+    if max_repos and len(repos) > max_repos:
+        out_warnings.append(
+            f"[scm] org {org_label}: capping the fan-out at {max_repos} of "
+            f"{len(repos)} matching repo(s) (--scm-max-repos); the remainder "
+            "are not audited this run."
+        )
+        repos = repos[:max_repos]
+    if not repos:
+        if enumerated == 0:
+            out_warnings.append(enumerate_empty_warning)
+        ctx = SCMContext(repos=[])
+        ctx.files_skipped = 1
+        ctx.warnings = out_warnings
+        return ctx
+    # Build each repo's snapshot concurrently: each single-repo build issues
+    # several sequential API calls, so overlapping the per-repo I/O across a
+    # small bounded pool turns a slow serial walk of a large org into a
+    # parallel one. ``executor.map`` preserves input order, so the resulting
+    # ``repos`` list is deterministic regardless of which fetch finishes
+    # first. The fetchers are stateless per call, so this is safe.
+    build_args = [r[1] for r in repos]
+    workers = min(_FAN_OUT_WORKERS, len(build_args))
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=workers,
+    ) as executor:
+        subs = list(executor.map(build_one, build_args))
+    snapshots: list[SCMRepoSnapshot] = []
+    for sub in subs:
+        snapshots.extend(sub.repos)
+        out_warnings.extend(sub.warnings)
+    ctx = SCMContext(repos=snapshots)
+    ctx.files_scanned = len(snapshots)
+    ctx.warnings = out_warnings
+    return ctx
+
+
+class SCMBaseCheck(BaseCheck[SCMContext]):
     """Base class for SCM posture checks. Mirrors the per-provider
     base classes (``OCIBaseCheck``, ``GitHubBaseCheck``)."""
 
@@ -528,6 +785,13 @@ def is_empty_repo(snapshot: SCMRepoSnapshot) -> bool:
     size = meta.get("size")
     if not isinstance(size, int) or size != 0:
         return False
+    # ``size`` (KB) is unreliable: GitHub rounds a tiny repo to 0 and
+    # lags on recalculation right after a push. If the repo has detected
+    # languages it has committed content, so it isn't empty even at
+    # size 0 — don't let the guard suppress a real unprotected repo.
+    langs = snapshot.repo_languages
+    if isinstance(langs, dict) and langs:
+        return False
     return snapshot.default_branch_protection is None
 
 
@@ -566,6 +830,39 @@ def github_only_skip(
         f"``security_and_analysis`` block or a GitHub-only "
         f"protection knob); skipped on the {snapshot.platform} "
         f"snapshot."
+    )
+
+
+def gitlab_only_skip(snapshot: SCMRepoSnapshot) -> str | None:
+    """Return a skip note when the snapshot is not from GitLab.
+
+    Mirror of :func:`github_only_skip` for the GitLab-specific
+    rule pack (SCM-050..053). Rules read GitLab-shaped payloads
+    stashed under ``repo_meta["_gitlab_project"]`` /
+    ``repo_meta["_gitlab_push_rule"]`` by the GitLab hydrator.
+    """
+    if snapshot.platform == "gitlab":
+        return None
+    return (
+        f"Rule is GitLab-specific (reads GitLab push-rule / "
+        f"merge-request settings); skipped on the "
+        f"{snapshot.platform} snapshot."
+    )
+
+
+def bitbucket_only_skip(snapshot: SCMRepoSnapshot) -> str | None:
+    """Return a skip note when the snapshot is not from Bitbucket.
+
+    Mirror of :func:`github_only_skip` for the Bitbucket-specific
+    rule pack (SCM-054..055). Rules read Bitbucket-shaped payloads
+    stashed under ``repo_meta["_bitbucket_repo"]`` by the
+    Bitbucket Cloud hydrator.
+    """
+    if snapshot.platform == "bitbucket":
+        return None
+    return (
+        f"Rule is Bitbucket-specific (reads Bitbucket Cloud repo "
+        f"settings); skipped on the {snapshot.platform} snapshot."
     )
 
 
@@ -703,15 +1000,14 @@ def active_rulesets_targeting_default(
                             exists but doesn't protect ``main``.
 
     Non-active rulesets (``evaluate`` / ``disabled``) are filtered
-    out — they're SCM-029's surface. Push-targeted rulesets are also
-    filtered out: they fire on every push but use a different rule
-    shape (file size / path / extension filters) that can't carry
-    the SCM-032..040 rule types, so classifying them as scoped-away
-    would emit a confusing "doesn't target the default branch"
-    failure for a ruleset that does. Tag-targeted rulesets stay in
-    scope of the branch-rule checks only when their ref_name filter
-    matches the default branch, which it generally won't; they
-    surface as scoped_away. Returns three empty lists when
+    out — they're SCM-029's surface. Push- and tag-targeted rulesets
+    are also filtered out: they use a different rule shape (push: file
+    size / path / extension; tag: release-tag protection) that can't
+    carry the SCM-032..042 branch rule types and never target the
+    default branch, so classifying them as scoped-away would emit a
+    confusing "doesn't target the default branch" failure for every
+    branch rule (adding a release-tag ruleset would flip all eleven
+    from pass to fail). Returns three empty lists when
     ``snapshot.rulesets`` is ``None``.
     """
     if snapshot.rulesets is None:
@@ -726,7 +1022,18 @@ def active_rulesets_targeting_default(
         if rs.get("_detail_unavailable") is True:
             unavailable.append(rs)
             continue
-        if rs.get("target") == "push":
+        if rs.get("target") in ("push", "tag"):
+            # Push-targeted rulesets fire on every push but use a
+            # different rule shape (file size / path / extension) that
+            # can't carry the SCM-032..042 branch rule types. Tag-
+            # targeted rulesets protect release tags, again a different
+            # surface. Neither ever targets the default branch, so
+            # letting them fall into ``scoped_away`` meant a repo whose
+            # only ruleset is a release-tag ruleset reported 11
+            # simultaneous "doesn't target the default branch" failures
+            # even when legacy branch protection fully covered main.
+            # Drop both so they neither satisfy nor fail the branch
+            # rules.
             continue
         if ruleset_targets_default_branch(rs, default):
             targeting.append(rs)

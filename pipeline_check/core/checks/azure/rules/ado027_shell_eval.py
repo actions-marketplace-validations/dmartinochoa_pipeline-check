@@ -4,8 +4,9 @@ from __future__ import annotations
 from typing import Any
 
 from ..._primitives import shell_eval
-from ...base import Finding, Severity, blob_lower
+from ...base import Finding, Severity
 from ...rule import Rule
+from ..base import iter_jobs, iter_steps
 
 RULE = Rule(
     id="ADO-027",
@@ -31,19 +32,69 @@ RULE = Rule(
         "intentionally NOT flagged, the substituted command is "
         "literal, only its output is eval'd.",
     ),
+    exploit_example=(
+        "# Vulnerable: ``eval \"$BUILD_CMD\"`` on a value that came\n"
+        "# from a variable group / runtime parameter gives the\n"
+        "# value full shell-grammar reach. ``sh -c $RAW`` on an\n"
+        "# unquoted variable is the same shape.\n"
+        "parameters:\n"
+        "  - name: cmd\n"
+        "    type: string\n"
+        "steps:\n"
+        "  - bash: |\n"
+        "      eval \"${{ parameters.cmd }}\"\n"
+        "\n"
+        "# Safe: replace dynamic shell evaluation with an explicit\n"
+        "# dispatcher over an allow-list, or invoke a script you\n"
+        "# own that does its own validation. Never eval values\n"
+        "# from runtime parameters.\n"
+        "parameters:\n"
+        "  - name: target\n"
+        "    type: string\n"
+        "    values: [staging, prod]\n"
+        "steps:\n"
+        "  - bash: ./scripts/deploy.sh \"${{ parameters.target }}\""
+    ),
 )
 
 
+#: Explicit-task equivalents of the shortcut script keys. Their inline
+#: shell body lives under ``inputs.script`` (``targetType: inline``).
+_SHELL_TASK_PREFIXES = ("bash@", "cmdline@", "powershell@", "pwsh@")
+
+
+def _step_script_body(step: dict[str, Any]) -> str:
+    for key in ("script", "bash", "powershell", "pwsh"):
+        val = step.get(key)
+        if isinstance(val, str):
+            return val
+    # Explicit-task form: ``task: Bash@3`` / ``CmdLine@2`` / ``PowerShell@2``
+    # put the shell body under ``inputs.script``, a mainstream ADO style.
+    task = step.get("task")
+    if isinstance(task, str) and task.lower().startswith(_SHELL_TASK_PREFIXES):
+        inputs = step.get("inputs")
+        if isinstance(inputs, dict):
+            script = inputs.get("script")
+            if isinstance(script, str):
+                return script
+    return ""
+
+
 def check(path: str, doc: dict[str, Any]) -> Finding:
-    blob = blob_lower(doc)
-    hits = shell_eval.scan(blob)
+    hits: list[shell_eval.ShellEvalFinding] = []
+    for _job_loc, job in iter_jobs(doc):
+        for _step_loc, step in iter_steps(job):
+            body = _step_script_body(step)
+            if body.strip():
+                hits.extend(shell_eval.scan(body.lower()))
     passed = not hits
+    snippets = sorted({h.snippet for h in hits})
     desc = (
         "No dangerous shell idioms detected in this pipeline."
         if passed else
         f"{len(hits)} dangerous shell idiom(s) detected: "
-        f"{', '.join(sorted({h.snippet for h in hits})[:3])}"
-        f"{'…' if len({h.snippet for h in hits}) > 3 else ''}."
+        f"{', '.join(snippets[:3])}"
+        f"{'…' if len(snippets) > 3 else ''}."
     )
     return Finding(
         check_id=RULE.id, title=RULE.title, severity=RULE.severity,

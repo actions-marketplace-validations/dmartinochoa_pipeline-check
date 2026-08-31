@@ -1,9 +1,8 @@
 """BB-014, package install from insecure source."""
 from __future__ import annotations
 
-from typing import Any
-
-from ...base import PKG_INSECURE_RE, Finding, Severity, blob_lower
+from ..._primitives.blob_rule import yaml_blob_check
+from ...base import PKG_INSECURE_RE, Severity
 from ...rule import Rule
 
 RULE = Rule(
@@ -24,20 +23,36 @@ RULE = Rule(
         "in a pipeline. These patterns allow man-in-the-middle "
         "injection of malicious packages."
     ),
+    exploit_example=(
+        "# Vulnerable: pip uses a plaintext-HTTP index and\n"
+        "# ``--trusted-host`` silences hash verification on the\n"
+        "# named host. A network attacker swaps wheels in flight.\n"
+        "pipelines:\n"
+        "  default:\n"
+        "    - step:\n"
+        "        image: python:3.12-slim\n"
+        "        script:\n"
+        "          - pip install --index-url http://internal-pypi.example.com/simple \\\n"
+        "              --trusted-host internal-pypi.example.com -r requirements.txt\n"
+        "\n"
+        "# Safe: HTTPS + ``--require-hashes``. Internal CA installed\n"
+        "# in the image's trust store.\n"
+        "pipelines:\n"
+        "  default:\n"
+        "    - step:\n"
+        "        image: python:3.12-slim@sha256:abc123...\n"
+        "        script:\n"
+        "          - pip install --index-url https://internal-pypi.example.com/simple \\\n"
+        "              --require-hashes -r requirements.txt"
+    ),
 )
 
 
-def check(path: str, doc: dict[str, Any]) -> Finding:
-    blob = blob_lower(doc)
-    matches = PKG_INSECURE_RE.findall(blob)
-    passed = not matches
-    desc = (
-        "No insecure package install patterns detected in this pipeline."
-        if passed else
+check = yaml_blob_check(
+    RULE,
+    scanner=PKG_INSECURE_RE.findall,
+    pass_desc="No insecure package install patterns detected in this pipeline.",
+    fail_desc=lambda matches: (
         f"Insecure package install detected: {', '.join(matches[:3])}"
-    )
-    return Finding(
-        check_id=RULE.id, title=RULE.title, severity=RULE.severity,
-        resource=path, description=desc,
-        recommendation=RULE.recommendation, passed=passed,
-    )
+    ),
+)

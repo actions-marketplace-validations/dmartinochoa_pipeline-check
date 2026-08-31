@@ -31,8 +31,9 @@ Available topics:
   gate        How the CI gate decides pass / fail and what the
               --fail-on / --min-grade / --max-failures / --baseline /
               --ignore-file flags do.
-  autofix     --fix and --fix --apply: what each registered fixer
-              does, how they compose, and how to write your own.
+  autofix     --fix, --fix --apply, and the fix-pr subcommand: what
+              each registered fixer does, how they compose, and how
+              to open an autofix PR.
   diff        --diff-base for scoping a scan to changed files only.
               Terraform / workflow / AWS provider semantics.
   secrets     --secret-pattern for org-specific token shapes; what the
@@ -125,7 +126,10 @@ Subtractive filters
             expires: 2026-06-30
             reason: waiting on Dependabot
     Expired YAML rules no longer suppress and surface in the gate
-    summary as warnings — debt that doesn't rot silently.
+    summary as warnings, debt that doesn't rot silently. A rule
+    expiring soon is forewarned before it lapses; tune that window
+    with ``--warn-expiring-suppressions`` (default ``14d``; ``off`` /
+    ``0`` disables the forewarning, expired rules still report).
 
 Exit codes
 ----------
@@ -191,6 +195,31 @@ diff so it composes with ``git apply``.
     "N file(s) modified" to stderr. Opt-in (dry-run by default)
     and only valid alongside --fix.
 
+--list-fixers [--safety safe|unsafe|all]
+    List every check ID with a registered fixer and exit without
+    scanning. One line per ID: ``ID  SEVERITY  TIER  TITLE``. The
+    tier is which ``--fix`` mode runs it: ``safe`` (the default
+    ``--fix``) or ``unsafe`` (needs ``--fix=unsafe``). ``--safety``
+    narrows the listing to one tier. Use it to discover which rules
+    have a fixer, and remember that a listed fixer can still emit no
+    patch on a given run when the finding is already remediated or
+    the edit wouldn't round-trip as valid YAML.
+
+pipeline_check fix-pr [--safety safe|unsafe|all]
+    One-shot "fix and open a PR". Scans the auto-detected pipeline
+    files, applies the fixers of the chosen tier, commits the changed
+    files to a fresh branch (``pipeline-check/autofix`` by default),
+    pushes, and opens the request: ``gh pr create`` on GitHub, a
+    GitLab MR via push options (no token needed), or a pushed branch
+    plus manual instructions on other hosts. Refuses a dirty working
+    tree unless ``--allow-dirty`` (and even then commits only the
+    autofix edits). ``--dry-run`` shows the patch and the planned git
+    actions without touching the repo; ``--no-push`` stops after the
+    local commit. ``--base`` sets the target branch (defaults to the
+    current one). The same tier vocabulary as ``--list-fixers``:
+    ``safe`` (default), ``unsafe`` (inference-dependent only), or
+    ``all``.
+
 Categories of fix
 -----------------
 Two shapes ship today:
@@ -233,6 +262,10 @@ git diff
 # The patch goes to stderr (because --output sarif consumes stdout);
 # the SARIF report goes to r.sarif.
 pipeline_check --pipeline github --fix --output sarif --output-file r.sarif
+
+# Fix and open a PR in one step (preview first, then for real)
+pipeline_check fix-pr --dry-run
+pipeline_check fix-pr
 
 Limits
 ------
@@ -342,7 +375,22 @@ _DETECTOR_DESCRIPTIONS: dict[str, str] = {
     "asana_pat":              "1/<account-id>:<32 hex>",
     "square_access_token":    "sq0atp- / sq0csp- + 20+ chars",
     "terraform_cloud_token":  "<14 chars>.atlasv1.<60+ chars>",
+    "postman_api_key":        "PMAK- + 24 hex + - + 34 hex",
+    "tailscale_key":          "tskey-auth/api/client/webhook-<id>-<secret>",
+    "sentry_auth_token":      "sntrys_ (org) / sntryu_ (user) + 40+ chars",
+    "groq_api_key":           "gsk_ + 52-char body (Groq)",
+    "xai_api_key":            "xai- + 80-char body (xAI / Grok)",
+    "perplexity_api_key":     "pplx- + 48-char body (Perplexity)",
+    "slack_webhook":          "hooks.slack.com/services/ incoming-webhook URL (Slack)",
+    "discord_webhook":        "discord.com/api/webhooks/ URL (Discord)",
+    "figma_token":            "figd_ + 40-char body (Figma)",
+    "notion_token":           "ntn_ + 40-char body (Notion)",
 }
+
+
+def detector_description(name: str) -> str:
+    """Return the human shape description for a secret detector *name*."""
+    return _DETECTOR_DESCRIPTIONS.get(name, "(see _patterns.py)")
 
 
 def _build_secrets() -> str:
@@ -385,8 +433,10 @@ providers:
   JF-008    Jenkins
   GCB-012   Google Cloud Build
   BK-002    Buildkite
+  DR-004    Drone CI
   TKN-005   Tekton
   ARGO-006  Argo Workflows
+  DEV-008   Developer-environment configs (.mcp.json, devcontainer, …)
 
 Built-in detector catalog ({len(_BUILTIN_PATTERNS)} entries):
 
@@ -557,6 +607,13 @@ typo, run ``pipeline_check --config-check`` as a separate step:
   [config] 1 unknown key(s) detected.
   $ echo $?
   3
+
+``--config-check`` is a standalone preflight (it reports and exits 3,
+no scan). To guard a normal scan instead, add ``--config-strict``: an
+unknown key aborts with exit 2 before scanning, while a clean config
+runs as usual. Use it to catch a misplaced key (e.g. ``fail_on`` at
+the top level instead of under ``gate:``) that would otherwise be
+dropped with only a warning.
 """
 
 
@@ -594,12 +651,23 @@ TOPIC: output
                  tags. Shaped for SOC 2 / PCI evidence packages and
                  architecture-review docs; the risk register caps at
                  the top 25 failures (the JSON output is unbounded).
+    cyclonedx    CycloneDX 1.6 JSON SBOM of every build-time dependency
+                 the pipeline consumes (action refs, reusable workflows,
+                 base images, package-manifest deps). Each component
+                 carries a PURL. Stdout by default; --output-file to disk.
+    spdx         SPDX 2.3 JSON SBOM, the SPDX-format parallel of
+                 cyclonedx over the same dependency inventory.
+    codequality  GitLab Code Climate JSON that GitLab CI renders as
+                 inline merge-request annotations. One entry per
+                 (check_id, location) with a stable fingerprint for
+                 cross-run dedupe. Stdout by default.
     both         Terminal report -> stderr, JSON -> stdout. Pipe
                  ``jq`` while still seeing a human report.
 
 --output-file PATH
-    REQUIRED for --output html. Optional for --output sarif /
-    junit / markdown / threatmodel (default is stdout).
+    REQUIRED for --output html. Optional for --output sarif / junit /
+    markdown / threatmodel / cyclonedx / spdx / codequality (default
+    is stdout).
 
 --severity-threshold SEV
     Minimum severity to include in the rendered report (e.g. HIGH
@@ -876,31 +944,34 @@ provider reference doc.
 What it shows
 -------------
   * Check ID, severity, and confidence (HIGH / MEDIUM / LOW).
-  * Compliance cross-references for every standard this check
-    evidences (OWASP Top 10 CI/CD, SLSA, NIST SSDF, ESF, ...).
-  * CWE identifiers when the rule is tagged with them.
-  * ``[What it checks]`` — the rule's docs note (rule-based
+  * ``// what it checks`` — the rule's docs note (rule-based
     providers) or a pointer to the provider doc (class-based
     modules like AWS core services).
-  * ``[Known false-positive modes]`` — populated for rules whose
+  * ``// known false-positive modes`` — populated for rules whose
     heuristic shape is known to misfire on specific legitimate
     patterns. Use this to decide whether to dismiss a finding.
-  * ``[How to fix]`` — the rule's recommendation string verbatim.
-  * ``[Seen in the wild]`` — links to public incidents the rule
+  * ``// how to fix`` — the rule's recommendation string verbatim.
+  * ``// seen in the wild`` — links to public incidents the rule
     would have caught, when the rule carries ``incident_refs``.
-  * ``[Proof of exploit]`` — a minimal reproduction of the threat
+  * ``// proof of exploit`` — a minimal reproduction of the threat
     when the rule defines ``exploit_example``.
-  * ``[Triggers attack chains]`` — every ``AC-NNN`` /
+  * ``// triggers attack chains`` — every ``AC-NNN`` /
     ``XPC-NNN`` chain whose ``triggering_check_ids`` include this
     rule, so you can see how a single finding feeds a multi-step
     attack narrative.
-  * ``[Related rules]`` — cross-references to checks in the same
+  * ``// related rules`` — cross-references to checks in the same
     topic cluster (same threat / different layer, or same control
     / different provider). Fixing only the rule you opened often
     leaves siblings uncovered.
-  * ``[Autofixable]`` — present when a fixer is registered for
+  * ``// autofixable`` — present when a fixer is registered for
     the rule. Run ``--fix`` to emit the patch and ``--apply`` to
     write it in place.
+  * ``// compliance & standards`` — CWE identifiers (when the rule
+    is tagged with them) and the compliance crosswalk for every
+    standard this check evidences (OWASP Top 10 CI/CD, SLSA, NIST
+    SSDF, ESF, ...). Kept at the foot so the plain-English
+    explanation leads; the JSON and SARIF outputs carry the same
+    mappings for auditors who need them up front.
 
 Sibling flag
 ------------

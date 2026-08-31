@@ -43,7 +43,7 @@ RULE = Rule(
     esf=("ESF-D-INJECTION",),
     cwe=("CWE-78", "CWE-829"),
     recommendation=(
-        "Sanitise the value at the step that *writes* the "
+        "Sanitize the value at the step that *writes* the "
         "``$GITHUB_OUTPUT`` entry. The canonical pattern is to "
         "interpolate the untrusted source into an ``env:`` "
         "variable on the producer step and reference the env var "
@@ -77,7 +77,7 @@ RULE = Rule(
         "name=...::`` workflow-command form."
     ),
     known_fp=(
-        "If the producer step deliberately runs a sanitiser "
+        "If the producer step deliberately runs a sanitizer "
         "between the interpolation and the ``$GITHUB_OUTPUT`` "
         "write (``echo \"$TITLE\" | tr -dc 'a-zA-Z0-9 ' >> "
         "$GITHUB_OUTPUT``), the consumer is no longer "
@@ -86,7 +86,44 @@ RULE = Rule(
         "ignore-file scoped to the consumer step name when "
         "this is the deliberate shape. The producer's GHA-003 "
         "finding then carries the residual signal that the "
-        "sanitiser is load-bearing.",
+        "sanitizer is load-bearing.",
+    ),
+    exploit_example=(
+        "# Vulnerable: a producer step writes\n"
+        "# ``$GITHUB_OUTPUT`` from an untrusted source\n"
+        "# (``github.event.issue.title`` / ``github.head_ref``);\n"
+        "# a later step interpolates the step output into a\n"
+        "# shell command. The interpolation lets injected\n"
+        "# metacharacters in the title execute as separate shell\n"
+        "# commands in the consumer step.\n"
+        "jobs:\n"
+        "  build:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - id: extract\n"
+        "        run: |\n"
+        "          echo \"title=${{ github.event.issue.title }}\" >> \"$GITHUB_OUTPUT\"\n"
+        "      - run: ./generate-notes --title ${{ steps.extract.outputs.title }}\n"
+        "\n"
+        "# Safe: sanitize the untrusted value at the producer\n"
+        "# step BEFORE it lands in $GITHUB_OUTPUT. The canonical\n"
+        "# pattern is to pull the source into an env var, strip\n"
+        "# unsafe chars with a known-good filter, and only then\n"
+        "# write the sanitized value. The consumer step uses an\n"
+        "# env-var indirection with shell quoting.\n"
+        "jobs:\n"
+        "  build:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - id: extract\n"
+        "        env:\n"
+        "          RAW_TITLE: ${{ github.event.issue.title }}\n"
+        "        run: |\n"
+        "          clean=$(echo \"$RAW_TITLE\" | tr -dc 'a-zA-Z0-9 -')\n"
+        "          echo \"title=$clean\" >> \"$GITHUB_OUTPUT\"\n"
+        "      - env:\n"
+        "          TITLE: ${{ steps.extract.outputs.title }}\n"
+        "        run: ./generate-notes --title \"$TITLE\""
     ),
 )
 
@@ -131,4 +168,5 @@ def check(path: str, doc: dict[str, Any]) -> Finding:
         recommendation=RULE.recommendation, passed=False,
         job_anchors=tuple(anchor_jobs),
         path_evidence=tuple(rendered),
+        taint_flows=tuple(p.to_flow() for p in same_job_paths),
     )

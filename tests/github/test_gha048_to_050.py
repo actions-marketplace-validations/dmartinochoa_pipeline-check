@@ -177,6 +177,78 @@ class TestGHA049CrossRepoPush:
         f = run_check(wf, "GHA-049")
         assert f.passed
 
+    def test_fails_on_cicd_goat_scenario_23_actions_bot_bypass(self):
+        # Body lifted from cicd-goat scenario 23. The combination
+        # of ``git config user.name "github-actions[bot]"`` + ``git
+        # push origin HEAD:main`` is the branch-protection
+        # bypass-allowance abuse shape, even though origin is the
+        # canonical remote.
+        wf = """
+        name: scenario-23-actions-bot-branch-protection-bypass
+        on:
+          push:
+            branches: [main]
+        permissions:
+          contents: write
+        jobs:
+          auto-format:
+            if: false
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+              - run: |
+                  set -euo pipefail
+                  npm install
+                  npm run format
+                  git config user.name "github-actions[bot]"
+                  git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+                  git add -A
+                  if ! git diff --cached --quiet; then
+                    git commit -m "chore: auto-format"
+                    git push origin HEAD:main
+                  fi
+        """
+        f = run_check(wf, "GHA-049")
+        assert not f.passed
+        assert "github-actions[bot]" in f.description
+
+    def test_passes_on_actions_bot_identity_without_push(self):
+        # Bot identity is sometimes set just for the commit message
+        # ledger; without a push, no bypass-abuse shape exists.
+        wf = """
+        name: ci
+        on: push
+        jobs:
+          tag:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+              - run: |
+                  git config user.name "github-actions[bot]"
+                  git tag v1.0.0
+        """
+        f = run_check(wf, "GHA-049")
+        assert f.passed
+
+    def test_passes_on_push_without_bot_identity(self):
+        # Plain ``git push origin`` without assuming the bot identity
+        # stays in the existing carve-out (release jobs, mirror
+        # syncs, etc. that run as the workflow's default actor).
+        wf = """
+        name: ci
+        on: push
+        jobs:
+          release:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v4
+              - run: |
+                  git tag v1.0.0
+                  git push origin v1.0.0
+        """
+        f = run_check(wf, "GHA-049")
+        assert f.passed
+
 
 # ── GHA-050 publish without OIDC / environment gate ──────────────────
 
@@ -198,6 +270,25 @@ class TestGHA050PublishWithoutOIDC:
         f = run_check(wf, "GHA-050")
         assert not f.passed
         assert "npm publish" in f.description.lower() or "long-lived" in f.description.lower()
+
+    def test_fails_on_job_level_node_auth_token(self):
+        # The publish token is very commonly set at job scope, not on
+        # the publish step. Job/workflow env inherits into the step, so
+        # the rule must fold it in (A6 FN: only step env was scanned).
+        wf = """
+        name: release
+        on: push
+        jobs:
+          release:
+            runs-on: ubuntu-latest
+            permissions: { contents: read }
+            env:
+              NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+            steps:
+              - run: npm publish
+        """
+        f = run_check(wf, "GHA-050")
+        assert not f.passed
 
     def test_fails_on_twine_upload_with_pypi_token(self):
         wf = """
@@ -279,3 +370,145 @@ class TestGHA050PublishWithoutOIDC:
         """
         f = run_check(wf, "GHA-050")
         assert f.passed
+
+
+class TestGHA050AttestationExplicitlyDisabled:
+    """Widening: zizmor proposal #938. ``pypa/gh-action-pypi-publish``
+    with ``attestations: false`` and ``docker/build-push-action`` with
+    ``provenance: false`` / ``sbom: false`` / ``attestations: false``
+    turn off trusted-publishing's attestation surface while staying
+    under the long-lived-secret check's radar."""
+
+    def test_fails_on_pypi_publish_attestations_false(self):
+        wf = """
+        name: release
+        on: push
+        jobs:
+          release:
+            runs-on: ubuntu-latest
+            permissions:
+              id-token: write
+            steps:
+              - uses: pypa/gh-action-pypi-publish@release/v1
+                with:
+                  attestations: false
+        """
+        f = run_check(wf, "GHA-050")
+        assert not f.passed
+        assert "attestations" in f.description.lower()
+        assert "false" in f.description.lower()
+
+    def test_fails_on_docker_build_push_provenance_false(self):
+        wf = """
+        name: build
+        on: push
+        jobs:
+          build:
+            runs-on: ubuntu-latest
+            permissions:
+              packages: write
+              id-token: write
+            steps:
+              - uses: docker/build-push-action@v6
+                with:
+                  push: true
+                  provenance: false
+                  tags: ghcr.io/example/image:latest
+        """
+        f = run_check(wf, "GHA-050")
+        assert not f.passed
+        assert "provenance" in f.description.lower()
+
+    def test_fails_on_docker_build_push_sbom_false(self):
+        wf = """
+        name: build
+        on: push
+        jobs:
+          build:
+            runs-on: ubuntu-latest
+            permissions:
+              packages: write
+              id-token: write
+            steps:
+              - uses: docker/build-push-action@v6
+                with:
+                  push: true
+                  sbom: false
+                  tags: ghcr.io/example/image:latest
+        """
+        f = run_check(wf, "GHA-050")
+        assert not f.passed
+        assert "sbom" in f.description.lower()
+
+    def test_passes_when_docker_push_false(self):
+        # No publish at all - the disable doesn't matter.
+        wf = """
+        name: build
+        on: push
+        jobs:
+          build:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: docker/build-push-action@v6
+                with:
+                  push: false
+                  provenance: false
+                  sbom: false
+        """
+        f = run_check(wf, "GHA-050")
+        assert f.passed
+
+    def test_passes_when_pypi_publish_defaults(self):
+        # No explicit attestations field - defaults to true (PEP 740).
+        wf = """
+        name: release
+        on: push
+        jobs:
+          release:
+            runs-on: ubuntu-latest
+            permissions:
+              id-token: write
+            steps:
+              - uses: pypa/gh-action-pypi-publish@release/v1
+        """
+        f = run_check(wf, "GHA-050")
+        assert f.passed
+
+    def test_passes_when_environment_gated(self):
+        # Environment carve-out applies to the new disable shape too.
+        wf = """
+        name: release
+        on: push
+        jobs:
+          release:
+            runs-on: ubuntu-latest
+            environment: pypi-publish
+            permissions:
+              id-token: write
+            steps:
+              - uses: pypa/gh-action-pypi-publish@release/v1
+                with:
+                  attestations: false
+        """
+        f = run_check(wf, "GHA-050")
+        assert f.passed
+
+    def test_docker_build_push_attestations_false(self):
+        wf = """
+        name: build
+        on: push
+        jobs:
+          build:
+            runs-on: ubuntu-latest
+            permissions:
+              packages: write
+              id-token: write
+            steps:
+              - uses: docker/build-push-action@v6
+                with:
+                  push: true
+                  attestations: false
+        """
+        f = run_check(wf, "GHA-050")
+        assert not f.passed
+        assert "attestations" in f.description.lower()

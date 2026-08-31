@@ -46,7 +46,7 @@ analogue in other providers:
 
 ## What it covers
 
-30 checks · 7 have an autofix patch (``--fix``).
+31 checks · 7 have an autofix patch (``--fix``).
 
 | Check | Title | Severity | Fix |
 |-------|-------|----------|-----|
@@ -80,6 +80,7 @@ analogue in other providers:
 | [DF-028](#df-028) | ENV disables Git TLS certificate verification | <span class="pg-sev pg-sev--high">HIGH</span> |  |
 | [DF-029](#df-029) | ENV neuters Python requests CA bundle | <span class="pg-sev pg-sev--high">HIGH</span> |  |
 | [DF-030](#df-030) | ENV NODE_OPTIONS preloads code or opens an inspector | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
+| [DF-031](#df-031) | COPY --from external image not pinned to sha256 digest | <span class="pg-sev pg-sev--high">HIGH</span> |  |
 
 ---
 
@@ -385,7 +386,7 @@ Move ``WORKDIR`` to a dedicated app directory (``/app``, ``/srv/app``, ``/opt/<s
 <span class="pg-sev pg-sev--medium">MEDIUM</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-7</span> <span class="pg-tag pg-tag--esf">ESF-D-LEAST-PRIV</span> <span class="pg-tag pg-tag--cwe">CWE-732</span>
 </div>
 
-World-writable directories under ``/`` are an established container-escape vector: any compromised process running as non-root can drop a payload that root-owned daemons later execute. The rule fires on the literal ``777``, ``a+w``, and ``a+rwx`` modes; the more conservative ``775`` and ``ugo+x`` are not flagged.
+World-writable directories under ``/`` are an established container-escape vector: any compromised process running as non-root can drop a payload that root-owned daemons later execute. The rule fires on octal ``777`` / ``0777`` and on any ``chmod`` ``+`` operator whose who-set is empty or contains ``a`` / ``o`` and whose mode flags include ``w`` (so ``a+w``, ``a+wx``, ``a+rwx``, ``o+w``, ``ugo+w``, ``go+rw``, ``+w``, ``+rwx`` all flag). ``u+w`` and ``g+w`` are not flagged, neither grants the world-writable bit.
 
 **Known false-positive modes**
 
@@ -453,7 +454,7 @@ Don't put ``/tmp``, ``/var/tmp``, ``/dev/shm``, or any other world-writable path
 <span class="pg-sev pg-sev--medium">MEDIUM</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-7</span> <span class="pg-tag pg-tag--esf">ESF-D-LEAST-PRIV</span> <span class="pg-tag pg-tag--cwe">CWE-732</span>
 </div>
 
-Recognizes ``chown`` and ``chgrp`` invocations whose first non-flag path argument resolves under a system directory. The non-recursive case is also flagged because a single ``chown user /etc`` is just as harmful, the recursive flag matters for the size of the blast radius, not for whether it's wrong. Application paths under ``/opt``, ``/srv``, ``/var/lib/<app>``, and ``/app`` are not flagged.
+Recognizes ``chown`` and ``chgrp`` invocations whose first non-flag path argument resolves under a system directory. The non-recursive case is also flagged because a single ``chown user /etc`` is just as harmful, the recursive flag matters for the size of the blast radius, not for whether it's wrong. Application paths under ``/opt``, ``/srv``, ``/var/lib/<app>``, and ``/app`` are not flagged, nor are the application source/data subtrees ``/usr/src`` (the ``node`` image's ``/usr/src/app`` WORKDIR) and ``/usr/share`` (web/data roots); those hold no trusted binaries on ``PATH``.
 
 <div class="pg-rule__rec" markdown>
 
@@ -778,6 +779,26 @@ Drop the ``--require=`` / ``--import=`` and ``--inspect`` / ``--inspect-brk`` fl
 * ``--inspect`` / ``--inspect-brk`` opens the V8   inspector on port 9229 (or the configured port).   Anyone who can reach that port has full debugger   control: read process memory (incl. secrets), set   breakpoints, and execute arbitrary code in the   Node context.
 
 If your image needs an APM-style preload (Datadog, Sentry, OpenTelemetry), scope it to the specific service entrypoint via the agent's own startup wrapper rather than baking it into ``ENV NODE_OPTIONS``. The image-wide form applies to every Node process — including ``npm`` and ``yarn`` themselves — which broadens the attack surface unnecessarily.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## DF-031: COPY --from external image not pinned to sha256 digest { #df-031 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--esf">ESF-S-PIN-DEPS</span> <span class="pg-tag pg-tag--esf">ESF-S-IMMUTABLE</span> <span class="pg-tag pg-tag--esf">ESF-S-VERIFY-DEPS</span> <span class="pg-tag pg-tag--cwe">CWE-829</span>
+</div>
+
+Fires when a ``COPY`` / ``ADD`` carries ``--from=<X>`` where ``X`` is an external image reference (it contains a registry / tag / digest separator and does not match an earlier ``FROM ... AS <stage>`` name or a numeric stage index) and ``X`` is not ``@sha256:``-pinned. DF-001 only inspects ``FROM``, so an unpinned ``COPY --from=<image>`` (a common way to pull ``cosign`` / ``kubectl`` / a CA bundle into the build) sidesteps it entirely. Reuses ``_primitives/image_pinning.classify`` so a floating tag and a pinned-but-mutable tag are both treated as unpinned, matching DF-001. A ``--from=<stage>`` (a named or numbered build stage) and a bare build-context name are not flagged.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Pin the image in ``COPY --from=<image>`` (and ``ADD --from=<image>``) to an immutable ``@sha256:<digest>``, the same way DF-001 requires for ``FROM``. A ``--from`` that names an external image (not an earlier ``FROM ... AS <stage>``) pulls that image at build time and copies bytes out of it, so a floating tag lets the registry serve different content under the same reference, and a typosquatted / taken-over name ships an attacker's binary straight into the final image. Resolve the digest (``docker buildx imagetools inspect <ref>``) and let Renovate / Dependabot refresh it. For first-party content, copy from a named build stage instead.
 
 </div>
 

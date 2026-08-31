@@ -44,23 +44,57 @@ RULE = Rule(
         "the tag. Pin them too rather than suppressing the rule "
         "globally.",
     ),
+    exploit_example=(
+        "# Vulnerable: ``image: python:3.12-slim`` is a mutable\n"
+        "# tag. Docker Hub's image team rebuilds it on every\n"
+        "# Python point release; a publisher takeover ships code\n"
+        "# into every Bitbucket pipeline that uses the tag.\n"
+        "pipelines:\n"
+        "  default:\n"
+        "    - step:\n"
+        "        image: python:3.12-slim\n"
+        "        script:\n"
+        "          - pytest\n"
+        "\n"
+        "# Safe: pin to the content-addressable digest. The pin\n"
+        "# documents which version the digest corresponded to so\n"
+        "# bumps stay reviewable.\n"
+        "pipelines:\n"
+        "  default:\n"
+        "    - step:\n"
+        "        image: python@sha256:abc123...  # python:3.12.1-slim\n"
+        "        script:\n"
+        "          - pytest"
+    ),
 )
 
 
 def _walk_image_refs(doc: dict[str, Any]) -> list[tuple[str, str]]:
     """Yield ``(location, image_ref)`` tuples for every ``image:`` in *doc*.
 
-    Two surfaces are walked:
+    Three surfaces are walked:
 
-    1. Step-level ``image:`` (the runtime container for the step).
+    1. Top-level ``image:`` (the global default runtime container every
+       step inherits unless it overrides ``image:`` itself). This is the
+       most load-bearing surface to pin: a tag move here swaps the
+       container for the whole pipeline. The location label is ``image``.
+    2. Step-level ``image:`` (the runtime container for the step).
        Iterated through the existing ``iter_steps`` helper so the
        location label matches every other Bitbucket rule (e.g.
        ``branches.main[0]``).
-    2. Top-level ``definitions.services.<name>.image:``. The
+    3. Top-level ``definitions.services.<name>.image:``. The
        location label is ``definitions.services.<name>`` so the
        finding points operators at the right block.
     """
     refs: list[tuple[str, str]] = []
+    # ── Top-level (global default) image ─────────────────────────
+    top_image = doc.get("image")
+    if isinstance(top_image, str):
+        refs.append(("image", top_image))
+    elif isinstance(top_image, dict):
+        name = top_image.get("name")
+        if isinstance(name, str):
+            refs.append(("image", name))
     # ── Step images ──────────────────────────────────────────────
     for loc, step in iter_steps(doc):
         image = step.get("image")

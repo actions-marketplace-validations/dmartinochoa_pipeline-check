@@ -103,6 +103,8 @@ STANDARD = Standard(
         "IAM-006":  ["PO.5.1"],
         "IAM-007":  ["PS.1.1"],                        # access key > 90 days
         "IAM-008":  ["PO.5.1", "PS.1.1"],              # OIDC trust missing aud/sub pin
+        "IAM-009":  ["PO.5.1", "PS.1.1"],              # Azure WIF broad subject
+        "IAM-010":  ["PO.5.1", "PS.1.1"],              # GCP WIF no repo condition
         # PBAC
         "PBAC-001": ["PO.5.1", "PO.3.2"],              # no VPC for CodeBuild
         "PBAC-002": ["PO.5.1", "PO.3.2"],              # shared service role
@@ -145,8 +147,27 @@ STANDARD = Standard(
         "S3-005":   ["PS.1.1"],                        # SecureTransport deny
         # GitHub Actions
         "GHA-001":  ["PW.4.1", "PW.4.4"],              # action not pinned to SHA
+        "GHA-110": ["PW.4.4"],  # CI env disables Go module verification
         "GHA-002":  ["PO.5.1", "PW.9.1"],              # pull_request_target with PR head
+        "RUN-001":  ["PO.5.1", "PW.9.1"],              # forensics: fork PR ran on a privileged trigger
+        "RUN-002":  ["PO.5.1", "PW.9.1"],              # forensics: privileged trigger fired
+        "GLRUN-001": ["PO.5.1", "PW.9.1"],  # gitlab forensics: merge-request pipeline executed
+        "GLRUN-002": ["PO.5.1", "PW.9.1"],  # gitlab forensics: fork merge-request pipeline executed
+        "GLRUN-003": ["PO.5.1", "PW.9.1"],  # gitlab forensics: secret leaked in fork pipeline trace
+        "GLRUN-004": ["PO.5.1", "PW.9.1"],  # gitlab forensics: fork pipeline minted a cloud OIDC token
+        "GLRUN-005": ["PO.5.1", "PW.9.1"],  # gitlab forensics: fork pipeline ran on a self-managed runner
+        "RUN-003":  ["PO.5.1", "PW.9.1"],              # forensics: secret leaked in run logs
+        "RUN-004":  ["PO.5.1", "PW.9.1"],              # forensics: fork run minted a cloud OIDC token
+        "RUN-005":  ["PO.5.1", "PW.9.1"],              # forensics: fork run on a self-hosted runner
+        "RUN-006":  ["PW.4.1", "PW.4.4", "RV.1.1"],              # forensics: known-compromised action executed
+        "RUN-007":  ["PW.4.1", "PW.4.4"],                        # forensics: unpinned third-party action ran
         "GHA-003":  ["PW.6.1", "PW.9.1"],              # script injection
+        "GHA-119":  ["PW.6.1", "PW.9.1"],              # untrusted context into an agentic AI CLI
+        "GHA-120":  ["PW.6.1", "PW.9.1"],              # trust_remote_code model load = code exec
+        "GHA-122":  ["PW.6.1", "PW.9.1"],              # unsafe pickle deser of fetched artifact = code exec
+        "GHA-121":  ["PW.4.1", "PW.4.4"],              # model pulled without a pinned revision
+        "GHA-117":  ["PW.6.1", "PW.9.1"],              # IaC apply on untrusted PR trigger
+        "GHA-118":  ["PW.6.1", "PW.9.1"],              # untrusted content into $GITHUB_ENV / $GITHUB_PATH
         "GHA-004":  ["PO.5.1"],                        # no explicit permissions
         "GHA-005":  ["PS.1.1"],                        # long-lived AWS keys
         "GHA-006":  ["PS.2.1", "PS.3.2"],              # unsigned artifacts
@@ -156,8 +177,10 @@ STANDARD = Standard(
         "GHA-010":  ["PO.5.1", "PW.9.1"],              # local action on untrusted trigger
         "GHA-011":  ["PO.5.1", "PW.9.1"],              # cache key tainted
         "GHA-012":  ["PO.5.2", "PW.9.1"],              # self-hosted runner not ephemeral
+        "GHA-105":  ["PO.5.2", "PW.9.1"],              # self-hosted runner on PR trigger
         "GHA-013":  ["PO.5.1", "PW.9.1"],              # issue_comment no author guard
         "GHA-014":  ["PO.5.1"],                        # deploy job missing environment
+        "GHA-123":  ["PO.5.1"],                        # agentic CLI output lands without review
         "GHA-015":  ["PO.5.2", "PW.9.1"],              # job has no timeout-minutes
         "GHA-016":  ["PW.4.1", "PW.4.4"],              # remote script piped to shell
         "GHA-017":  ["PW.4.1", "PW.4.4"],              # package install insecure source
@@ -170,6 +193,9 @@ STANDARD = Standard(
         "GHA-024":  ["PS.2.1", "PS.3.2"],              # no SLSA provenance attestation
         "GHA-025":  ["PW.4.1", "PW.4.4"],              # unpinned reusable workflow
         "GHA-026":  ["PO.5.1", "PW.9.1"],              # container job disables isolation
+        "GHA-107":  ["PO.5.1"],                        # harden-runner in audit mode (egress not blocked)
+        "GHA-108":  ["PO.5.1"],                        # no runtime egress control on OIDC/deploy workflow
+        "GHA-109":  ["PO.5.1"],                        # harden-runner not the first step
         "GHA-027":  ["PW.6.1", "PW.9.1"],              # dangerous shell idiom
         "GHA-028":  ["PW.4.1", "PW.4.4"],              # install bypasses registry integrity
         "GHA-029":  ["PW.4.1", "PW.4.4"],              # package source bypasses lockfile
@@ -205,15 +231,53 @@ STANDARD = Standard(
         "GHA-059":  ["PW.4.4"],                        # npm install without audit signatures
         "GHA-060":  ["PW.4.4"],                        # pip install without --require-hashes
         "GHA-061":  ["PS.1.1"],                        # App token minted without permissions filter
+        "GHA-106":  ["PS.1.1"],                        # AI agent with write-scoped token
+        "GHA-111":  ["PS.1.1"],  # AI agent edits IaC applied in the same job
+        "GHA-112":  ["PO.5.1", "PO.5.2"],  # self-hosted deploy with no environment gate
+        "GHA-113":  ["PO.5.1", "PS.1.1"],  # OIDC trusted-publish w/o env gate
+        "GHA-114":  ["PO.5.1", "PS.1.1"],  # publish workflow on an unrestricted push trigger
+        "GHA-115":  ["PO.5.1"],                        # id-token granted workflow-wide, not job-scoped
+        "GHA-116":  ["PS.1.1"],                        # bulk secrets serialization
+        "GHA-062":  ["PO.5.1"],                        # OIDC trust subject in sibling IaC is overly broad
+        "GHA-063":  ["PO.5.1"],                        # spoofable bot-actor if-predicate
+        "GHA-064":  ["PO.5.1"],                        # unsound contains() with comma-string operand
+        "GHA-065":  ["PW.6.1"],                        # zero-width / bidi unicode in workflow body
+        "GHA-066":  ["PS.1.1"],                        # upload-artifact wildcard sweeps workspace
+        "GHA-067":  ["PS.1.1"],                        # cache step publishes credential-shaped paths
+        "GHA-068":  ["PW.4.1"],                        # runs-on targets a deprecated hosted runner
+        "GHA-069":  ["PO.5.1"],                        # orphan id-token: write scope
+        "GHA-070":  ["PW.4.4"],                        # ssh-keyscan / host-key check TOFU
+        "GHA-071":  ["PW.6.1"],                        # powershell on Linux / macOS step
+        "GHA-072":  ["PS.1.1"],                        # secret env: at wider scope than consumer
+        "GHA-073":  ["PS.1.1"],                        # unused workflow_call.secrets declaration
+        "GHA-086":  ["PO.5.1"],                        # wildcard branch trigger + environment binding
+        "GHA-087":  ["PS.1.1"],                        # derived-value of secret printed to log
+        "GHA-088":  ["PW.4.1", "PW.4.4", "RV.1.1"],    # typosquat uses: near-edit of top action
+        "GHA-089":  ["PW.4.1", "PW.4.4"],              # archived upstream repo
+        "GHA-090":  ["PW.4.1", "PW.4.4", "RV.1.1"],    # impostor-commit: SHA absent from repo
+        "GHA-091":  ["PW.4.1", "PW.4.4"],              # repojacking: action upstream missing
+        "GHA-092":  ["PO.5.1", "PW.9.1"],              # TOCTOU PR head SHA force-push race
+        "GHA-093":  ["PS.1.1"],                        # LOTP indicators
+        "GHA-094":  ["PW.4.1", "PW.4.4"],              # stale-action-refs
+        "GHA-096":  ["PW.4.1", "PW.4.4", "RV.1.1"],    # known-vulnerable action ref (GHSA)
         # GitLab CI
         "GL-001":   ["PW.4.1", "PW.4.4"],
+        "GL-037": ["PW.4.4"],  # CI env disables Go module verification
         "GL-002":   ["PW.6.1", "PW.9.1"],
+        "GL-045":   ["PW.6.1", "PW.9.1"],   # trust_remote_code model load = code exec
+        "GL-046":   ["PW.4.1", "PW.4.4"],   # model pulled without a pinned revision
+        "GL-047":   ["PW.6.1", "PW.9.1"],   # unsafe pickle deser of fetched artifact = code exec
+        "GL-048":   ["PW.6.1", "PW.9.1"],   # untrusted MR context into agentic CLI = prompt injection
+        "GL-049":   ["PO.5.1"],   # agentic CLI output lands without review
         "GL-003":   ["PS.1.1"],
         "GL-004":   ["PO.5.1"],
+        "GL-044":   ["PO.5.1"],                        # auto production deploy on an MR pipeline
         "GL-005":   ["PW.4.1", "PW.4.4"],
+        "GL-042":   ["PW.4.1", "PW.4.4"],    # include: component unpinned
         "GL-006":   ["PS.2.1", "PS.3.2"],              # unsigned artifacts
         "GL-007":   ["PS.3.2"],                        # no SBOM
         "GL-008":   ["PS.1.1"],                        # literal secrets
+        "DEV-008":   ["PS.1.1"],                        # literal secret in a devenv config
         "GL-009":   ["PW.4.1", "PW.4.4"],              # image not digest-pinned
         "GL-010":   ["PO.5.1", "PW.9.1"],              # multi-project artifact unverified
         "GL-011":   ["PO.5.1", "PW.9.1"],              # include: local on MR pipeline
@@ -223,8 +287,10 @@ STANDARD = Standard(
         "GL-015":   ["PO.5.2", "PW.9.1"],              # no timeout
         "GL-016":   ["PW.4.1", "PW.4.4"],              # remote script piped to shell
         "GL-017":   ["PO.5.1", "PW.9.1"],              # docker privileged / host
+        "GL-039":   ["PO.5.1", "PW.9.1"],              # dind daemon TLS disabled / exposed on 2375
         "GL-018":   ["PW.4.1", "PW.4.4"],              # package install insecure source
         "GL-019":   ["RV.1.1"],                        # no vulnerability scanning
+        "GL-043":   ["RV.1.1"],                        # native security scanner disabled
         "GL-020":   ["PS.1.1"],                        # CI_JOB_TOKEN persisted
         "GL-021":   ["PW.4.4"],                        # install without lockfile
         "GL-022":   ["PW.4.4"],                        # dep-update bypasses lockfile pins
@@ -237,6 +303,11 @@ STANDARD = Standard(
         "GL-029":   ["PO.5.1"],                        # manual deploy allow_failure
         "GL-030":   ["PW.4.1", "PW.4.4"],              # trigger: include w/o pinned ref
         "GL-031":   ["PO.5.1", "PS.1.1"],              # id_tokens missing audience pin
+        "GL-040":   ["PO.5.1", "PS.1.1"],              # CI_JOB_TOKEN used for cross-project access
+        "GL-041":   ["PW.6.1", "PW.9.1"],              # IaC apply on an untrusted MR trigger
+        "GL-050":   ["PS.1.1"],  # publish job long-lived registry token (GHA-050 analog)
+        "BB-033":   ["PW.6.1", "PW.9.1"],              # IaC apply on a pull-request pipeline
+        "BB-034":   ["PO.5.1"],                        # production deploy on a pull-request pipeline
         "GL-032":   ["PW.6.1", "PW.9.1"],              # tags interpolates untrusted
         "GL-033":   ["PO.5.1", "PW.9.1"],              # global before_script taint
         "GL-034":   ["PW.4.4"],                        # npm install without audit signatures
@@ -244,6 +315,16 @@ STANDARD = Standard(
         # Bitbucket Pipelines
         "BB-001":   ["PW.4.1", "PW.4.4"],
         "BB-002":   ["PW.6.1", "PW.9.1"],
+        "BB-035":   ["PW.6.1", "PW.9.1"],   # trust_remote_code model load = code exec
+        "BB-036":   ["PW.6.1", "PW.9.1"],   # untrusted PR context into agentic CLI = prompt injection
+        "BB-037":   ["PW.6.1", "PW.9.1"],   # unsafe pickle deser of fetched artifact = code exec
+        "BB-038":   ["PW.4.1", "PW.4.4"],   # model pulled without a pinned revision
+        "BB-039":   ["PO.5.1"],   # agentic CLI output lands without review
+        "JF-038":   ["PO.5.1"],   # agentic CLI output lands without review
+        "JF-039":   ["PW.6.1", "PW.9.1"],   # trust_remote_code model load = code exec
+        "JF-040":   ["PW.4.1", "PW.4.4"],   # model pulled without a pinned revision
+        "JF-041":   ["PW.6.1", "PW.9.1"],   # unsafe pickle deser of fetched artifact = code exec
+        "JF-042":   ["PS.1.1"],   # secret echoed to Jenkins build log
         "BB-003":   ["PS.1.1"],
         "BB-004":   ["PO.5.1"],
         "BB-005":   ["PO.5.2", "PW.9.1"],
@@ -276,6 +357,11 @@ STANDARD = Standard(
         # Azure DevOps Pipelines
         "ADO-001":  ["PW.4.1", "PW.4.4"],
         "ADO-002":  ["PW.6.1", "PW.9.1"],
+        "ADO-034":  ["PW.6.1", "PW.9.1"],   # trust_remote_code model load = code exec
+        "ADO-035":  ["PW.6.1", "PW.9.1"],   # untrusted PR context into agentic CLI = prompt injection
+        "ADO-036":  ["PW.6.1", "PW.9.1"],   # unsafe pickle deser of fetched artifact = code exec
+        "ADO-037":  ["PW.4.1", "PW.4.4"],   # model pulled without a pinned revision
+        "ADO-038":  ["PO.5.1"],   # agentic CLI output lands without review
         "ADO-003":  ["PS.1.1"],
         "ADO-004":  ["PO.5.1"],
         "ADO-005":  ["PW.4.1", "PW.4.4"],
@@ -306,6 +392,7 @@ STANDARD = Standard(
         "ADO-030":  ["PW.6.1", "PW.9.1"],              # pool interpolates untrusted
         # CircleCI
         "CC-001":   ["PW.4.1", "PW.4.4"],              # orb not pinned to SHA
+        "CC-033": ["PW.4.4"],  # CI env disables Go module verification
         "CC-002":   ["PW.6.1", "PW.9.1"],              # script injection
         "CC-003":   ["PW.4.1", "PW.4.4"],              # image not pinned to digest
         "CC-004":   ["PS.1.1"],                        # unrestricted context
@@ -332,6 +419,9 @@ STANDARD = Standard(
         "CC-025":   ["PO.5.1", "PW.9.1"],              # cache key tainted
         "CC-026":   ["PW.4.4", "RV.1.1"],              # malicious-activity indicators
         "CC-027":   ["PW.6.1", "PW.9.1"],              # dangerous shell idiom
+        "ARGO-019":  ["PW.6.1", "PW.9.1"],  # Argo dangerous shell idiom
+        "TKN-018":  ["PW.6.1", "PW.9.1"],  # Tekton dangerous shell idiom
+        "HARNESS-014":  ["PW.6.1", "PW.9.1"],  # Harness dangerous shell idiom
         "CC-028":   ["PW.4.1", "PW.4.4"],              # install bypasses registry integrity
         "CC-029":   ["PW.4.1", "PW.4.4"],              # machine executor image not pinned
         "CC-030":   ["PO.5.1"],                        # job w/o branch filter / approval gate
@@ -349,15 +439,25 @@ STANDARD = Standard(
         "BK-007":   ["PO.5.1"],                        # no manual deploy gate
         "BK-008":   ["PW.4.4"],                        # TLS bypass
         "BK-009":   ["PS.2.1", "PS.3.2"],              # no signing
+        "HARNESS-015":  ["PS.2.1", "PS.3.2"],  # Harness artifacts not signed
+        "DR-019":  ["PS.2.1", "PS.3.2"],  # Drone artifacts not signed
         "BK-010":   ["PS.3.2"],                        # no SBOM
+        "HARNESS-016":  ["PS.3.2"],  # Harness no SBOM
+        "DR-020":  ["PS.3.2"],  # Drone no SBOM
         "BK-011":   ["PS.3.2"],                        # no SLSA provenance
+        "HARNESS-017":  ["PS.3.2"],  # Harness no SLSA provenance
+        "DR-021":  ["PS.3.2"],  # Drone no SLSA provenance
         "BK-012":   ["RV.1.1"],                        # no vuln scan
+        "HARNESS-018":  ["RV.1.1"],  # Harness no vuln scan
+        "DR-022":  ["RV.1.1"],  # Drone no vuln scan
         "BK-013":   ["PO.5.1"],                        # no branches filter
         "BK-014":   ["PW.4.1", "PW.4.4"],              # unpinned package install
         "BK-015":   ["PW.6.1", "PW.9.1"],              # agents map untrusted interpolation
+        "BK-016":   ["PW.6.1", "PW.9.1"],              # dangerous shell idiom
         # ── Jenkins ─────────────────────────────────────────────
         "JF-001":   ["PW.4.1", "PW.4.4"],              # shared library not pinned
         "JF-002":   ["PW.6.1", "PW.9.1"],              # script step untrusted env
+        "JF-037":   ["PW.6.1", "PW.9.1"],              # agentic CLI ingests untrusted context (prompt injection)
         "JF-003":   ["PO.5.1"],                        # agent any (no executor isolation)
         "JF-004":   ["PS.1.1"],                        # AWS long-lived keys via withCredentials
         "JF-005":   ["PO.5.1"],                        # deploy stage missing manual input
@@ -391,8 +491,27 @@ STANDARD = Standard(
         "JF-033":   ["PS.1.1"],                        # withCredentials leaked via Groovy ${}
         "JF-034":   ["PS.1.1"],                        # password() build parameter
         "JF-035":   ["PW.4.4"],                        # httpRequest SSL off
+        "JF-036":   ["PW.6.1", "PW.9.1"],              # sh body interpolates params.*
         # ── Drone CI ────────────────────────────────────────────
         "DR-001":   ["PW.4.1", "PW.4.4"],              # step image not digest-pinned
+        "HARNESS-001":   ["PW.4.1", "PW.4.4"],  # Harness step image not digest-pinned
+        "HARNESS-002":   ["PW.6.1", "PW.9.1"],  # Harness expression injection in step command
+        "HARNESS-003":   ["PO.5.1", "PW.9.1"],  # Harness privileged step
+        "HARNESS-004":   ["PS.1.1"],  # Harness literal credential in variable
+        "HARNESS-005":   ["PW.4.4"],  # Harness pipe-to-shell
+        "HARNESS-006":   ["PW.4.4"],  # Harness TLS bypass in commands
+        "HARNESS-007":   ["PO.5.1", "PW.9.1"],  # Harness sensitive host-path mount
+        "HARNESS-008":   ["PW.6.1", "PW.9.1"],  # Harness agentic-CLI prompt injection
+        "HARNESS-010":   ["PW.6.1", "PW.9.1"],  # Harness model trust_remote_code (code exec)
+        "HARNESS-011":   ["PW.6.1", "PW.9.1"],  # Harness unsafe model deser (pickle RCE)
+        "HARNESS-012":   ["PW.4.1", "PW.4.4"],  # Harness model pulled without a pinned revision
+        "HARNESS-013":   ["PS.1.1"],  # Harness secret echoed to step log
+        "GCB-028":  ["PS.1.1"],  # Cloud Build secret echoed to build log
+        "ARGO-018":  ["PS.1.1"],  # Argo secret echoed to template log
+        "TKN-017":  ["PS.1.1"],  # Tekton secret echoed to step log
+        "DR-018":  ["PS.1.1"],  # Drone secret echoed to step log
+        "BK-017":  ["PS.1.1"],  # Buildkite secret echoed to step log
+        "HARNESS-009":   ["PO.5.1"],  # Harness agentic-CLI output autolands without review
         "DR-002":   ["PO.5.1", "PW.9.1"],              # privileged step
         "DR-003":   ["PW.6.1", "PW.9.1"],              # Drone variable injection
         "DR-004":   ["PS.1.1"],                        # literal credential
@@ -403,13 +522,22 @@ STANDARD = Standard(
         "DR-009":   ["PO.5.1", "PW.9.1"],              # cache key tainted
         "DR-010":   ["PW.4.1", "PW.4.4"],              # unpinned package install
         "DR-011":   ["PW.6.1", "PW.9.1"],              # node map interpolates untrusted
+        # ── Drone extended pack ──
+        "DR-012":   ["PW.4.1", "PW.4.4"],              # service image not pinned
+        "DR-013":   ["PO.5.1"],                        # no trigger event filter
+        "DR-014":   ["PW.4.4"],                        # pipe-to-shell
+        "DR-015":   ["PW.4.4"],                        # clone recursive
+        "DR-016":   ["PW.4.4", "PW.6.1"],              # image field interpolation
+        "DR-017":   ["PW.6.1", "PW.9.1"],              # dangerous shell idiom
         # ── Tekton ──────────────────────────────────────────────
         "TKN-001":  ["PW.4.1", "PW.4.4"],              # step image not digest-pinned
+        "TKN-016": ["PW.4.1", "PW.4.4"],  # remote resolver / bundle task body not pinned
         "TKN-002":  ["PO.5.1", "PW.9.1"],              # step privileged / root
         "TKN-003":  ["PW.6.1", "PW.9.1"],              # param injection in script
         "TKN-004":  ["PO.5.1", "PW.9.1"],              # hostPath / host namespaces
         "TKN-005":  ["PS.1.1"],                        # leaked creds in env / param
         "TKN-006":  ["PO.5.2", "PW.9.1"],              # no explicit timeout
+        "HARNESS-019":  ["PO.5.2", "PW.9.1"],  # Harness pipeline lacks an explicit timeout
         "TKN-007":  ["PO.5.1"],                        # default ServiceAccount
         "TKN-008":  ["PW.4.1", "PW.4.4"],              # remote install / TLS bypass
         "TKN-009":  ["PS.2.1", "PS.3.2"],              # artifacts not signed
@@ -423,8 +551,11 @@ STANDARD = Standard(
         "ARGO-001": ["PW.4.1", "PW.4.4"],              # template image not digest-pinned
         "ARGO-002": ["PO.5.1", "PW.9.1"],              # template privileged / root
         "ARGO-003": ["PO.5.1"],                        # default ServiceAccount
+        "ARGO-016": ["PO.5.1"],                        # cluster-admin / over-privileged ServiceAccount
         "ARGO-004": ["PO.5.1", "PW.9.1"],              # hostPath / host namespaces
         "ARGO-005": ["PW.6.1", "PW.9.1"],              # parameter injection in script
+        "ARGO-017": ["PW.6.1", "PW.9.1"],              # resource template manifest injection
+        "ARGOCD-019": ["PW.9.1"],                      # drift detection disabled on a sensitive field
         "ARGO-006": ["PS.1.1"],                        # leaked creds in env / param
         "ARGO-007": ["PO.5.2", "PW.9.1"],              # missing activeDeadlineSeconds
         "ARGO-008": ["PW.4.1", "PW.4.4"],              # remote install / TLS bypass
@@ -441,6 +572,13 @@ STANDARD = Standard(
         # PW.9.1 (env separation, secure defaults); credential-shape
         # rules tie to PS.1.1 (least-privilege code storage).
         "DF-001":   ["PW.4.1", "PW.4.4"],              # FROM not digest-pinned
+        "MODEL-001": ["PW.4.1", "PW.4.4"],             # unpinned base model
+        "MODEL-002": ["PW.4.1", "PW.4.4"],             # third-party hub base model
+        "MODEL-003": ["PW.4.1", "PW.4.4"],             # local unverified weights blob
+        "MODEL-006": ["PW.4.1", "PW.4.4"],             # committed unsafe-serialization model artifact
+        "MODEL-004": ["PW.4.1", "PW.4.4"],             # remote LoRA adapter
+        "MODEL-005": ["PW.4.1", "PW.4.4"],             # config auto_map = custom loader code
+        "DF-031":   ["PW.4.1", "PW.4.4"],              # COPY --from external image not digest-pinned
         "DF-002":   ["PO.5.1", "PW.9.1"],              # runs as root
         "DF-003":   ["PW.4.4", "PS.2.1"],              # ADD remote, no integrity
         "DF-004":   ["PW.4.1", "PW.4.4"],              # curl-pipe in RUN
@@ -475,6 +613,14 @@ STANDARD = Standard(
         "HELM-008": ["PW.4.1"],                        # stale Chart.lock
         "HELM-009": ["PW.4.4"],                        # non-HTTPS home/sources
         "HELM-010": ["PO.3.3", "PS.3.2"],              # missing appVersion
+        # ── Helm extended pack ──
+        "HELM-011": ["PS.1.1"],                        # dependency URL embedded creds
+        "HELM-012": ["PW.4.4"],                        # deprecated without successor
+        "HELM-013": ["PW.4.4"],                        # invalid chart type
+        "HELM-014": ["PW.4.4", "RV.1.1"],              # known-compromised dependency
+        "HELM-015": ["PW.4.4"],  # oci:// dependency not digest-pinned
+        "HELM-016": ["PS.1.1"],  # default secret in values.yaml
+        "HELM-017": ["PW.4.4"],  # tpl of an untrusted .Values value
         # ── Cloud Build (GCB) ────────────────────────────────────
         "GCB-001": ["PW.4.1", "PW.4.4"],               # step image not pinned
         "GCB-002": ["PS.1.1"],                         # plaintext env secret
@@ -502,6 +648,7 @@ STANDARD = Standard(
         "GCB-024": ["PS.3.2"],                         # missing provenance labels
         "GCB-025": ["PW.4.1"],                         # outdated runner image
         "GCB-026": ["PS.1.1"],                         # public storage bucket
+        "GCB-027": ["PW.4.4", "RV.1.1"],               # malicious-activity indicators
         # ── NPM / PyPI / Maven dep supply-chain ─────────────────
         # PW.4.* (acquire / verify components) is the natural home
         # for pinning + integrity + non-registry sources.
@@ -515,11 +662,16 @@ STANDARD = Standard(
         "NPM-006":  ["PW.4.1", "PW.4.4", "RV.1.1"],    # compromised npm version
         "NPM-007":  ["PO.5.1", "PW.9.1"],              # .npmrc ignore-scripts
         "NPM-011":  ["PS.1.1"],                        # secret-shaped paths in files field
+        "NPM-013":  ["PS.1.1"],                        # broad files-field publishes everything
         "PYPI-001": ["PW.4.1", "PW.4.4"],              # missing ==pin
         "PYPI-002": ["PW.4.4"],                        # hash pinning missing
         "PYPI-003": ["PW.4.1", "PW.4.4"],              # http index / --trusted-host
+        "PYPI-018": ["PW.4.1", "PW.4.4"],  # --no-binary forces sdist build
         "PYPI-004": ["PW.4.1", "PW.4.4"],              # VCS dep without commit SHA
+        "PYPI-015": ["PW.4.1", "PW.4.4"],  # direct artifact URL
         "PYPI-005": ["PW.4.1", "PW.4.4"],              # --extra-index-url (dep confusion)
+        "PYPI-017": ["PW.4.1", "PW.4.4"],  # remote --find-links
+        "PYPI-016": ["PW.4.1", "PW.4.4"],  # primary index repointed
         "PYPI-006": ["PW.4.1", "PW.4.4", "RV.1.1"],    # compromised PyPI version
         "MVN-001":  ["PW.4.1", "PW.4.4"],              # floating Maven range
         "MVN-002":  ["PW.4.1", "PW.4.4"],              # mutable SNAPSHOT dep
@@ -528,6 +680,125 @@ STANDARD = Standard(
         "MVN-005":  ["PW.4.4"],                        # lax checksumPolicy
         "MVN-006":  ["PW.4.1", "PW.4.4", "RV.1.1"],    # compromised Maven version
         "MVN-007":  ["PW.4.1", "PW.4.4"],              # settings.xml wildcard mirror
+        "MVN-008":  ["PW.4.1", "PW.4.4", "RV.1.1"],    # cooldown gate (--resolve-remote)
+        "MVN-009":  ["PW.4.1", "PW.4.4", "RV.1.1"],    # OSV advisory (--resolve-remote)
+        # ── Maven extended pack ──
+        "MVN-010":  ["PS.1.1"],                        # plaintext server password
+        "MVN-011":  ["PS.1.1"],                        # repo URL credentials
+        "MVN-012":  ["PW.4.4"],                        # build plugin floating
+        "MVN-013":  ["PW.4.4"],                        # build extension floating
+        "MVN-014":  ["PS.1.1", "PW.4.4"],              # wrapper sha256 missing
+        "MVN-015": ["PW.4.4"],  # build-time plugin exec bound to lifecycle
+        "MVN-016": ["PW.4.4"],  # gradle allowInsecureProtocol
+        "MVN-017": ["PS.1.1"],  # settings.xml privateKey + plaintext passphrase
+        "MVN-018": ["PW.4.4"],  # distributionManagement release accepts snapshots
+        "NPM-008":  ["PW.4.1", "PW.4.4", "RV.1.1"],    # cooldown gate (--resolve-remote)
+        "NPM-009":  ["PW.4.1", "PW.4.4"],              # new-transitive-dep diff gate
+        "NPM-010":  ["PW.4.1", "PW.4.4", "RV.1.1"],    # OSV advisory (--resolve-remote)
+        "PYPI-008": ["PW.4.1", "PW.4.4", "RV.1.1"],    # cooldown gate (--resolve-remote)
+        "PYPI-009": ["PW.4.1", "PW.4.4", "RV.1.1"],    # OSV advisory (--resolve-remote)
+        # ── PyPI extended pack (PYPI-010..014) ──
+        "PYPI-010": ["PS.1.1"],                        # index URL with embedded credentials
+        "PYPI-011": ["PW.4.4"],                        # --trusted-host disables TLS
+        "PYPI-012": ["PW.4.4"],                        # build-system requires floating
+        "PYPI-013": ["PW.4.4"],                        # pyproject dynamic dependencies
+        "PYPI-014": ["PW.4.4"],                        # custom source HTTP
+        # ── nuget (dep supply-chain) ─────────────────────────────
+        "NUGET-001": ["PW.4.1", "PW.4.4"],             # floating NuGet version range
+        "NUGET-002": ["PW.4.1", "PW.4.4"],             # wildcard prerelease version
+        "NUGET-003": ["PW.4.1", "PW.4.4"],             # missing explicit version
+        "NUGET-004": ["PW.4.1", "PW.4.4"],             # HTTP-only package source
+        "NUGET-005": ["PW.4.1", "PW.4.4", "RV.1.1"],   # known-compromised package version
+        "NUGET-006": ["PW.4.4"],                        # no lock file for reproducible restores
+        "NUGET-007": ["PW.4.1", "PW.4.4"],             # multiple sources without packageSourceMapping
+        "NUGET-008": ["PW.4.1", "PW.4.4", "RV.1.1"],   # cooldown gate (--resolve-remote)
+        "NUGET-009": ["PW.4.1", "PW.4.4", "RV.1.1"],   # OSV advisory (--resolve-remote)
+        "NUGET-010": ["PS.1.1"],                       # NuGet.config cleartext feed credential
+        # ── NuGet extended pack ──
+        "NUGET-011": ["PW.4.4"],                       # source mapping wildcard
+        "NUGET-012": ["PW.4.4", "PS.3.2"],             # signature validation off
+        "NUGET-013": ["PW.4.4"],                       # dotnet-tools unpinned
+        "NUGET-014": ["PS.1.1"],                       # source URL credentials
+        "NUGET-015": ["PO.5.1", "PW.4.4"],             # VersionOverride breaks CPM
+        "NUGET-016": ["PW.4.1", "PW.4.4"],             # missing <clear/> inherits public gallery
+        "NUGET-017": ["PW.4.1", "PW.4.4"],  # public gallery active alongside private feed, not disabled
+        "NUGET-018": ["PW.4.4"],                       # build-time MSBuild execution
+        "NUGET-019": ["PW.4.4", "PS.3.2"],             # require mode, no trusted signers
+        # ── Go modules (GOMOD-001..006) ──
+        "GOMOD-001": ["PS.1.1", "PW.4.4"],             # go.sum integrity manifest missing
+        "GOMOD-002": ["PO.5.1", "PW.4.4"],             # replace directive to local path
+        "GOMOD-003": ["PO.5.1", "PW.4.4"],             # replace directive to different module
+        "GOMOD-004": ["PW.4.4"],                       # +incompatible direct require
+        "GOMOD-005": ["PO.5.1"],                       # missing go toolchain directive
+        "GOMOD-006": ["PW.4.4", "RV.1.1"],             # known-compromised module version
+        # ── Go modules extended pack ──
+        "GOMOD-007": ["PS.1.1", "PW.4.4"],             # vendor/modules.txt stale
+        "GOMOD-008": ["PO.5.1", "PW.4.4"],             # replace without version pin
+        "GOMOD-009": ["PW.4.4"],                       # pre-release direct require
+        "GOMOD-010": ["PO.5.1"],                       # stale exclude directive
+        "GOMOD-011": ["PW.4.4"],  # tool directive build-time exec
+        "GOMOD-012": ["PW.4.4"],  # insecure / non-canonical module host
+        # ── Cargo / Rust (CARGO-001..006) ──
+        "CARGO-001": ["PW.4.4"],                       # floating Cargo.toml version spec
+        "CARGO-002": ["PO.5.1", "PW.4.4"],             # git dep with mutable ref (no rev)
+        "CARGO-003": ["PS.1.1", "PW.4.4"],             # missing Cargo.lock
+        "CARGO-004": ["PO.5.1", "PW.4.4"],             # local-path Cargo dependency
+        "CARGO-005": ["PO.5.1", "PW.4.4"],             # alternate-registry Cargo dependency
+        "CARGO-006": ["PW.4.4", "RV.1.1"],             # known-compromised crate version
+        # ── Cargo extended pack ──
+        "CARGO-007": ["PW.4.4", "RV.1.1"],             # build-deps floating
+        "CARGO-008": ["PO.5.1", "PW.4.4"],             # patch.crates-io substitution
+        "CARGO-009": ["PW.4.4"],                       # workspace deps floating
+        "CARGO-010": ["PO.5.1"],                       # missing rust-version
+        "CARGO-011": ["PW.4.4"],  # build.rs compile-time egress / exec
+        "CARGO-012": ["PW.4.4"],  # .cargo/config.toml source override / build flags
+        "CARGO-013": ["PW.4.4"],  # Cargo.lock off-crates.io source
+        "CARGO-014": ["PW.4.4"],  # no supply-chain audit-gate config
+        # ── Composer / PHP ──
+        "COMPOSER-001": ["PW.4.4", "RV.1.1"],
+        "COMPOSER-002": ["PW.4.4", "RV.1.1"],
+        "COMPOSER-003": ["PW.4.4", "PO.5.1"],
+        "COMPOSER-012": ["PW.4.4", "PO.5.1"],  # disables Packagist / marks custom repo canonical
+        "COMPOSER-011": ["PW.4.4", "PO.5.1"],  # external VCS repository re-points a package
+        "COMPOSER-004": ["PS.1.1", "PO.5.1"],
+        "COMPOSER-005": ["PW.4.4"],
+        "COMPOSER-014": ["PW.4.4"],  # minimum-stability without prefer-stable
+        "COMPOSER-006": ["PW.4.4", "PO.5.1"],
+        "COMPOSER-007": ["PW.4.4", "RV.1.1"],
+        "COMPOSER-008": ["PW.4.4"],
+        "COMPOSER-009": ["PS.1.1", "PO.5.1"],
+        "COMPOSER-010": ["PW.4.4", "PO.5.1"],
+        "COMPOSER-013": ["PW.4.4", "PO.5.1"],  # config.disable-tls
+        # ── RubyGems / Bundler ──
+        "GEM-001": ["PW.4.4", "RV.1.1"],
+        "GEM-002": ["PW.4.4", "RV.1.1"],
+        "GEM-003": ["PW.4.4", "PO.5.1"],
+        "GEM-004": ["PS.1.1", "PO.5.1"],
+        "GEM-005": ["PW.4.4"],
+        "GEM-006": ["PW.4.4", "RV.1.1"],
+        "GEM-007": ["PW.4.4"],
+        "GEM-008": ["PW.4.4"],
+        "GEM-009": ["PS.1.1", "PO.5.1"],
+        "GEM-010": ["PW.4.4"],
+        "GEM-011": ["PW.4.4"],  # Bundler plugin install-time exec
+        "GEM-012": ["PW.4.4"],  # per-gem :source override
+        "GEM-013": ["PW.4.4"],  # insecure git transport
+        # ── Pulumi (PULUMI-001..006) ──
+        "PULUMI-001": ["PS.1.1", "PO.5.1"],             # passphrase secretsprovider
+        "PULUMI-002": ["PS.1.1"],                       # secret-shaped config plaintext
+        "PULUMI-003": ["PS.1.1", "PO.5.1"],             # hardcoded credentials in source
+        "PULUMI-011": ["PS.1.1", "PO.5.1"],  # plugin from custom download server
+        "PULUMI-004": ["PO.5.1", "PW.4.4"],             # insecure state backend
+        "PULUMI-005": ["PO.5.1"],                       # wildcard IAM policy in source
+        "PULUMI-006": ["PO.5.1", "PW.4.4"],             # StackReference unguarded
+        # ── Pulumi extended pack ──
+        "PULUMI-007": ["PO.5.1"],                       # public-access cloud resource
+        "PULUMI-008": ["PW.4.4", "PO.5.1"],             # shell-exec with non-constant input
+        "PULUMI-013": ["PW.4.4", "PO.5.1"],  # dynamic provider deploy-time code
+        "PULUMI-014": ["PW.4.4", "PO.5.1"],  # ESC environment imported without a qualifier
+        "PULUMI-009": ["PO.3.3"],                       # runtime / source mismatch
+        "PULUMI-012": ["PO.3.3"],  # plugin version unpinned
+        "PULUMI-010": ["PS.1.1"],                       # stack orphaned encryption salt
         # ── Dockerfile env-bypass pack (DF-021..030) ────────────
         # Each setting disables the trusted-source channel for any
         # in-image install (PW.4.4 verify failure) and tampers
@@ -554,6 +825,7 @@ STANDARD = Standard(
         "OCI-005":  ["PS.3.2"],                        # missing image.licenses
         "OCI-007":  ["PW.4.4", "PS.3.2"],              # legacy schemaVersion 1
         "OCI-008":  ["PW.4.4", "PS.2.1"],              # weak digest algorithm
+        "OCI-009":  ["PS.3.2"],                        # missing base-image annotations
         # ── SLSA / in-toto attestation content ──────────────────
         # The ATTEST-NNN family is the provenance document itself
         # (PS.2.1 integrity verification + PS.3.2 provenance data).
@@ -576,6 +848,7 @@ STANDARD = Standard(
         "TAINT-006": ["PO.5.1", "PW.9.1"],
         "TAINT-007": ["PO.5.1", "PW.9.1"],
         "TAINT-008": ["PO.5.1", "PW.9.1"],
+        "TAINT-009": ["PS.1.1"],                       # env-protected secret flows to unprotected job
         # ── SCM posture (governance via the platform REST API) ──────
         # The PS.1 family ("Protect all forms of code from
         # unauthorized access and tampering") is purpose-built for
@@ -671,6 +944,7 @@ STANDARD = Standard(
         "K8S-021":  ["PO.5.1"],                        # wildcard RBAC verbs
         "K8S-022":  ["PO.5.1", "PW.9.1"],              # Service exposes SSH
         "K8S-023":  ["PW.9.1"],                        # PSA enforce label missing
+        "K8S-044":  ["PW.9.1"],                        # admission webhook fail-open / unscoped mutating
         "K8S-024":  ["PO.3.3"],                        # missing readiness / liveness probes
         "K8S-025":  ["PO.5.1"],                        # system priority class
         "K8S-026":  ["PO.5.1"],                        # LB without source ranges
@@ -694,5 +968,171 @@ STANDARD = Standard(
         # S3-000 (discovery failure) — visibility gap, same precedent
         # as the other -000 family entries above.
         "S3-000":   ["PO.3.3"],
+        # supply-chain posture pack
+        "GHA-097":  ["PO.5.1", "PW.9.1"],              # recursive PR auto-merge loop
+        "GHA-098":  ["RV.1.1"],                        # deploy without security scan gate
+        "GHA-099":  ["PS.1.1"],                        # deploy env plaintext secret
+        "GHA-100":  ["PW.4.4", "PS.2.1"],              # cosign verify no identity binding
+        "GHA-102":  ["PO.5.1", "PW.9.1"],              # submodule checkout on PR trigger
+        "GHA-103":  ["PW.6.1", "PW.9.1"],              # AI review bot on untrusted trigger
+        "GHA-104":  ["PW.6.1", "PW.9.1"],              # AI agent auto-push without PR review
+        "GL-036":   ["PS.1.1"],                        # secret echoed to GitLab CI log
+        "GL-038":   ["PS.1.1"],                        # CI_DEBUG_TRACE dumps secrets to GitLab CI log
+        "BB-032":   ["PS.1.1"],                        # secret echoed to Bitbucket log
+        "ADO-031":  ["PS.1.1"],                        # secret echoed to Azure DevOps log
+        "ADO-032":  ["PS.1.1"],                        # checkout persistCredentials leaks token to .git/config
+        "ADO-033":  ["PW.6.1", "PW.9.1"],              # IaC apply on a PR-validated pipeline
+        "CC-032":   ["PS.1.1"],                        # secret echoed to CircleCI log
+        "CC-034":   ["PW.6.1", "PW.9.1"],              # trust_remote_code model load = code exec
+        "CC-035":   ["PW.4.1", "PW.4.4"],              # model pulled without a pinned revision
+        "CC-036":   ["PW.6.1", "PW.9.1"],              # unsafe pickle deser of fetched artifact = code exec
+        "CC-037":   ["PW.6.1", "PW.9.1"],              # agentic CLI ingests untrusted context (prompt injection)
+        "CC-038":   ["PO.5.1"],              # agentic CLI output lands without review
+        "SCM-048":  ["PO.5.1"],                        # org codespace secrets scoped to all repos
+        "SCM-049":  ["PS.1.1"],                        # classic PAT where fine-grained suffices
+        "ORG-001":  ["PS.1.1"],                        # org: 2FA not required org-wide
+        "ORG-002":  ["PS.1.1"],                        # org: default member permission too broad
+        "ORG-003":  ["PW.4.1", "PW.4.4"],              # org: no Actions allow-list (any action runs)
+        "ORG-004":  ["PS.1.1"],                        # org: default workflow token is write
+        "ORG-005":  ["PS.1.1"],                        # org: Actions can approve PRs (review bypass)
+        "ORG-006":  ["PO.5.1"],                        # org: Actions secret scoped to all repos
+        "ORG-007":  ["PS.1.1"],                        # org: private-repo forking allowed (code exfiltration)
+        "GLGRP-001":  ["PS.1.1"],  # gitlab group: 2FA not required
+        "GLGRP-002":  ["PS.1.1"],  # gitlab group: forking outside group allowed
+        "GLGRP-003":  ["PS.1.1"],  # gitlab group: sharing projects outside the hierarchy
+        "GLGRP-004":  ["PS.1.1"],  # gitlab group: default branch protection disabled for new projects
+        "GLGRP-005":  ["PO.3.2"],  # gitlab group: group webhook over insecure transport
+        "GLGRP-006":  ["PS.1.1"],  # gitlab group: group CI/CD variable holds a secret with a weak control
+        "ORG-008":  ["PS.1.1"],                        # org: members can create public repos (code exposure)
+        "ORG-009":  ["PO.5.2", "PW.9.1"],              # org: self-hosted runner group exposed to public repos
+        "ORG-010":  ["PS.1.1"],                        # org: new-repo secret-scanning push-protection default off
+        "ORG-011":  ["PO.3.2"],                        # org: org webhook over insecure transport
+        "ORG-012":  ["PW.4.4", "RV.1.1"],              # org: new-repo Dependabot security-updates default off
+        "ORG-013":  ["PS.1.1"],                        # org: org ruleset not enforced (evaluate/disabled)
+        "ORG-015":  ["PS.1.1"],  # org: immutable releases not enforced org-wide
+        "ORG-014":  ["PS.1.1"],  # org: native SHA-pinning policy not required
+        # GitLab-specific platform posture (SCM-050..053)
+        "SCM-050":  ["PS.1.1"],                        # GitLab push rules: prevent_secrets
+        "SCM-051":  ["PO.5.1", "PS.1.1"],              # GitLab push rules: committer-email check
+        "SCM-052":  ["PO.5.1"],                        # GitLab MR: discussions-resolved gate
+        "SCM-053":  ["PO.5.1"],                        # GitLab MR: author self-approval allowed
+        # Bitbucket-specific platform posture (SCM-054..055)
+        "SCM-054":  ["PO.5.1", "PS.3.1"],              # Bitbucket private repo allows public forks
+        "SCM-055":  ["PO.5.1"],                        # Bitbucket no write-side branch-restriction kinds
+        "NPM-012":  ["PS.1.1"],                        # publish token missing restrictions
+        # ── Azure Cloud (Entra ID / Storage / Key Vault / ACR / Monitor) ──
+        "ENTRA-001": ["PO.5.1"],                       # SP assigned Global Administrator
+        "ENTRA-002": ["PS.1.1"],                       # app credential beyond 180 days
+        "ENTRA-003": ["PS.1.1"],                       # SP uses password credential
+        "AZST-001":  ["PO.5.1", "PS.1.1"],             # public blob access
+        "AZST-002":  ["PW.4.4"],                       # non-HTTPS traffic
+        "AZST-003":  ["PS.1.1"],                       # no CMK encryption
+        "AKV-001":   ["PS.1.1", "PS.3.1"],             # soft delete not enabled
+        "AKV-002":   ["PS.1.1", "PS.3.1"],             # purge protection not enabled
+        "AKV-003":   ["PO.5.1", "PS.1.1"],             # network ACLs allow all
+        "ACR-001":   ["PO.5.1"],                       # admin user enabled
+        "ACR-002":   ["PO.5.1", "PS.1.1"],             # public network access
+        "ACR-003":   ["PS.2.1", "PS.3.2"],             # content trust not enabled
+        "AZMON-001": ["PO.3.3"],                       # no diagnostic setting
+        "AZMON-002": ["PO.3.3"],                       # log retention < 365 days
+        "AZMON-003": ["PO.3.3", "RV.1.1"],             # no alert rule
+        # ── GCP (IAM / GCS / KMS / Artifact Registry / Cloud Logging) ────
+        "GCIAM-001": ["PO.5.1"],                       # SA has Owner/Editor role
+        "GCIAM-002": ["PS.1.1"],                       # user-managed SA key
+        "GCIAM-003": ["PO.5.1"],                       # token creator without condition
+        "GCS-001":   ["PO.5.1", "PS.1.1"],             # public bucket
+        "GCS-002":   ["PO.5.1"],                       # no uniform access
+        "GCS-003":   ["PS.3.1"],                       # versioning not enabled
+        "GCKMS-001": ["PS.1.1"],                       # key rotation > 365 days
+        "GCKMS-002": ["PO.5.1", "PS.1.1"],             # public KMS key access
+        "GCKMS-003": ["PS.1.1"],                       # no HSM protection
+        "GAR-001":   ["RV.1.1"],                       # no vulnerability scanning
+        "GAR-002":   ["PO.5.1", "PS.1.1"],             # publicly readable repo
+        "GAR-003":   ["PO.3.2"],                       # no cleanup policy
+        "GCLOG-001": ["PO.3.3"],                       # audit logs not enabled
+        "GCLOG-002": ["PO.3.3"],                       # no log sink
+        "GCLOG-003": ["PO.3.3"],                       # log retention < 365 days
+        # ── Azure Cloud phase-2 ──────────────────────────────────────
+        "ENTRA-004": ["PO.5.1"],                       # cond access MFA
+        "ENTRA-005": ["PO.5.1"],                       # ext user restrict
+        "ENTRA-006": ["PO.3.3", "RV.1.1"],             # risky signin
+        "AZST-004":  ["PW.4.4"],                       # min TLS
+        "AZST-005":  ["PO.3.2"],                       # lifecycle
+        "AZST-006":  ["PS.1.1"],                       # key rotation
+        "AKV-004":   ["PS.1.1"],                       # key expiry
+        "AKV-005":   ["PS.1.1"],                       # secret expiry
+        "AKV-006":   ["PO.5.1"],                       # RBAC
+        "ACR-004":   ["RV.1.1"],                       # defender scan
+        "ACR-005":   ["PS.3.1"],                       # tag immutability
+        "AZMON-004": ["PO.3.3"],                       # KV diagnostics
+        "AZMON-005": ["PO.3.3"],                       # NSG flow retention
+        "AZMON-006": ["PO.3.3"],                       # LAW retention
+        "AZMON-007": ["PO.3.3", "RV.1.1"],             # svc health alert
+        "AZNW-001":  ["PO.5.1"],                       # SSH/RDP internet (CRITICAL)
+        "AZNW-002":  ["PO.3.3"],                       # flow logs
+        "AZNW-003":  ["PO.5.1"],                       # WAF
+        "AZNW-004":  ["PO.5.1"],                       # deny-all
+        "AZNW-005":  ["PO.5.1"],                       # public IP VM
+        "AZAPP-001": ["PW.4.4"],                       # HTTPS
+        "AZAPP-002": ["PW.4.4"],                       # TLS
+        "AZAPP-003": ["PS.1.1"],                       # managed identity
+        "AZAPP-004": ["PO.5.2", "PW.9.1"],             # remote debug
+        "AZAPP-005": ["PO.5.2", "PW.9.1"],             # FTP
+        "AZSQL-001": ["PS.1.1"],                       # TDE CMK
+        "AZSQL-002": ["PO.3.3"],                       # auditing
+        "AZSQL-003": ["PO.5.1"],                       # public access
+        "AZSQL-004": ["PO.5.1"],                       # AAD admin
+        "AZSQL-005": ["RV.1.1"],                       # threat detect
+        "AZVM-001":  ["PS.1.1"],                       # disk encrypt
+        "AZVM-002":  ["PO.5.1"],                       # public IP
+        "AZVM-003":  ["PO.5.1"],                       # JIT
+        "AZVM-004":  ["PW.4.1", "RV.1.1"],             # OS patch
+        "AZVM-005":  ["PS.1.1"],                       # managed identity
+        # ── GCP phase-2 ──────────────────────────────────────────────
+        "GCIAM-004": ["PO.5.1"],                       # default SA
+        "GCIAM-005": ["PO.5.1"],                       # domain restrict
+        "GCIAM-006": ["PS.1.1"],                       # SA key age
+        "GCS-004":   ["PS.1.1"],                       # CMEK
+        "GCS-005":   ["PO.3.3"],                       # access logging
+        "GCLOG-004": ["PO.3.3"],                       # VPC flow logs
+        "GCLOG-005": ["PO.3.3"],                       # firewall logging
+        "GCLOG-006": ["PO.3.3"],                       # data access
+        "GCLOG-007": ["PO.3.3"],                       # metric filter IAM
+        "GCLOG-008": ["PO.3.3"],                       # metric filter firewall
+        "GCLOG-009": ["PO.3.3"],                       # metric filter route
+        "GCLOG-010": ["PO.3.3"],                       # metric filter SQL
+        "GCLOG-011": ["PO.3.3"],                       # metric filter custom role
+        "GCNET-001": ["PO.5.1"],                       # default network
+        "GCNET-002": ["PO.5.1"],                       # deny-all
+        "GCNET-003": ["PO.5.1"],                       # SSH/RDP (CRITICAL)
+        "GCNET-004": ["PO.5.1"],                       # private access
+        "GCNET-005": ["PO.5.1"],                       # Cloud NAT
+        "GCCE-001":  ["PW.9.1"],                       # shielded VM
+        "GCCE-002":  ["PO.5.1"],                       # OS Login
+        "GCCE-003":  ["PO.5.2", "PW.9.1"],             # serial port
+        "GCCE-004":  ["PO.5.1"],                       # public IP
+        "GCCE-005":  ["PO.5.2", "PW.9.1"],             # project SSH keys
+        "GCSQL-001": ["PO.5.1"],                       # public IP
+        "GCSQL-002": ["PO.3.2"],                       # backups
+        "GCSQL-003": ["PW.4.4"],                       # SSL
+        "GCSQL-004": ["PO.5.1"],                       # IAM auth
+        "GCSQL-005": ["PO.3.2"],                       # PITR
+        "GCRUN-001": ["PO.5.1"],                       # unauth
+        "GCRUN-002": ["PO.5.1"],                       # custom SA
+        "GCRUN-003": ["PO.3.2"],                       # min instances
+        "GCRUN-004": ["PO.5.1"],                       # VPC connector
+        "GCKMS-004": ["PO.5.1"],                       # keyring IAM
+        "GCKMS-005": ["PS.1.1"],                       # destroy sched
+        "GCKMS-006": ["PS.1.1"],                       # imported key
+        # Developer-environment auto-execution
+        "DEV-001":   ["PW.6.1", "PW.9.1"],
+        "DEV-006":   ["PW.6.1", "PW.9.1"],
+        "DEV-007":   ["PW.6.1", "PW.9.1"],   # committed MCP config auto-launches a command server
+        "DEV-009":   ["PW.6.1", "PW.9.1"],   # remote MCP config over plaintext HTTP
+        "DEV-010":   ["PW.6.1", "PW.9.1"],   # committed MCP config blanket tool auto-approve
+        "DEV-002":   ["PW.6.1", "PW.9.1"],
+        "DEV-003":   ["PW.6.1", "PW.9.1"],
+        "DEV-004":   ["PW.4.1", "PW.4.4"],
+        "DEV-005":   ["PW.6.1", "PW.9.1"],
     },
 )

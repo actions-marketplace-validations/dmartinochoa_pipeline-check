@@ -33,7 +33,74 @@ RULE = Rule(
         "firewall rules) are equivalent at the L4 level but invisible "
         "to a manifest scanner."
     ),
+    exploit_example=(
+        "# Vulnerable: a LoadBalancer Service has no\n"
+        "# ``loadBalancerSourceRanges``. The cloud provider\n"
+        "# provisions a LB with a public IP open to 0.0.0.0/0.\n"
+        "# An internal service that was never meant to be\n"
+        "# internet-facing (admin UI, debug endpoint, internal\n"
+        "# API) is exposed.\n"
+        "apiVersion: v1\n"
+        "kind: Service\n"
+        "metadata: { name: app, namespace: prod }\n"
+        "spec:\n"
+        "  type: LoadBalancer\n"
+        "  ports: [{ port: 8080, targetPort: 8080 }]\n"
+        "  selector: { app: app }\n"
+        "\n"
+        "# Safe: declare ``loadBalancerSourceRanges`` with the\n"
+        "# CIDR allow-list. The cloud provider configures the\n"
+        "# LB's security group / firewall to drop traffic from\n"
+        "# anywhere outside the allow-list.\n"
+        "apiVersion: v1\n"
+        "kind: Service\n"
+        "metadata: { name: app, namespace: prod }\n"
+        "spec:\n"
+        "  type: LoadBalancer\n"
+        "  loadBalancerSourceRanges:\n"
+        "    - 10.0.0.0/8        # internal corporate network\n"
+        "    - 192.168.0.0/16    # VPN range\n"
+        "  ports: [{ port: 8080, targetPort: 8080 }]\n"
+        "  selector: { app: app }"
+    ),
 )
+
+
+#: Cloud annotations whose mere presence (with a non-``false`` value)
+#: marks a private, VPC-internal load balancer.
+_INTERNAL_LB_FLAG_ANNOTATIONS = (
+    "service.beta.kubernetes.io/aws-load-balancer-internal",
+    "service.beta.kubernetes.io/azure-load-balancer-internal",
+)
+#: Cloud annotations that select an internal LB via a specific value.
+_INTERNAL_LB_VALUE_ANNOTATIONS = {
+    "service.beta.kubernetes.io/aws-load-balancer-scheme": "internal",
+    "networking.gke.io/load-balancer-type": "internal",
+    "cloud.google.com/load-balancer-type": "internal",
+}
+
+
+def _is_internal_lb(metadata: Any) -> bool:
+    """Whether the Service carries a recognized internal-LB annotation.
+
+    Internal load balancers (AWS ``aws-load-balancer-internal`` /
+    ``scheme: internal``, GKE ``load-balancer-type: Internal``, Azure
+    ``azure-load-balancer-internal``) get a private, VPC-only address and
+    never accept 0.0.0.0/0, so the missing ``loadBalancerSourceRanges``
+    is not an internet-exposure finding.
+    """
+    anns = metadata.get("annotations") if isinstance(metadata, dict) else None
+    if not isinstance(anns, dict):
+        return False
+    for key in _INTERNAL_LB_FLAG_ANNOTATIONS:
+        v = anns.get(key)
+        if v is not None and str(v).strip().lower() not in ("", "false"):
+            return True
+    for key, want in _INTERNAL_LB_VALUE_ANNOTATIONS.items():
+        v = anns.get(key)
+        if isinstance(v, str) and v.strip().lower() == want:
+            return True
+    return False
 
 
 def _ports_summary(spec: dict[str, Any]) -> str:
@@ -59,6 +126,10 @@ def check(ctx: KubernetesContext) -> Finding:
         if not isinstance(spec, dict):
             continue
         if spec.get("type") != "LoadBalancer":
+            continue
+        # An internal load balancer is private-network-only; a missing
+        # source-range list doesn't expose it to the internet.
+        if _is_internal_lb(m.data.get("metadata")):
             continue
         ranges = spec.get("loadBalancerSourceRanges")
         if isinstance(ranges, list) and ranges:

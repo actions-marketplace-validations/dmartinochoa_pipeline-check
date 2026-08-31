@@ -31,7 +31,30 @@ RULE = Rule(
         "``chown user /etc`` is just as harmful, the recursive "
         "flag matters for the size of the blast radius, not for "
         "whether it's wrong. Application paths under ``/opt``, "
-        "``/srv``, ``/var/lib/<app>``, and ``/app`` are not flagged."
+        "``/srv``, ``/var/lib/<app>``, and ``/app`` are not flagged, "
+        "nor are the application source/data subtrees ``/usr/src`` "
+        "(the ``node`` image's ``/usr/src/app`` WORKDIR) and "
+        "``/usr/share`` (web/data roots); those hold no trusted "
+        "binaries on ``PATH``."
+    ),
+    exploit_example=(
+        "# Vulnerable: the build hands the runtime user ownership\n"
+        "# of a system directory to clear a write error.\n"
+        "RUN useradd app && chown -R app:app /usr/local\n"
+        "\n"
+        "# Attack: `app` now owns everything under /usr/local,\n"
+        "# including /usr/local/bin. A process compromised as\n"
+        "# `app` at runtime overwrites a trusted binary there\n"
+        "# (the same `node` / `python` the entrypoint execs), so\n"
+        "# the next launch runs attacker code, and any step that\n"
+        "# runs as root executes it with full privilege.\n"
+        "USER app\n"
+        "\n"
+        "# Safe: chown only the workload's own subtree and leave\n"
+        "# system paths owned by root. COPY --chown lands files\n"
+        "# already owned correctly without a recursive chown.\n"
+        "RUN useradd app && mkdir /app && chown app:app /app\n"
+        "COPY --chown=app:app . /app"
     ),
 )
 
@@ -44,6 +67,20 @@ _SYSTEM_PREFIXES: tuple[str, ...] = (
     "/lib64",
     "/boot",
     "/root",
+)
+
+# Subtrees that live *under* a system prefix but hold application
+# source / data rather than trusted binaries on ``PATH``. The canonical
+# case is ``/usr/src/app`` (the WORKDIR the official ``node`` image
+# documents) and ``/usr/share/<app>`` web/data roots; ``chown``-ing
+# those to the runtime user is the normal, safe pattern. They are
+# checked before ``_SYSTEM_PREFIXES`` so the executable/library dirs
+# (``/usr/bin``, ``/usr/local/bin``, ``/usr/lib`` ...) still fire.
+_APP_SUBTREE_PREFIXES: tuple[str, ...] = (
+    "/usr/src",
+    "/usr/share",
+    "/usr/local/src",
+    "/usr/local/share",
 )
 
 # Match ``chown`` or ``chgrp`` followed by optional flags, an
@@ -59,11 +96,19 @@ _CHOWN_RE = re.compile(
 )
 
 
-def _path_under_system(path: str) -> bool:
-    for prefix in _SYSTEM_PREFIXES:
+def _path_under(path: str, prefixes: tuple[str, ...]) -> bool:
+    for prefix in prefixes:
         if path == prefix or path.startswith(prefix + "/"):
             return True
     return False
+
+
+def _path_under_system(path: str) -> bool:
+    if _path_under(path, _APP_SUBTREE_PREFIXES):
+        # An application source/data subtree that merely sits under a
+        # system prefix (``/usr/src/app``, ``/usr/share/nginx/html``).
+        return False
+    return _path_under(path, _SYSTEM_PREFIXES)
 
 
 def check(df: Dockerfile) -> Finding:

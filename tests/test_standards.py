@@ -32,6 +32,7 @@ class TestRegistry:
             "soc2",
             "nist_csf_2",
             "nist_800_190",
+            "oscr",
         ):
             assert expected in names
 
@@ -76,6 +77,7 @@ class TestStandardIntegrity:
         "nist_csf_2",
         "nist_800_190",
         "esf_supply_chain",
+        "oscr",
     ])
     def test_every_mapped_control_is_defined(self, name):
         std = standards.get(name)
@@ -100,6 +102,7 @@ class TestStandardIntegrity:
         "nist_csf_2",
         "nist_800_190",
         "esf_supply_chain",
+        "oscr",
     ])
     def test_standard_has_metadata(self, name):
         std = standards.get(name)
@@ -126,6 +129,7 @@ class TestCheckIdIntegrity:
         "nist_csf_2",
         "nist_800_190",
         "esf_supply_chain",
+        "oscr",
     ])
     def test_check_ids_are_known(self, name):
         owasp = standards.get("owasp_cicd_top_10")
@@ -280,7 +284,7 @@ def _all_rule_packs() -> list[str]:
 
 class TestEveryRuleHasDocsNote:
     """Every rule must populate ``Rule.docs_note`` so ``--explain``
-    has a body to render in the [What it checks] section.
+    has a body to render in the ``// what it checks`` section.
 
     Pre-2026-05 history: the AWS rule pack shipped 58 rules with an
     empty ``docs_note`` field — a migration artifact from the
@@ -394,13 +398,14 @@ class TestPerFrameworkCoverageFloor:
         "esf_supply_chain":       98,   # current 100%
         "cis_supply_chain":       97,   # current 99%, DF-007 + OCI-006 carve-outs
         "nist_ssdf":              97,   # current 99%, OCI-006 carve-out
-        "openssf_scorecard":      75,   # current 77%
-        "slsa":                   67,   # current 69%
-        "nist_800_190":           58,   # current 60%, container-scoped
+        "openssf_scorecard":      71,   # current ~72%, GitHub-scoped; non-GitHub rule packs (devenv, registries, GitLab group governance GLGRP-*) grow the denominator without expected new coverage
+        "slsa":                   66,   # current 66%; build-provenance-scoped, org-governance rules (ORG-*) grow the denominator without provenance-level coverage
+        "nist_800_190":           52,   # current ~52-53%, container-scoped; CI / run-forensics / secret-hygiene rules grow the denominator without container-security coverage
         "s2c2f":                  31,   # current 33%, OSS-consumption-scoped
-        "cis_aws_foundations":    17,   # current 19%, AWS-pack-only
-        "cis_github":             15,   # current 17%, GitHub-platform-scoped
-        "cis_kubernetes":          5,   # current 6%, K8s-manifest-scoped
+        "cis_aws_foundations":    11,   # current ~11-12%, AWS-pack-only (CI / registry rule packs grow the denominator without expected new coverage)
+        "cis_github":             12,   # current 12-13%, GitHub-platform-scoped; non-GitHub rule packs grow the denominator without expected new coverage
+        "oscr":                   55,   # current ~58%, supply-chain-attack-scoped
+        "cis_kubernetes":          4,   # current 4-5%, K8s-manifest-scoped (denominator grows with non-K8s rule packs)
     }
 
     def test_floors_hold(self):
@@ -412,7 +417,7 @@ class TestPerFrameworkCoverageFloor:
                 rule_ids.append(rule.id)
         total = len(rule_ids)
 
-        per_std: dict[str, int] = {name: 0 for name in self.FLOORS}
+        per_std: dict[str, int] = dict.fromkeys(self.FLOORS, 0)
         for rid in rule_ids:
             stds = {x.standard for x in standards.resolve_for_check(rid)}
             for s in stds:

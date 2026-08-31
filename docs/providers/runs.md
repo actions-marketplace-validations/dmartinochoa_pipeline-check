@@ -1,0 +1,203 @@
+# GitHub Actions run forensics
+
+Where the `github` provider reasons about what a workflow *could* do,
+the `runs` provider audits what *actually executed*. It pulls recent
+Actions runs via the REST API
+(`GET /repos/{owner}/{repo}/actions/runs`) and flags runs that fired on
+a privileged trigger (`pull_request_target` / `workflow_run`) and, in
+particular, any whose head came from a fork: untrusted code that ran
+with the base repository's secrets and a write-scoped `GITHUB_TOKEN`.
+That is the live shape of the tj-actions/changed-files (CVE-2025-30066)
+and GhostAction incidents, which were visible in run history before
+anyone read the workflow file.
+
+Findings carry the run's URL, actor, and trigger so an operator can
+open the run directly. A missing token, a 404, or a network error
+degrades to a warning (every rule then sees an empty run list and
+passes) rather than crashing the scan.
+
+## Producer workflow
+
+```bash
+# Token comes from --gh-token or $GITHUB_TOKEN (needs ``actions:read``).
+pipeline_check --pipeline runs --scm-repo owner/name \
+               --gh-token "$GITHUB_TOKEN"
+```
+
+## What it covers
+
+7 checks · 0 have an autofix patch (``--fix``).
+
+| Check | Title | Severity | Fix |
+|-------|-------|----------|-----|
+| [RUN-001](#run-001) | Fork PR executed on a privileged trigger | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [RUN-002](#run-002) | Privileged trigger exercised in run history | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
+| [RUN-003](#run-003) | Secret leaked in workflow run logs | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [RUN-004](#run-004) | Fork PR run minted a cloud OIDC token | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [RUN-005](#run-005) | Fork PR run executed on a self-hosted runner | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [RUN-006](#run-006) | Known-compromised action executed in run history | <span class="pg-sev pg-sev--critical">CRITICAL</span> |  |
+| [RUN-007](#run-007) | Third-party action pinned by a mutable tag executed in a privileged run | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
+
+---
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## RUN-001: Fork PR executed on a privileged trigger { #run-001 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-4</span> <span class="pg-tag pg-tag--cwe">CWE-94</span>
+</div>
+
+Sourced from the GitHub Actions REST API (``GET /repos/{owner}/{repo}/actions/runs``). A run is flagged when its ``event`` is a privileged trigger (``pull_request_target`` / ``workflow_run``) and its ``head_repository`` is a fork (or differs from the base repository). Unlike the static GHA-002 check this is evidence the dangerous path actually ran, so it survives even when the workflow file has since been deleted or rewritten.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Treat each flagged run as untrusted-code execution in a privileged context. Confirm the workflow that ran does not check out and execute the PR head, and move any build-from-PR logic into a separate unprivileged ``pull_request`` workflow (the label-then-build pattern). Rotate any secret the run could read if the workflow is not demonstrably safe.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--medium" markdown>
+
+## RUN-002: Privileged trigger exercised in run history { #run-002 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--medium">MEDIUM</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-4</span>
+</div>
+
+Sourced from the Actions REST API. Counts recent runs whose ``event`` is ``pull_request_target`` or ``workflow_run``. This is forensic context (the surface is live in production), which the static config scan cannot confirm on its own.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Review the workflows that run on these triggers and confirm none check out or execute PR-controlled content while holding secrets. See RUN-001 for any of these runs that came from a fork (the high-severity subset).
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## RUN-003: Secret leaked in workflow run logs { #run-003 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-4</span> <span class="pg-tag pg-tag--cwe">CWE-532</span>
+</div>
+
+Only evaluated with ``--audit-runs-logs``. Downloads each privileged-trigger run's log archive (the Actions REST API ``.../logs`` endpoint) and scans the text with the shared secret-shape catalog (``find_secret_values``). GitHub masks registered secrets, so a match is a credential that leaked past masking. The token value is redacted in the finding.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Rotate the leaked credential immediately, then stop it reaching the log: register it as an Actions secret so GitHub masks it, avoid `set -x` / `env` dumps in steps that hold it, and pipe tool output that may echo credentials through a redactor.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## RUN-004: Fork PR run minted a cloud OIDC token { #run-004 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-4</span> <span class="pg-tag pg-tag--cwe">CWE-94</span>
+</div>
+
+Only evaluated with ``--audit-runs-logs``. Reuses the privileged-trigger run logs RUN-003 downloads (the Actions REST API ``.../logs`` endpoint) and flags a run whose logs show OIDC token minting (``token.actions.githubusercontent.com``, the ``ACTIONS_ID_TOKEN_REQUEST_*`` env, AWS ``AssumeRoleWithWebIdentity``, or GCP ``workloadIdentityPools``). Scoped to fork-originated runs, so a trusted-branch deploy that uses OIDC normally does not fire. Detection is high-precision but best-effort on recall (log content varies; registered secrets are masked).
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Treat this as untrusted code that reached cloud federation: rotate / review the federated role's recent activity and assume the run could act as that role. Restrict the role's trust policy so a fork / PR ref cannot assume it (pin the subject to your protected branches and environments), and move any OIDC-authenticated step out of the privileged ``pull_request_target`` / ``workflow_run`` path that handles PR content (the label-then-deploy pattern).
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## RUN-005: Fork PR run executed on a self-hosted runner { #run-005 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-4</span> <span class="pg-tag pg-tag--cwe">CWE-94</span>
+</div>
+
+Only evaluated with ``--audit-runs-logs``. Fetches job metadata (the Actions REST API ``.../jobs`` endpoint) for recent fork-originated runs and flags any whose jobs ran on a self-hosted runner (GitHub adds the ``self-hosted`` label to every such runner). Independent of the trigger, so it catches a plain fork ``pull_request`` run on your own infrastructure. The fork-run fetch is bounded to the most recent runs.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Do not run fork pull-request code on self-hosted runners. Set the repository / org policy to require approval for first-time (and ideally all) outside-contributor workflow runs, and run any fork-triggered job on GitHub-hosted ephemeral runners instead. If self-hosted runners are required, isolate them (ephemeral / single-use VMs, a locked-down network, no standing cloud credentials) and scope them to trusted workflows only.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--critical" markdown>
+
+## RUN-006: Known-compromised action executed in run history { #run-006 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--critical">CRITICAL</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-4</span> <span class="pg-tag pg-tag--cwe">CWE-506</span> <span class="pg-tag pg-tag--cwe">CWE-829</span>
+</div>
+
+Only evaluated with ``--audit-runs-logs``. Scans the privileged-trigger run logs RUN-003 / RUN-004 already download for GitHub's ``Download action repository 'owner/repo@ref' (SHA:...)`` lines and matches both the pinned ref and the resolved commit SHA against the curated GHA-040 known-compromised-action registry (tj-actions/changed-files, reviewdog/action-setup, the 2026 aquasecurity / checkmarx campaigns). Matching the resolved SHA is what catches a tag-repoint: a workflow pinned to ``@v44`` whose tag was force-moved to a malicious commit. Covers both the privileged-trigger run logs and a bounded set of the most recent non-privileged (``push`` / ``pull_request``) runs, since the tj-actions / Trivy / Checkmarx campaigns ran on ordinary CI; recall is bounded to the fetched runs, the IOC match itself is exact.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Treat this as a confirmed supply-chain compromise that ran in your CI: rotate every secret and token that was in scope for the affected run(s), review what the run accessed or pushed, and pin the action to a known-good commit SHA (never a tag, which the attacker can force-move). Cross-check the cited advisory for the clean post-incident version. If the workflow still references the compromised action, fix it now (GHA-040).
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--medium" markdown>
+
+## RUN-007: Third-party action pinned by a mutable tag executed in a privileged run { #run-007 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--medium">MEDIUM</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-4</span> <span class="pg-tag pg-tag--cwe">CWE-829</span> <span class="pg-tag pg-tag--cwe">CWE-1357</span>
+</div>
+
+Only evaluated with ``--audit-runs-logs``. Reuses the privileged-trigger run logs RUN-003 / RUN-004 download and inspects GitHub's ``Download action repository 'owner/repo@ref' (SHA:...)`` lines: a third-party action (not ``actions`` / ``github`` and not the repo's own owner) whose ``@ref`` is a mutable tag or branch rather than a 40-hex commit SHA is flagged, with the resolved SHA carried as evidence. The preventive twin of RUN-006: RUN-006 confirms a known-compromised action ran, RUN-007 flags the repoint-able third-party actions that could be the next one. Scoped to the secret-bearing privileged runs (not the bounded non-privileged RUN-006 pass), so the signal stays high; recall is bounded to the fetched runs.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Pin every third-party action to a full commit SHA rather than a tag or branch, which the upstream (or an attacker who compromises it) can force-move (the tj-actions/changed-files lesson). Use the resolved SHA the run log records as the pin, after confirming it is a known-good release, and consider Dependabot to bump the pinned SHAs. Restricting which actions can run at all (an allow-list) shrinks the third-party surface further.
+
+</div>
+
+</div>
+
+---
+
+## Adding a new GitHub Actions run forensics check
+
+1. Create a new module at
+   `pipeline_check/core/checks/runs/rules/NNN_<name>.py`
+   exporting a top-level `RULE = Rule(...)` and a `check(path, doc) -> Finding`
+   function. The orchestrator auto-discovers `RULE` and calls `check`
+   with the parsed YAML document.
+2. Add a mapping for the new ID in
+   `pipeline_check/core/standards/data/owasp_cicd_top_10.py` (and any
+   other standard that applies).
+3. Drop unsafe/safe snippets at
+   `tests/fixtures/per_check/runs/-NNN.{unsafe,safe}.yml`
+   and add a `CheckCase` entry in
+   `tests/test_per_check_real_examples.py::CASES`.
+4. Regenerate this doc:
+
+   ```bash
+   python scripts/gen_provider_docs.py runs
+   ```

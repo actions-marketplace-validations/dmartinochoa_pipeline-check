@@ -72,11 +72,14 @@ STANDARD = Standard(
         # Left unmapped on purpose.
         # ── GV.SC. Supply-chain risk management ────────────────────
         "GHA-001":  ["GV.SC-05", "GV.SC-07"],
+        "GHA-110": ["GV.SC-07"],  # CI env disables Go module verification
         "GHA-021":  ["GV.SC-05"],
         "GHA-025":  ["GV.SC-05"],
         "GHA-029":  ["GV.SC-05"],
         "GL-001":   ["GV.SC-05", "GV.SC-07"],
+        "GL-037": ["GV.SC-07"],  # CI env disables Go module verification
         "GL-005":   ["GV.SC-05"],
+        "GL-042":   ["GV.SC-05"],    # include: component unpinned
         "GL-009":   ["GV.SC-05"],
         "GL-021":   ["GV.SC-05"],
         "GL-027":   ["GV.SC-05"],
@@ -97,6 +100,7 @@ STANDARD = Standard(
         "JF-021":   ["GV.SC-05"],
         "JF-031":   ["GV.SC-05"],
         "CC-001":   ["GV.SC-05", "GV.SC-07"],
+        "CC-033": ["GV.SC-07"],  # CI env disables Go module verification
         "CC-003":   ["GV.SC-05"],
         "CC-021":   ["GV.SC-05"],
         "CC-028":   ["GV.SC-05"],
@@ -135,6 +139,8 @@ STANDARD = Standard(
         "IAM-006":  ["PR.AA-05"],
         "IAM-007":  ["PR.AA-01"],
         "IAM-008":  ["PR.AA-03"],
+        "IAM-009":  ["PR.AA-03"],
+        "IAM-010":  ["PR.AA-03"],
         "KMS-002":  ["PR.AA-05"],
         "CB-001":   ["PR.AA-01"],
         "CB-006":   ["PR.AA-01"],
@@ -145,6 +151,7 @@ STANDARD = Standard(
         "GHA-019":  ["PR.AA-01"],
         "GL-003":   ["PR.AA-01"],
         "GL-008":   ["PR.AA-01"],
+        "DEV-008":   ["PR.AA-01"],   # literal secret in a devenv config
         "GL-013":   ["PR.AA-01"],
         "GL-020":   ["PR.AA-01"],
         "BB-003":   ["PR.AA-01"],
@@ -193,12 +200,17 @@ STANDARD = Standard(
         "CB-002":   ["PR.PS-01"],
         "CB-004":   ["PR.PS-01"],
         "GHA-012":  ["PR.PS-01"],
+        "GHA-105":  ["PR.PS-01"],
         "GHA-015":  ["PR.PS-01"],
         "GHA-017":  ["PR.PS-01"],
         "GHA-026":  ["PR.PS-01"],
+        "GHA-107":  ["PR.PS-01"],   # harden-runner in audit mode (egress not blocked)
+        "GHA-108":  ["PR.PS-01"],   # no runtime egress control on OIDC/deploy workflow
+        "GHA-109":  ["PR.PS-01"],   # harden-runner not the first step
         "GL-014":   ["PR.PS-01"],
         "GL-015":   ["PR.PS-01"],
         "GL-017":   ["PR.PS-01"],
+        "GL-039":   ["PR.PS-01"],# dind daemon TLS disabled / exposed on 2375
         "BB-005":   ["PR.PS-01"],
         "BB-013":   ["PR.PS-01"],
         "BB-016":   ["PR.PS-01"],
@@ -223,6 +235,7 @@ STANDARD = Standard(
         "ECR-002":  ["GV.SC-05", "PR.PS-02", "RC.RP-01"],   # mutable tags also break recovery-by-digest
         "GHA-020":  ["PR.PS-02"],
         "GL-019":   ["PR.PS-02"],
+        "GL-043":   ["PR.PS-02"],               # native security scanner disabled
         "BB-015":   ["PR.PS-02"],
         "ADO-020":  ["PR.PS-02"],
         "JF-020":   ["PR.PS-02"],
@@ -243,22 +256,45 @@ STANDARD = Standard(
         # PS-05: prevent unauthorized software execution
         "CB-011":   ["PR.PS-05"],
         "GHA-003":  ["PR.PS-05"],
+        "GHA-119":  ["PR.PS-05"],# untrusted context into an agentic AI CLI
+        "GHA-120":  ["PR.PS-05"],# trust_remote_code model load = code exec
+        "GHA-122":  ["PR.PS-05"],# unsafe pickle deser of fetched artifact = code exec
+        "GHA-117":  ["PR.PS-05"],# IaC apply on untrusted PR trigger
+        "GHA-118":  ["PR.PS-05"],# untrusted content into $GITHUB_ENV / $GITHUB_PATH
         "GHA-016":  ["PR.PS-05"],
         "GHA-027":  ["PR.PS-05"],
         "GHA-028":  ["PR.PS-05"],
         "GL-002":   ["PR.PS-05"],
+        "GL-045":   ["PR.PS-05"],   # trust_remote_code model load = code exec
+        "GL-047":   ["PR.PS-05"],   # unsafe pickle deser of fetched artifact = code exec
+        "GL-048":   ["PR.PS-05"],   # untrusted MR context into agentic CLI = prompt injection
+        "GL-049":   ["PR.PS-06"],   # agentic CLI output lands without review
         "GL-016":   ["PR.PS-05"],
         "GL-025":   ["PR.PS-05"],
         "GL-026":   ["PR.PS-05"],
         "BB-002":   ["PR.PS-05"],
+        "BB-035":   ["PR.PS-05"],   # trust_remote_code model load = code exec
+        "BB-036":   ["PR.PS-05"],   # untrusted PR context into agentic CLI = prompt injection
+        "BB-037":   ["PR.PS-05"],   # unsafe pickle deser of fetched artifact = code exec
+        "BB-039":   ["PR.PS-06"],   # agentic CLI output lands without review
+        "JF-038":   ["PR.PS-06"],   # agentic CLI output lands without review
+        "JF-039":   ["PR.PS-05"],   # trust_remote_code model load = code exec
+        "JF-040":   ["GV.SC-05"],   # model pulled without a pinned revision
+        "JF-041":   ["PR.PS-05"],   # unsafe pickle deser of fetched artifact = code exec
+        "JF-042":   ["PR.AA-01", "PR.DS-01"],   # secret echoed to Jenkins build log
         "BB-012":   ["PR.PS-05"],
         "BB-025":   ["PR.PS-05"],
         "BB-026":   ["PR.PS-05"],
         "ADO-002":  ["PR.PS-05"],
+        "ADO-034":  ["PR.PS-05"],   # trust_remote_code model load = code exec
+        "ADO-035":  ["PR.PS-05"],   # untrusted PR context into agentic CLI = prompt injection
+        "ADO-036":  ["PR.PS-05"],   # unsafe pickle deser of fetched artifact = code exec
+        "ADO-038":  ["PR.PS-06"],   # agentic CLI output lands without review
         "ADO-016":  ["PR.PS-05"],
         "ADO-026":  ["PR.PS-05"],
         "ADO-027":  ["PR.PS-05"],
         "JF-002":   ["PR.PS-05"],
+        "JF-037":   ["PR.PS-05"],   # agentic CLI ingests untrusted context (prompt injection)
         "JF-012":   ["PR.PS-05"],
         "JF-016":   ["PR.PS-05"],
         "JF-019":   ["PR.PS-05"],
@@ -271,6 +307,9 @@ STANDARD = Standard(
         "CC-016":   ["PR.PS-05"],
         "CC-026":   ["PR.PS-05"],
         "CC-027":   ["PR.PS-05"],
+        "ARGO-019":  ["PR.PS-05"],  # Argo dangerous shell idiom
+        "TKN-018":  ["PR.PS-05"],  # Tekton dangerous shell idiom
+        "HARNESS-014":  ["PR.PS-05"],  # Harness dangerous shell idiom
         "GCB-004":  ["PR.PS-05"],
         "GCB-006":  ["PR.PS-05"],
         # PS-06: secure software development practices
@@ -303,6 +342,18 @@ STANDARD = Standard(
         "CP-003":   ["PR.IR-01"],
         "CP-007":   ["PR.IR-01"],
         "GHA-002":  ["PR.IR-01"],
+        "RUN-001":  ["PR.IR-01"],
+        "RUN-002":  ["PR.IR-01"],
+        "GLRUN-001": ["PR.IR-01"],  # gitlab forensics: merge-request pipeline executed
+        "GLRUN-002": ["PR.IR-01"],  # gitlab forensics: fork merge-request pipeline executed
+        "GLRUN-003": ["PR.IR-01"],  # gitlab forensics: secret leaked in fork pipeline trace
+        "GLRUN-004": ["PR.IR-01"],  # gitlab forensics: fork pipeline minted a cloud OIDC token
+        "GLRUN-005": ["PR.IR-01"],  # gitlab forensics: fork pipeline ran on a self-managed runner
+        "RUN-003":  ["PR.IR-01"],
+        "RUN-004":  ["PR.IR-01"],
+        "RUN-005":  ["PR.IR-01"],
+        "RUN-006":  ["GV.SC-05", "GV.SC-07"],
+        "RUN-007":  ["GV.SC-05", "GV.SC-07"],
         "GHA-009":  ["PR.IR-01"],
         "GHA-010":  ["PR.IR-01"],
         "GHA-011":  ["PR.IR-01"],
@@ -369,6 +420,7 @@ STANDARD = Standard(
         "K8S-021":  ["PR.AA-05"],               # wildcard verbs
         "K8S-022":  ["PR.IR-01"],               # SSH service exposed
         "K8S-023":  ["PR.PS-01"],               # PSA enforce missing
+        "K8S-044":  ["PR.PS-01"],               # admission webhook fail-open / unscoped mutating
         "K8S-024":  ["DE.CM-09"],               # readiness/liveness probes
         "K8S-025":  ["PR.PS-01"],               # system priority class
         "K8S-026":  ["PR.IR-01"],               # LB without source ranges
@@ -401,6 +453,14 @@ STANDARD = Standard(
         "HELM-008": ["GV.SC-07"],   # Chart.lock stale
         "HELM-009": ["GV.SC-05", "PR.DS-02"],   # non-HTTPS sources
         "HELM-010": ["GV.SC-04"],   # appVersion empty
+        # ── Helm extended pack ──
+        "HELM-011": ["PR.DS-01"],   # dependency URL embedded creds
+        "HELM-012": ["GV.SC-04"],   # deprecated without successor
+        "HELM-013": ["GV.SC-04"],   # invalid chart type
+        "HELM-014": ["GV.SC-05"],   # known-compromised dep
+        "HELM-015": ["GV.SC-07"],  # oci:// dependency not digest-pinned
+        "HELM-016": ["PR.DS-01"],  # default secret in values.yaml
+        "HELM-017": ["GV.SC-07"],  # tpl of an untrusted .Values value
         # ── Dockerfile, image-build supply chain. ─────────────────
         # Pinning + verification rules tie to GV.SC-05 (supply chain
         # requirements established and verified). Privileged / root
@@ -408,6 +468,13 @@ STANDARD = Standard(
         # Credential rules tie to PR.AA-01 (identity / credential
         # management). Vuln-scan / outdated-dep rules tie to PR.PS-02.
         "DF-001": ["GV.SC-05"],                 # FROM not digest-pinned
+        "MODEL-001": ["GV.SC-05"],              # unpinned base model
+        "MODEL-002": ["GV.SC-05"],              # third-party hub base model
+        "MODEL-003": ["GV.SC-05"],              # local unverified weights blob
+        "MODEL-006": ["GV.SC-05"],              # committed unsafe-serialization model artifact
+        "MODEL-004": ["GV.SC-05"],              # remote LoRA adapter
+        "MODEL-005": ["GV.SC-05"],              # config auto_map = custom loader code
+        "DF-031": ["GV.SC-05"],                 # COPY --from external image not digest-pinned
         "DF-002": ["PR.PS-01"],                 # runs as root
         "DF-003": ["GV.SC-05", "PR.DS-02"],     # ADD remote no integrity
         "DF-004": ["GV.SC-05", "PR.DS-02"],     # curl-pipe
@@ -443,9 +510,17 @@ STANDARD = Standard(
         "BK-007": ["PR.AA-05", "PR.PS-06"],     # no manual deploy gate
         "BK-008": ["PR.DS-02"],                 # TLS bypass
         "BK-009": ["GV.SC-05", "PR.PS-06"],     # no signing
+        "HARNESS-015":  ["GV.SC-05", "PR.PS-06"],  # Harness artifacts not signed
+        "DR-019":  ["GV.SC-05", "PR.PS-06"],  # Drone artifacts not signed
         "BK-010": ["GV.SC-05"],                 # no SBOM
+        "HARNESS-016":  ["GV.SC-05"],  # Harness no SBOM
+        "DR-020":  ["GV.SC-05"],  # Drone no SBOM
         "BK-011": ["GV.SC-05"],                 # no SLSA provenance
+        "HARNESS-017":  ["GV.SC-05"],  # Harness no SLSA provenance
+        "DR-021":  ["GV.SC-05"],  # Drone no SLSA provenance
         "BK-012": ["PR.PS-02", "DE.CM-09"],     # no vuln scan
+        "HARNESS-018":  ["PR.PS-02", "DE.CM-09"],  # Harness no vuln scan
+        "DR-022":  ["PR.PS-02", "DE.CM-09"],  # Drone no vuln scan
         "BK-013": ["PR.AA-05"],                 # no branches filter
         "BK-014": ["GV.SC-05"],                 # unpinned package install
         "BK-015": ["PR.PS-05"],                 # agents map untrusted interpolation
@@ -462,6 +537,7 @@ STANDARD = Standard(
         # GV.SC-04 + GV.SC-07; logs → PR.PS-04 + DE.CM-09.
         # ── GitHub Actions ───────────────────────────────────────
         "GHA-014":  ["PR.PS-06"],               # deploy job missing environment
+        "GHA-123":  ["PR.PS-06"],               # agentic CLI output lands without review
         "GHA-030":  ["PR.AA-05"],               # OIDC w/o env-protected job
         "GHA-031":  ["PR.PS-05"],               # retired set-output / save-state
         "GHA-032":  ["PR.PS-05"],               # local script on untrusted trigger
@@ -491,24 +567,64 @@ STANDARD = Standard(
         "GHA-059":  ["GV.SC-05"],               # npm install without audit signatures
         "GHA-060":  ["GV.SC-05"],               # pip install without --require-hashes
         "GHA-061":  ["PR.AA-05"],               # App token minted without permissions filter
+        "GHA-106":  ["PR.AA-05"],               # AI agent with write-scoped token
+        "GHA-111":  ["PR.AA-05"],  # AI agent edits IaC applied in the same job
+        "GHA-112":  ["PR.PS-01"],  # self-hosted deploy with no environment gate
+        "GHA-113":  ["PR.AA-05"],  # OIDC trusted-publish w/o env gate
+        "GHA-114":  ["PR.AA-05"],  # publish workflow on an unrestricted push trigger
+        "GHA-115":  ["PR.AA-05"],  # id-token granted workflow-wide, not job-scoped
+        "GHA-116":  ["PR.AA-05", "PR.AA-01"],   # bulk secrets serialization
+        "GHA-062":  ["PR.AA-05"],               # OIDC trust subject in sibling IaC is overly broad
+        "GHA-063":  ["PR.AA-01"],               # spoofable bot-actor if-predicate
+        "GHA-064":  ["PR.PS-06"],               # unsound contains() with comma-string operand
+        "GHA-065":  ["PR.PS-05"],               # zero-width / bidi unicode in workflow body
+        "GHA-066":  ["PR.DS-01"],               # upload-artifact wildcard sweeps workspace
+        "GHA-067":  ["PR.DS-01"],               # cache step publishes credential-shaped paths
+        "GHA-068":  ["PR.PS-02"],               # runs-on targets a deprecated hosted runner
+        "GHA-069":  ["PR.AA-05"],               # orphan id-token: write scope
+        "GHA-070":  ["PR.DS-02"],               # ssh-keyscan / host-key check TOFU
+        "GHA-071":  ["PR.PS-05"],               # powershell on Linux / macOS step
+        "GHA-072":  ["PR.AA-01", "PR.DS-01"],   # secret env: at wider scope than consumer
+        "GHA-073":  ["PR.AA-01"],               # unused workflow_call.secrets declaration
+        "GHA-086":  ["PR.PS-06"],               # wildcard branch trigger + environment binding
+        "GHA-087":  ["PR.AA-01", "PR.DS-01"],   # derived-value of secret printed to log
+        "GHA-088":  ["GV.SC-05", "GV.SC-07"],   # typosquat uses: near-edit of top action
+        "GHA-089":  ["GV.SC-05", "GV.SC-07"],   # archived upstream repo
+        "GHA-090":  ["GV.SC-05", "GV.SC-07"],   # impostor-commit: SHA absent from repo
+        "GHA-091":  ["GV.SC-05", "GV.SC-07"],   # repojacking: action upstream missing
+        "GHA-092":  ["PR.IR-01"],               # TOCTOU PR head SHA force-push race
+        "GHA-093":  ["PR.AA-01", "PR.DS-01"],   # LOTP indicators
+        "GHA-094":  ["GV.SC-05", "GV.SC-07"],   # stale-action-refs
+        "GHA-096":  ["GV.SC-05", "GV.SC-07"],   # known-vulnerable action ref (GHSA)
         # ── GitLab CI ─────────────────────────────────────────────
         "GL-004":  ["PR.PS-06"],                # manual deploy allow_failure
+        "GL-044":  ["PR.PS-06"],                # auto production deploy on an MR pipeline
         "GL-029":  ["PR.PS-06"],                # manual deploy allow_failure (variant)
         "GL-031":  ["PR.AA-05"],                # id_tokens missing audience pin
+        "GL-040":  ["PR.AA-05"],                # CI_JOB_TOKEN used for cross-project access
+        "GL-041":  ["PR.PS-05"],                # IaC apply on an untrusted MR trigger
+        "GL-050":   ["PR.AA-01"],  # publish job long-lived registry token (GHA-050 analog)
         "GL-032":  ["PR.PS-05"],                # tags interpolates untrusted
         "GL-033":  ["PR.PS-05"],                # global before_script taint
         "GL-034":  ["GV.SC-05"],                # npm install without audit signatures
         "GL-035":  ["GV.SC-05"],                # pip install without --require-hashes
         # ── Bitbucket Pipelines ──────────────────────────────────
         "BB-004":  ["PR.PS-06"],                # deploy step missing environment
+        "BB-034":  ["PR.PS-06"],                # prod deploy on a PR pipeline
+        "BB-033":  ["PR.PS-05"],                # IaC apply on a PR pipeline
+        "ADO-033": ["PR.PS-05"],                # IaC apply on a PR-validated pipeline
+        "BK-016":  ["PR.PS-05"],                # dangerous shell idiom
+        "JF-036":  ["PR.PS-05"],                # shell step interpolates params.*
         "BB-028":  ["PR.AA-05"],                # OIDC step w/o env gate
         "BB-029":  ["GV.SC-05"],                # step+service image not pinned
         "BB-030":  ["GV.SC-05"],                # npm install without audit signatures
         "BB-031":  ["GV.SC-05"],                # pip install without --require-hashes
+        "BB-038":  ["GV.SC-05"],                # model pulled without a pinned revision
         # ── Azure DevOps Pipelines ───────────────────────────────
         "ADO-004": ["PR.PS-06"],                # deploy missing environment
         "ADO-029": ["PR.PS-06"],                # service-conn job w/o env gate
         "ADO-030": ["PR.PS-05"],                # pool interpolates untrusted
+        "ADO-037": ["GV.SC-05"],                # model pulled without a pinned revision
         # ── CircleCI ──────────────────────────────────────────────
         "CC-004":  ["PR.AA-01"],                # unrestricted context
         "CC-009":  ["PR.PS-06"],                # job missing approval gate
@@ -521,6 +637,24 @@ STANDARD = Standard(
         "JF-032":  ["PR.PS-05"],                # agent label interpolates untrusted
         # ── Drone CI ─────────────────────────────────────────────
         "DR-001":  ["GV.SC-05"],                # step image not digest-pinned
+        "HARNESS-001":   ["GV.SC-05"],  # Harness step image not digest-pinned
+        "HARNESS-002":   ["PR.PS-05"],  # Harness expression injection in step command
+        "HARNESS-003":   ["PR.PS-01"],  # Harness privileged step
+        "HARNESS-004":   ["PR.AA-01"],  # Harness literal credential in variable
+        "HARNESS-005":   ["GV.SC-05"],  # Harness pipe-to-shell
+        "HARNESS-006":   ["PR.DS-02"],  # Harness TLS bypass in commands
+        "HARNESS-007":   ["PR.PS-01"],  # Harness sensitive host-path mount
+        "HARNESS-008":   ["PR.PS-05"],  # Harness agentic-CLI prompt injection
+        "HARNESS-010":   ["PR.PS-05"],  # Harness model trust_remote_code (code exec)
+        "HARNESS-011":   ["PR.PS-05"],  # Harness unsafe model deser (pickle RCE)
+        "HARNESS-012":   ["GV.SC-05"],  # Harness model pulled without a pinned revision
+        "HARNESS-013":   ["PR.AA-01", "PR.DS-01"],  # Harness secret echoed to step log
+        "GCB-028":  ["PR.AA-01", "PR.DS-01"],  # Cloud Build secret echoed to build log
+        "ARGO-018":  ["PR.AA-01", "PR.DS-01"],  # Argo secret echoed to template log
+        "TKN-017":  ["PR.AA-01", "PR.DS-01"],  # Tekton secret echoed to step log
+        "DR-018":  ["PR.AA-01", "PR.DS-01"],  # Drone secret echoed to step log
+        "BK-017":  ["PR.AA-01", "PR.DS-01"],  # Buildkite secret echoed to step log
+        "HARNESS-009":   ["PR.PS-06"],  # Harness agentic-CLI output autolands without review
         "DR-002":  ["PR.PS-01"],                # privileged step
         "DR-003":  ["PR.PS-05"],                # Drone variable injection
         "DR-004":  ["PR.AA-01"],                # literal credential
@@ -531,13 +665,22 @@ STANDARD = Standard(
         "DR-009":  ["PR.IR-01"],                # cache key tainted
         "DR-010":  ["GV.SC-05"],                # unpinned package install
         "DR-011":  ["PR.PS-05"],                # node map interpolates untrusted
+        # ── Drone extended pack ──
+        "DR-012":  ["GV.SC-05"],                # service image not pinned
+        "DR-013":  ["GV.SC-07"],                # no trigger event filter
+        "DR-014":  ["GV.SC-05"],                # pipe-to-shell
+        "DR-015":  ["GV.SC-05"],                # clone recursive
+        "DR-016":  ["GV.SC-07"],                # image field interpolation
+        "DR-017":  ["PR.PS-05"],                # dangerous shell idiom
         # ── Tekton (K8s-native pipeline kinds) ────────────────────
         "TKN-001": ["GV.SC-05", "PR.PS-02"],    # step image not digest-pinned
+        "TKN-016": ["GV.SC-05", "PR.PS-02"],  # remote resolver / bundle task body not pinned
         "TKN-002": ["PR.PS-01"],                # step privileged / root
         "TKN-003": ["PR.PS-05"],                # param injection in script
         "TKN-004": ["PR.PS-01"],                # hostPath / host namespaces
         "TKN-005": ["PR.AA-01", "PR.DS-01"],    # leaked creds
         "TKN-006": ["PR.PS-01"],                # no explicit timeout
+        "HARNESS-019":  ["PR.PS-01"],  # Harness pipeline lacks an explicit timeout
         "TKN-007": ["PR.AA-05"],                # default ServiceAccount
         "TKN-008": ["GV.SC-05", "PR.DS-02"],    # remote install / TLS bypass
         "TKN-009": ["PR.PS-06"],                # artifacts not signed
@@ -551,8 +694,10 @@ STANDARD = Standard(
         "ARGO-001": ["GV.SC-05", "PR.PS-02"],   # template image not digest-pinned
         "ARGO-002": ["PR.PS-01"],               # template privileged / root
         "ARGO-003": ["PR.AA-05"],               # default ServiceAccount
+        "ARGO-016": ["PR.AA-05"],               # cluster-admin / over-privileged ServiceAccount
         "ARGO-004": ["PR.PS-01"],               # hostPath / host namespaces
         "ARGO-005": ["PR.PS-05"],               # parameter injection
+        "ARGO-017": ["PR.PS-05"],               # resource template manifest injection
         "ARGO-006": ["PR.AA-01", "PR.DS-01"],   # leaked creds
         "ARGO-007": ["PR.PS-01"],               # missing activeDeadlineSeconds
         "ARGO-008": ["GV.SC-05", "PR.DS-02"],   # remote install / TLS bypass
@@ -563,6 +708,15 @@ STANDARD = Standard(
         "ARGO-013": ["PR.AA-01"],               # SA token automount default
         "ARGO-014": ["GV.SC-05"],               # unpinned package install
         "ARGO-015": ["PR.DS-02"],               # insecure (non-HTTPS) artifact URL
+        # ── Argo CD (GitOps deployment) ──
+        "ARGOCD-010": ["GV.SC-07"],             # mutable targetRevision
+        "ARGOCD-017": ["GV.SC-07"],  # in-cluster mutable source
+        "ARGOCD-019": ["GV.SC-07"],  # drift detection disabled on a sensitive field
+        "ARGOCD-016": ["GV.SC-07"],  # Helm valueFiles from a remote URL
+        "ARGOCD-018": ["GV.SC-07"],  # custom resource health / action Lua
+        "ARGOCD-011": ["PR.AA-05"],             # cluster-resource wildcard
+        "ARGOCD-012": ["GV.SC-07"],             # no sync windows
+        "ARGOCD-013": ["GV.SC-07"],             # no revision history cap
         # ── Cloud Build container-touching extras ─────────────────
         "GCB-010": ["GV.SC-05", "PR.DS-02"],    # remote script piped to shell
         "GCB-011": ["PR.DS-02"],                # TLS bypass
@@ -581,6 +735,7 @@ STANDARD = Standard(
         "GCB-024": ["GV.SC-04"],                # images: missing for docker push
         "GCB-025": ["PR.PS-04"],                # tags: empty (audit/discoverability)
         "GCB-026": ["PR.PS-01"],                # waitFor unknown step id
+        "GCB-027": ["PR.PS-05"],                # malicious-activity indicators
         # ── AWS extras ───────────────────────────────────────────
         "CB-008":  ["PR.PS-06"],                # inline buildspec, not from protected repo
         "CB-010":  ["PR.IR-01"],                # fork-PR webhook unfiltered
@@ -670,11 +825,19 @@ STANDARD = Standard(
         "NPM-006":  ["GV.SC-05", "GV.SC-07", "PR.PS-02"],  # compromised npm version
         "NPM-007":  ["PR.PS-05"],               # .npmrc ignore-scripts
         "NPM-011":  ["PR.AA-01", "PR.DS-01"],   # secret-shaped paths in files field
+        "NPM-013":  ["PR.AA-01", "PR.DS-01"],   # broad files-field publishes everything
         "PYPI-001": ["GV.SC-05"],               # missing ==pin
         "PYPI-002": ["GV.SC-05"],               # hash pinning missing
         "PYPI-003": ["GV.SC-05", "PR.DS-02"],   # http index / --trusted-host
+        "PYPI-018": ["GV.SC-05", "PR.DS-02"],  # --no-binary forces sdist build
+        "PYPI-019": ["GV.SC-05", "GV.SC-07", "PR.PS-02"],  # missing PEP 740 build provenance
+        "PYPI-020": ["GV.SC-05", "GV.SC-07", "PR.PS-02"],  # low OpenSSF Scorecard upstream
+        "PYPI-021": ["GV.SC-05", "GV.SC-07", "PR.PS-02"],  # provenance built from a non-release ref
         "PYPI-004": ["GV.SC-05"],               # VCS dep without commit SHA
+        "PYPI-015": ["GV.SC-05"],  # direct artifact URL
         "PYPI-005": ["GV.SC-05"],               # --extra-index-url (dep confusion)
+        "PYPI-017": ["GV.SC-05"],  # remote --find-links
+        "PYPI-016": ["GV.SC-05"],  # primary index repointed
         "PYPI-006": ["GV.SC-05", "GV.SC-07", "PR.PS-02"],  # compromised PyPI version
         "MVN-001":  ["GV.SC-05"],               # floating Maven range
         "MVN-002":  ["GV.SC-05"],               # mutable SNAPSHOT dep
@@ -683,6 +846,132 @@ STANDARD = Standard(
         "MVN-005":  ["GV.SC-05"],               # lax checksumPolicy
         "MVN-006":  ["GV.SC-05", "GV.SC-07", "PR.PS-02"],  # compromised Maven version
         "MVN-007":  ["GV.SC-05"],               # settings.xml wildcard mirror
+        "MVN-008":  ["GV.SC-05", "GV.SC-07", "PR.PS-02"],  # cooldown gate (--resolve-remote)
+        "MVN-009":  ["GV.SC-05", "GV.SC-07", "PR.PS-02"],  # OSV advisory (--resolve-remote)
+        # ── Maven extended pack ──
+        "MVN-010":  ["PR.DS-01"],               # plaintext server password
+        "MVN-011":  ["PR.DS-01"],               # repo URL credentials
+        "MVN-012":  ["GV.SC-07"],               # build plugin floating
+        "MVN-013":  ["GV.SC-07"],               # build extension floating
+        "MVN-014":  ["GV.SC-07"],               # wrapper sha256 missing
+        "MVN-015": ["GV.SC-07"],  # build-time plugin exec bound to lifecycle
+        "MVN-016": ["GV.SC-07"],  # gradle allowInsecureProtocol
+        "MVN-017": ["PR.DS-01"],  # settings.xml privateKey + plaintext passphrase
+        "MVN-018": ["GV.SC-07"],  # distributionManagement release accepts snapshots
+        "NPM-008":  ["GV.SC-05", "GV.SC-07", "PR.PS-02"],  # cooldown gate (--resolve-remote)
+        "NPM-009":  ["GV.SC-05"],               # new-transitive-dep diff gate
+        "NPM-010":  ["GV.SC-05", "GV.SC-07", "PR.PS-02"],  # OSV advisory (--resolve-remote)
+        "NPM-014":  ["GV.SC-05", "GV.SC-07", "PR.PS-02"],  # single-publisher risk
+        "NPM-015":  ["GV.SC-05", "GV.SC-07", "PR.PS-02"],  # missing build provenance
+        "NPM-017":  ["GV.SC-05", "GV.SC-07", "PR.PS-02"],  # provenance built from a non-release ref
+        "NPM-018":  ["GV.SC-05", "GV.SC-07", "PR.PS-02"],  # latest release from a new publisher
+        "NPM-019":  ["GV.SC-05", "GV.SC-07", "PR.PS-02"],  # overrides / resolutions redirect
+        "NPM-020":  ["GV.SC-05", "GV.SC-07", "PR.PS-02"],  # .npmrc registry repoint
+        "NPM-016":  ["GV.SC-05", "GV.SC-07", "PR.PS-02"],  # low OpenSSF Scorecard
+        "PYPI-008": ["GV.SC-05", "GV.SC-07", "PR.PS-02"],  # cooldown gate (--resolve-remote)
+        "PYPI-009": ["GV.SC-05", "GV.SC-07", "PR.PS-02"],  # OSV advisory (--resolve-remote)
+        # ── PyPI extended pack (PYPI-010..014) ──
+        "PYPI-010": ["PR.DS-01"],                # index URL embedded credentials
+        "PYPI-011": ["GV.SC-07"],                # --trusted-host disables TLS
+        "PYPI-012": ["GV.SC-07"],                # build-system requires floating
+        "PYPI-013": ["GV.SC-07"],                # pyproject dynamic dependencies
+        "PYPI-014": ["GV.SC-07"],                # custom source HTTP
+        # ── nuget (dep supply-chain) ─────────────────────────────
+        "NUGET-001": ["GV.SC-05"],              # floating NuGet version range
+        "NUGET-002": ["GV.SC-05"],              # wildcard prerelease version
+        "NUGET-003": ["GV.SC-05"],              # missing explicit version
+        "NUGET-004": ["GV.SC-05", "PR.DS-02"],  # HTTP-only package source
+        "NUGET-005": ["GV.SC-05", "GV.SC-07", "PR.PS-02"],  # known-compromised package version
+        "NUGET-006": ["GV.SC-05"],              # no lock file for reproducible restores
+        "NUGET-007": ["GV.SC-05"],              # multiple sources without packageSourceMapping
+        "NUGET-008": ["GV.SC-05", "GV.SC-07", "PR.PS-02"],  # cooldown gate (--resolve-remote)
+        "NUGET-009": ["GV.SC-05", "GV.SC-07", "PR.PS-02"],  # OSV advisory (--resolve-remote)
+        "NUGET-010": ["PR.AA-01", "PR.DS-01"],  # NuGet.config cleartext feed credential
+        # ── NuGet extended pack ──
+        "NUGET-011": ["GV.SC-07"],              # source mapping wildcard
+        "NUGET-012": ["GV.SC-07", "GV.SC-05"],  # signature validation off
+        "NUGET-013": ["GV.SC-07"],              # dotnet-tools unpinned
+        "NUGET-014": ["PR.DS-01"],              # source URL credentials
+        "NUGET-015": ["GV.SC-07"],              # VersionOverride breaks CPM
+        "NUGET-016": ["GV.SC-05"],              # missing <clear/> inherits public gallery
+        "NUGET-017": ["GV.SC-05"],  # public gallery active alongside private feed, not disabled
+        "NUGET-018": ["GV.SC-07"],              # build-time MSBuild execution
+        "NUGET-019": ["GV.SC-07", "GV.SC-05"],  # require mode, no trusted signers
+        # ── Go modules ─────────────────────────────────────────
+        "GOMOD-001": ["PR.DS-01", "GV.SC-07"],  # go.sum integrity manifest missing
+        "GOMOD-002": ["GV.SC-07", "GV.SC-08"],  # replace directive to local path
+        "GOMOD-003": ["GV.SC-07", "GV.SC-08"],  # replace directive to different module
+        "GOMOD-004": ["GV.SC-07"],              # +incompatible direct require
+        "GOMOD-005": ["GV.SC-07"],              # missing go toolchain directive
+        "GOMOD-006": ["GV.SC-05", "GV.SC-08"],  # known-compromised module version
+        # ── Go modules extended pack ──
+        "GOMOD-007": ["PR.DS-01", "GV.SC-07"],  # vendor/modules.txt stale
+        "GOMOD-008": ["GV.SC-07"],              # replace without version pin
+        "GOMOD-009": ["GV.SC-07"],              # pre-release direct require
+        "GOMOD-010": ["GV.SC-07"],              # stale exclude directive
+        "GOMOD-011": ["GV.SC-07"],  # tool directive build-time exec
+        "GOMOD-012": ["GV.SC-07"],  # insecure / non-canonical module host
+        # ── Cargo ──────────────────────────────────────────────
+        "CARGO-001": ["GV.SC-07"],              # floating Cargo.toml version spec
+        "CARGO-002": ["GV.SC-07", "GV.SC-08"],  # git dep with mutable ref (no rev)
+        "CARGO-003": ["PR.DS-01", "GV.SC-07"],  # missing Cargo.lock
+        "CARGO-004": ["GV.SC-07", "GV.SC-08"],  # local-path Cargo dependency
+        "CARGO-005": ["GV.SC-07", "GV.SC-08"],  # alternate-registry Cargo dependency
+        "CARGO-006": ["GV.SC-05", "GV.SC-08"],  # known-compromised crate version
+        # ── Cargo extended pack ──
+        "CARGO-007": ["GV.SC-07", "GV.SC-08"],  # build-deps floating
+        "CARGO-008": ["GV.SC-07"],              # patch.crates-io substitution
+        "CARGO-009": ["GV.SC-07"],              # workspace deps floating
+        "CARGO-010": ["GV.SC-07"],              # missing rust-version
+        "CARGO-011": ["GV.SC-07"],  # build.rs compile-time egress / exec
+        "CARGO-012": ["GV.SC-07"],  # .cargo/config.toml source override / build flags
+        "CARGO-013": ["GV.SC-07"],  # Cargo.lock off-crates.io source
+        "CARGO-014": ["GV.SC-07"],  # no supply-chain audit-gate config
+        # ── Composer / PHP ──
+        "COMPOSER-001": ["GV.SC-05", "GV.SC-07"],
+        "COMPOSER-002": ["GV.SC-05", "GV.SC-07"],
+        "COMPOSER-003": ["GV.SC-05", "PR.DS-02"],
+        "COMPOSER-012": ["GV.SC-05", "PR.DS-02"],  # disables Packagist / marks custom repo canonical
+        "COMPOSER-011": ["GV.SC-05", "PR.DS-02"],  # external VCS repository re-points a package
+        "COMPOSER-004": ["PR.DS-01", "PR.AA-01"],
+        "COMPOSER-005": ["GV.SC-05", "GV.SC-07"],
+        "COMPOSER-014": ["GV.SC-05", "GV.SC-07"],  # minimum-stability without prefer-stable
+        "COMPOSER-006": ["GV.SC-05", "GV.SC-08"],
+        "COMPOSER-007": ["GV.SC-05", "GV.SC-08"],
+        "COMPOSER-008": ["GV.SC-05", "GV.SC-07"],
+        "COMPOSER-009": ["PR.DS-01", "PR.AA-01"],
+        "COMPOSER-010": ["GV.SC-05", "PR.DS-02"],
+        "COMPOSER-013": ["GV.SC-05", "PR.DS-02"],  # config.disable-tls
+        # ── RubyGems / Bundler ──
+        "GEM-001": ["GV.SC-05", "GV.SC-07"],
+        "GEM-002": ["GV.SC-05", "GV.SC-07"],
+        "GEM-003": ["GV.SC-05", "PR.DS-02"],
+        "GEM-004": ["PR.DS-01", "PR.AA-01"],
+        "GEM-005": ["GV.SC-05", "GV.SC-07"],
+        "GEM-006": ["GV.SC-05", "GV.SC-08"],
+        "GEM-007": ["GV.SC-05"],
+        "GEM-008": ["GV.SC-05", "GV.SC-07"],
+        "GEM-009": ["PR.DS-01", "PR.AA-01"],
+        "GEM-010": ["GV.SC-05", "GV.SC-07"],
+        "GEM-011": ["GV.SC-07"],  # Bundler plugin install-time exec
+        "GEM-012": ["GV.SC-07"],  # per-gem :source override
+        "GEM-013": ["GV.SC-07"],  # insecure git transport
+        # ── Pulumi (PULUMI-001..006) ──
+        "PULUMI-001": ["PR.DS-01", "PR.AA-01"],  # passphrase secretsprovider
+        "PULUMI-002": ["PR.DS-01"],              # secret-shaped config plaintext
+        "PULUMI-003": ["PR.DS-01", "PR.AA-01"],  # hardcoded credentials in source
+        "PULUMI-011": ["PR.DS-01", "PR.AA-01"],  # plugin from custom download server
+        "PULUMI-004": ["PR.DS-01", "PR.AA-01"],  # insecure state backend
+        "PULUMI-005": ["PR.AA-05"],              # wildcard IAM policy in source
+        "PULUMI-006": ["GV.SC-07"],              # StackReference unguarded
+        # ── Pulumi extended pack ──
+        "PULUMI-007": ["PR.AA-05"],              # public-access cloud resource
+        "PULUMI-008": ["GV.SC-07"],              # shell-exec with non-constant input
+        "PULUMI-013": ["GV.SC-07"],  # dynamic provider deploy-time code
+        "PULUMI-014": ["GV.SC-07"],  # ESC environment imported without a qualifier
+        "PULUMI-009": ["GV.SC-07"],              # runtime / source mismatch
+        "PULUMI-012": ["GV.SC-07"],  # plugin version unpinned
+        "PULUMI-010": ["PR.DS-01"],              # stack orphaned encryption salt
         # ── OCI image manifest gaps ──────────────────────────────
         "OCI-001":  ["GV.SC-05"],               # provenance annotations missing
         "OCI-002":  ["PR.PS-06", "GV.SC-05"],   # build attestation missing
@@ -692,6 +981,7 @@ STANDARD = Standard(
         "OCI-006":  ["PR.PS-01"],               # excessive layer count
         "OCI-007":  ["GV.SC-05"],               # legacy schemaVersion 1
         "OCI-008":  ["GV.SC-05"],               # weak digest algorithm
+        "OCI-009":  ["GV.SC-05"],               # missing base-image annotations
         # ── SLSA / in-toto attestation content ───────────────────
         "ATTEST-001": ["PR.PS-06", "GV.SC-05"], # untrusted SLSA builder identity
         "ATTEST-002": ["PR.PS-06", "GV.SC-05"], # source-repo claim unverifiable
@@ -712,6 +1002,7 @@ STANDARD = Standard(
         "TAINT-006": ["PR.IR-01", "PR.PS-05"],
         "TAINT-007": ["PR.IR-01", "PR.PS-05"],
         "TAINT-008": ["PR.IR-01", "PR.PS-05"],
+        "TAINT-009": ["PR.AA-01", "PR.DS-01"],  # env-protected secret flows to unprotected job
         # ── Dockerfile extras ───────────────────────────────────
         "DF-009":   ["GV.SC-05"],               # ADD where COPY suffices
         "DF-024":   ["PR.PS-05"],               # npm install runs lifecycle scripts
@@ -742,5 +1033,162 @@ STANDARD = Standard(
         "SM-000":   ["PR.PS-04", "DE.CM-09"],
         "SSM-000":  ["PR.PS-04", "DE.CM-09"],
         "S3-000":   ["PR.PS-04", "DE.CM-09"],
+        # supply-chain posture pack
+        "GHA-097":  ["PR.PS-01"],                # recursive PR auto-merge loop
+        "GHA-098":  ["PR.PS-06", "PR.PS-02"],    # deploy without security scan gate
+        "GHA-099":  ["PR.AA-01", "PR.DS-01"],    # deploy env plaintext secret
+        "GHA-100":  ["GV.SC-05", "PR.PS-06"],    # cosign verify no identity binding
+        "GHA-102":  ["PR.IR-01", "PR.PS-05"],    # submodule checkout on PR trigger
+        "GHA-103":  ["PR.PS-05"],               # AI review bot on untrusted trigger
+        "GHA-104":  ["PR.PS-05"],               # AI agent auto-push without PR review
+        "GL-036":   ["PR.AA-01", "PR.DS-01"],   # secret echoed to GitLab CI log
+        "GL-038":   ["PR.AA-01", "PR.DS-01"],   # CI_DEBUG_TRACE dumps secrets to GitLab CI log
+        "BB-032":   ["PR.AA-01", "PR.DS-01"],   # secret echoed to Bitbucket log
+        "ADO-031":  ["PR.AA-01", "PR.DS-01"],   # secret echoed to Azure DevOps log
+        "ADO-032":  ["PR.AA-01", "PR.DS-01"],   # checkout persistCredentials leaks token to .git/config
+        "CC-032":   ["PR.AA-01", "PR.DS-01"],   # secret echoed to CircleCI log
+        "CC-034":   ["PR.PS-05"],   # trust_remote_code model load = code exec
+        "CC-035":   ["GV.SC-05"],   # model pulled without a pinned revision
+        "CC-036":   ["PR.PS-05"],   # unsafe pickle deser of fetched artifact = code exec
+        "CC-037":   ["PR.PS-05"],   # agentic CLI ingests untrusted context (prompt injection)
+        "CC-038":   ["PR.PS-06"],   # agentic CLI output lands without review
+        "SCM-048":  ["PR.AA-05"],                # org codespace secrets scoped to all repos
+        "SCM-049":  ["PR.AA-01", "PR.AA-05"],    # classic PAT used where fine-grained suffices
+        "ORG-001":  ["PR.AA-01", "PR.AA-05"],    # org governance: 2FA not required org-wide
+        "ORG-002":  ["PR.AA-01", "PR.AA-05"],    # org governance: default member permission too broad
+        "ORG-003":  ["GV.SC-05", "GV.SC-07"],    # org governance: no Actions allow-list (any action runs)
+        "ORG-004":  ["PR.AA-01", "PR.AA-05"],    # org governance: default workflow token is write
+        "ORG-005":  ["PR.PS-06"],                # org governance: Actions can approve PRs (review bypass)
+        "ORG-006":  ["PR.AA-05"],                # org governance: Actions secret scoped to all repos
+        "ORG-007":  ["PR.AA-05"],                # org governance: private-repo forking allowed (code exfiltration)
+        "GLGRP-001":  ["PR.AA-01", "PR.AA-05"],  # gitlab group: 2FA not required
+        "GLGRP-002":  ["PR.AA-05"],  # gitlab group: forking outside group allowed
+        "GLGRP-003":  ["PR.AA-05"],  # gitlab group: sharing projects outside the hierarchy
+        "GLGRP-004":  ["PR.PS-06", "PR.AA-05"],  # gitlab group: default branch protection disabled for new projects
+        "GLGRP-005":  ["PR.DS-02"],  # gitlab group: group webhook over insecure transport
+        "GLGRP-006":  ["PR.AA-01"],  # gitlab group: group CI/CD variable holds a secret with a weak control
+        "ORG-008":  ["PR.AA-05"],                # org governance: members can create public repos (code exposure)
+        "ORG-009":  ["PR.PS-01"],                # org governance: self-hosted runner group exposed to public repos
+        "ORG-010":  ["PR.DS-01", "DE.CM-09"],    # org governance: new-repo secret-scanning push-protection default off
+        "ORG-011":  ["PR.DS-02"],                # org governance: org webhook over insecure transport
+        "ORG-012":  ["PR.PS-02", "GV.SC-05"],    # org governance: new-repo Dependabot security-updates default off
+        "ORG-013":  ["PR.PS-06", "PR.PS-01"],    # org governance: org ruleset not enforced (evaluate/disabled)
+        "ORG-015":  ["PR.PS-06", "PR.PS-01"],  # org: immutable releases not enforced org-wide
+        "ORG-014":  ["PR.PS-06", "PR.PS-01"],  # org: native SHA-pinning policy not required
+        "NPM-012":  ["PR.AA-01", "GV.SC-05"],   # publish token missing restrictions
+        # ── Azure Cloud (Entra ID / Storage / Key Vault / ACR / Monitor) ──
+        "ENTRA-001": ["PR.AA-05"],               # SP assigned Global Administrator
+        "ENTRA-002": ["PR.AA-01"],               # app credential beyond 180 days
+        "ENTRA-003": ["PR.AA-01"],               # SP uses password credential
+        "AZST-001":  ["PR.IR-01"],               # public blob access
+        "AZST-002":  ["PR.DS-02"],               # non-HTTPS traffic
+        "AZST-003":  ["PR.DS-01"],               # no CMK encryption
+        "AKV-001":   ["PR.DS-01", "PR.IR-03"],   # soft delete not enabled
+        "AKV-002":   ["PR.DS-01", "PR.IR-03"],   # purge protection not enabled
+        "AKV-003":   ["PR.IR-01"],               # network ACLs allow all
+        "ACR-001":   ["PR.AA-05"],               # admin user enabled
+        "ACR-002":   ["PR.IR-01"],               # public network access
+        "ACR-003":   ["GV.SC-05", "PR.PS-06"],   # content trust not enabled
+        "AZMON-001": ["PR.PS-04", "DE.CM-09"],   # no diagnostic setting
+        "AZMON-002": ["PR.PS-04"],               # log retention < 365 days
+        "AZMON-003": ["DE.CM-09", "RS.MA-01"],   # no alert rule
+        # ── GCP (IAM / GCS / KMS / Artifact Registry / Cloud Logging) ────
+        "GCIAM-001": ["PR.AA-05"],               # SA has Owner/Editor role
+        "GCIAM-002": ["PR.AA-01"],               # user-managed SA key
+        "GCIAM-003": ["PR.AA-05"],               # token creator without condition
+        "GCS-001":   ["PR.IR-01"],               # public bucket
+        "GCS-002":   ["PR.AA-05"],               # no uniform access
+        "GCS-003":   ["PR.DS-01", "PR.IR-03"],   # versioning not enabled
+        "GCKMS-001": ["PR.DS-01"],               # key rotation > 365 days
+        "GCKMS-002": ["PR.AA-05", "PR.DS-01"],   # public KMS key access
+        "GCKMS-003": ["PR.DS-01"],               # no HSM protection
+        "GAR-001":   ["PR.PS-02"],               # no vulnerability scanning
+        "GAR-002":   ["PR.IR-01"],               # publicly readable repo
+        "GAR-003":   ["PR.PS-02"],               # no cleanup policy
+        "GCLOG-001": ["PR.PS-04", "DE.CM-09"],   # audit logs not enabled
+        "GCLOG-002": ["PR.PS-04", "DE.CM-09"],   # no log sink
+        "GCLOG-003": ["PR.PS-04"],               # log retention < 365 days
+        # ── Azure Cloud phase-2 ──────────────────────────────────────
+        "ENTRA-004": ["PR.AA-03"],               # cond access MFA
+        "ENTRA-005": ["PR.AA-05"],               # ext user restrict
+        "ENTRA-006": ["DE.CM-09"],               # risky signin
+        "AZST-004":  ["PR.DS-02"],               # min TLS
+        "AZST-005":  ["PR.PS-01"],               # lifecycle
+        "AZST-006":  ["PR.AA-01"],               # key rotation
+        "AKV-004":   ["PR.AA-01"],               # key expiry
+        "AKV-005":   ["PR.AA-01"],               # secret expiry
+        "AKV-006":   ["PR.AA-05"],               # RBAC
+        "ACR-004":   ["PR.PS-02", "DE.CM-09"],   # defender scan
+        "ACR-005":   ["PR.PS-01"],               # tag immutability
+        "AZMON-004": ["PR.PS-04", "DE.CM-09"],   # KV diagnostics
+        "AZMON-005": ["PR.PS-04"],               # NSG flow retention
+        "AZMON-006": ["PR.PS-04"],               # LAW retention
+        "AZMON-007": ["DE.CM-09", "RS.MA-01"],   # svc health alert
+        "AZNW-001":  ["PR.IR-01"],               # SSH/RDP internet (CRITICAL)
+        "AZNW-002":  ["PR.PS-04", "DE.CM-01"],   # flow logs
+        "AZNW-003":  ["PR.IR-01"],               # WAF
+        "AZNW-004":  ["PR.IR-01"],               # deny-all
+        "AZNW-005":  ["PR.IR-01"],               # public IP VM
+        "AZAPP-001": ["PR.DS-02"],               # HTTPS
+        "AZAPP-002": ["PR.DS-02"],               # TLS
+        "AZAPP-003": ["PR.AA-01"],               # managed identity
+        "AZAPP-004": ["PR.PS-01"],               # remote debug
+        "AZAPP-005": ["PR.PS-01"],               # FTP
+        "AZSQL-001": ["PR.DS-01"],               # TDE CMK
+        "AZSQL-002": ["PR.PS-04", "DE.CM-09"],   # auditing
+        "AZSQL-003": ["PR.IR-01"],               # public access
+        "AZSQL-004": ["PR.AA-05"],               # AAD admin
+        "AZSQL-005": ["DE.CM-09"],               # threat detect
+        "AZVM-001":  ["PR.DS-01"],               # disk encrypt
+        "AZVM-002":  ["PR.IR-01"],               # public IP
+        "AZVM-003":  ["PR.IR-01"],               # JIT
+        "AZVM-004":  ["PR.PS-02"],               # OS patch
+        "AZVM-005":  ["PR.AA-01"],               # managed identity
+        # ── GCP phase-2 ──────────────────────────────────────────────
+        "GCIAM-004": ["PR.AA-05"],               # default SA
+        "GCIAM-005": ["PR.AA-05"],               # domain restrict
+        "GCIAM-006": ["PR.AA-01"],               # SA key age
+        "GCS-004":   ["PR.DS-01"],               # CMEK
+        "GCS-005":   ["PR.PS-04", "DE.CM-01"],   # access logging
+        "GCLOG-004": ["PR.PS-04", "DE.CM-01"],   # VPC flow logs
+        "GCLOG-005": ["PR.PS-04", "DE.CM-01"],   # firewall logging
+        "GCLOG-006": ["PR.PS-04", "DE.CM-09"],   # data access
+        "GCLOG-007": ["DE.CM-09"],               # metric filter IAM
+        "GCLOG-008": ["DE.CM-09"],               # metric filter firewall
+        "GCLOG-009": ["DE.CM-09"],               # metric filter route
+        "GCLOG-010": ["DE.CM-09"],               # metric filter SQL
+        "GCLOG-011": ["DE.CM-09"],               # metric filter custom role
+        "GCNET-001": ["PR.IR-01"],               # default network
+        "GCNET-002": ["PR.IR-01"],               # deny-all
+        "GCNET-003": ["PR.IR-01"],               # SSH/RDP (CRITICAL)
+        "GCNET-004": ["PR.IR-01"],               # private access
+        "GCNET-005": ["PR.IR-01"],               # Cloud NAT
+        "GCCE-001":  ["PR.PS-01"],               # shielded VM
+        "GCCE-002":  ["PR.AA-03"],               # OS Login
+        "GCCE-003":  ["PR.PS-01"],               # serial port
+        "GCCE-004":  ["PR.IR-01"],               # public IP
+        "GCCE-005":  ["PR.PS-01"],               # project SSH keys
+        "GCSQL-001": ["PR.IR-01"],               # public IP
+        "GCSQL-002": ["PR.IR-03"],               # backups
+        "GCSQL-003": ["PR.DS-02"],               # SSL
+        "GCSQL-004": ["PR.AA-05"],               # IAM auth
+        "GCSQL-005": ["PR.IR-03"],               # PITR
+        "GCRUN-001": ["PR.IR-01"],               # unauth
+        "GCRUN-002": ["PR.AA-05"],               # custom SA
+        "GCRUN-003": ["PR.IR-03"],               # min instances
+        "GCRUN-004": ["PR.IR-01"],               # VPC connector
+        "GCKMS-004": ["PR.AA-05"],               # keyring IAM
+        "GCKMS-005": ["PR.DS-01"],               # destroy sched
+        "GCKMS-006": ["PR.DS-01"],               # imported key
+        # Developer-environment auto-execution
+        "DEV-001":   ["PR.PS-05"],
+        "DEV-006":   ["PR.PS-05"],
+        "DEV-007":   ["PR.PS-05"],   # committed MCP config auto-launches a command server
+        "DEV-009":   ["PR.PS-05"],   # remote MCP config over plaintext HTTP
+        "DEV-010":   ["PR.PS-05"],   # committed MCP config blanket tool auto-approve
+        "DEV-002":   ["PR.PS-05"],
+        "DEV-003":   ["PR.PS-05"],
+        "DEV-004":   ["PR.PS-05"],
+        "DEV-005":   ["PR.PS-05"],
     },
 )

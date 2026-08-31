@@ -1,13 +1,14 @@
 """K8S-024. Container missing livenessProbe and readinessProbe."""
 from __future__ import annotations
 
-from ...base import Finding, Severity
+from ...base import Finding, Location, Severity
 from ...rule import Rule
 from ..base import (
     KubernetesContext,
     container_name,
     iter_containers,
     iter_workload_pod_specs,
+    manifest_location,
 )
 
 RULE = Rule(
@@ -38,6 +39,7 @@ _PROBELESS_KINDS_OK = frozenset({"Job", "CronJob"})
 
 def check(ctx: KubernetesContext) -> Finding:
     offenders: list[str] = []
+    locations: list[Location] = []
     for m, ps in iter_workload_pod_specs(ctx):
         if m.kind in _PROBELESS_KINDS_OK:
             continue
@@ -46,10 +48,20 @@ def check(ctx: KubernetesContext) -> Finding:
                 continue
             has_liveness = isinstance(c.get("livenessProbe"), dict)
             has_readiness = isinstance(c.get("readinessProbe"), dict)
+            has_startup = isinstance(c.get("startupProbe"), dict)
             if not (has_liveness or has_readiness):
-                offenders.append(
-                    f"{m.kind}/{m.name} container={container_name(c)}"
+                # A startupProbe only gates startup, not ongoing health /
+                # traffic, so a container with just one still lacks the
+                # liveness/readiness gate; note it so the finding is
+                # accurate rather than claiming "no probe".
+                note = (
+                    " (only startupProbe; no liveness/readiness)"
+                    if has_startup else ""
                 )
+                offenders.append(
+                    f"{m.kind}/{m.name} container={container_name(c)}{note}"
+                )
+                locations.append(manifest_location(m, c))
     passed = not offenders
     desc = (
         "Every long-running container declares at least one health probe."
@@ -63,4 +75,5 @@ def check(ctx: KubernetesContext) -> Finding:
         resource="kubernetes/manifests",
         description=desc,
         recommendation=RULE.recommendation, passed=passed,
+        locations=locations,
     )

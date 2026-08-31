@@ -278,6 +278,10 @@ class TestHELM004:
         "1.x",
         "*",
         "1.2.3 || 1.2.4",
+        # Two- / one-component versions are Masterminds ranges, not pins
+        # (2026-07 audit LOW FN).
+        "1.2",
+        "1",
     ])
     def test_range_or_wildcard_fails(self, ver):
         deps = [{"name": "redis", "version": ver}]
@@ -427,6 +431,21 @@ class TestHELM008:
         ctx = _ctx_with_charts(_chart(chart_lock=self._lock(ts)))
         assert not check_helm008(ctx, _now=self.NOW).passed
 
+    def test_stale_lock_as_datetime_object_fails(self):
+        # ``yaml.safe_load`` turns an *unquoted* ISO-8601 ``generated:``
+        # into a ``datetime`` (the Helm default is unquoted). The parser
+        # must accept that, not just string timestamps (Part-C FN: the
+        # staleness check silently skipped every unquoted lock).
+        ts = self.NOW - timedelta(days=120)
+        ctx = _ctx_with_charts(_chart(chart_lock={"generated": ts}))
+        assert not check_helm008(ctx, _now=self.NOW).passed
+
+    def test_recent_lock_as_naive_datetime_passes(self):
+        # A naive datetime (no tz) is treated as UTC.
+        ts = (self.NOW - timedelta(days=10)).replace(tzinfo=None)
+        ctx = _ctx_with_charts(_chart(chart_lock={"generated": ts}))
+        assert check_helm008(ctx, _now=self.NOW).passed
+
     def test_unparseable_generated_silently_passes(self):
         # Garbage timestamp -> can't decide, don't false-positive.
         ctx = _ctx_with_charts(_chart(chart_lock=self._lock("garbage")))
@@ -526,7 +545,7 @@ class TestHELM010:
 
 class TestHelmChartChecksOrchestrator:
 
-    def test_runs_all_ten_rules(self):
+    def test_runs_all_rules(self):
         ctx = _ctx_with_charts(_chart())
         findings = HelmChartChecks(ctx).run()
         ids = sorted(f.check_id for f in findings)
@@ -534,7 +553,9 @@ class TestHelmChartChecksOrchestrator:
             "HELM-001", "HELM-002", "HELM-003",
             "HELM-004", "HELM-005", "HELM-006",
             "HELM-007", "HELM-008", "HELM-009",
-            "HELM-010",
+            "HELM-010", "HELM-011", "HELM-012",
+            "HELM-013", "HELM-014", "HELM-015",
+            "HELM-016", "HELM-017",
         ]
 
     def test_attaches_cwe_metadata(self):

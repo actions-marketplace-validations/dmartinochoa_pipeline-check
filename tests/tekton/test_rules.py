@@ -114,6 +114,28 @@ class TestTKN003ParamInjection:
         f = run_check(cfg, "TKN-003")
         assert not f.passed
 
+    def test_fails_when_param_double_quoted_in_script(self):
+        # Tekton substitutes the value into the script text before the
+        # shell parses it, so double-quoting the token does NOT help: an
+        # attacker value containing a `"` breaks out. (cicd-goat 71)
+        cfg = """
+        apiVersion: tekton.dev/v1
+        kind: Task
+        metadata:
+          name: build
+        spec:
+          params:
+            - name: branch
+              type: string
+          steps:
+            - name: build
+              image: alpine:3
+              script: |
+                echo "building $(params.branch)"
+        """
+        f = run_check(cfg, "TKN-003")
+        assert not f.passed
+
     def test_passes_when_param_passed_via_env(self):
         cfg = """
         apiVersion: tekton.dev/v1
@@ -208,7 +230,7 @@ class TestTKN005LiteralSecrets:
               image: alpine:3
               env:
                 - name: AWS_ACCESS_KEY_ID
-                  value: "AKIAIOSFODNN7EXAMPLE"
+                  value: "AKIAZ3MHALF2TESTHIJK"
               script: echo
         """
         f = run_check(cfg, "TKN-005")
@@ -234,6 +256,27 @@ class TestTKN005LiteralSecrets:
         """
         f = run_check(cfg, "TKN-005")
         assert f.passed
+
+    def test_fails_with_modern_token_under_innocuous_name(self):
+        # A GitLab PAT under a non-credential-looking env name: only the
+        # shared vendor-token catalog catches it (the name heuristic
+        # wouldn't), so this is the regression for unifying onto it.
+        cfg = """
+        apiVersion: tekton.dev/v1
+        kind: Task
+        metadata:
+          name: t
+        spec:
+          steps:
+            - name: build
+              image: alpine:3
+              env:
+                - name: REGISTRY_AUTH
+                  value: "glpat-abcdefghij1234567890"
+              script: echo
+        """
+        f = run_check(cfg, "TKN-005")
+        assert not f.passed
 
 
 # ── TKN-006 timeout ────────────────────────────────────────────────────
@@ -349,6 +392,39 @@ class TestTKN007DefaultServiceAccount:
         """
         f = run_check(cfg, "TKN-007")
         assert f.passed
+
+    def test_passes_with_v1_taskruntemplate_sa(self):
+        # Regression (2026-07 audit, TKN-007): the tekton.dev/v1
+        # PipelineRun sets the SA under spec.taskRunTemplate, not the
+        # deprecated top-level spec.serviceAccountName.
+        cfg = """
+        apiVersion: tekton.dev/v1
+        kind: PipelineRun
+        metadata:
+          name: pr
+        spec:
+          pipelineRef:
+            name: p
+          taskRunTemplate:
+            serviceAccountName: ci-runner
+        """
+        f = run_check(cfg, "TKN-007")
+        assert f.passed
+
+    def test_fails_when_taskruntemplate_sa_is_default(self):
+        cfg = """
+        apiVersion: tekton.dev/v1
+        kind: PipelineRun
+        metadata:
+          name: pr
+        spec:
+          pipelineRef:
+            name: p
+          taskRunTemplate:
+            serviceAccountName: default
+        """
+        f = run_check(cfg, "TKN-007")
+        assert not f.passed
 
 
 # ── TKN-008 curl pipe / TLS bypass ─────────────────────────────────────

@@ -1,9 +1,9 @@
 """TKN-010. Tekton Task should emit an SBOM for produced artifacts."""
 from __future__ import annotations
 
-from ...base import Finding, Severity, has_sbom, produces_artifacts
+from ...base import NO_ARTIFACT_DESC, Finding, Severity, has_sbom, produces_artifacts
 from ...rule import Rule
-from ..base import TektonContext
+from ..base import TektonContext, doc_location
 
 RULE = Rule(
     id="TKN-010",
@@ -48,7 +48,7 @@ def check(ctx: TektonContext) -> Finding:
         return Finding(
             check_id=RULE.id, title=RULE.title, severity=RULE.severity,
             resource="tekton",
-            description="No artifact production detected, check not applicable.",
+            description=NO_ARTIFACT_DESC,
             recommendation=RULE.recommendation, passed=True,
         )
     no_sbom = [d for d in artifact_producers if not has_sbom(d.data)]
@@ -66,4 +66,5 @@ def check(ctx: TektonContext) -> Finding:
         check_id=RULE.id, title=RULE.title, severity=RULE.severity,
         resource="tekton", description=desc,
         recommendation=RULE.recommendation, passed=passed,
+        locations=[doc_location(d) for d in no_sbom],
     )

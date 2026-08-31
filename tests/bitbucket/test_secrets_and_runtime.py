@@ -22,7 +22,7 @@ class TestBB008LiteralSecrets:
             - step:
                 max-time: 30
                 script:
-                  - export AWS_KEY=AKIAIOSFODNN7EXAMPLE
+                  - export AWS_KEY=AKIAZ3MHALF2TESTHIJK
                   - aws s3 ls
         """
         f = run_check(cfg, "BB-008")
@@ -59,8 +59,10 @@ class TestBB008LiteralSecrets:
 class TestBB011AWSLongLived:
     def test_fails_when_aws_configure_set_in_script(self):
         # The rule scans script lines for ``aws configure set
-        # aws_access_key_id`` — the documented anti-pattern for
-        # injecting long-lived keys into a runtime environment.
+        # aws_access_key_id`` with a LITERAL value — the documented
+        # anti-pattern for injecting long-lived keys into a runtime
+        # environment. (A ``$``-referenced secured variable is the
+        # recommended shape and no longer fires; see the 2026-07 audit.)
         cfg = """
         pipelines:
           default:
@@ -69,7 +71,7 @@ class TestBB011AWSLongLived:
                 deployment: production
                 image: amazon/aws-cli:2.15.0
                 script:
-                  - aws configure set aws_access_key_id $AWS_KEY
+                  - aws configure set aws_access_key_id AKIAIOSFODNN7EXAMPLE
                   - aws s3 ls
         """
         f = run_check(cfg, "BB-011")
@@ -83,7 +85,7 @@ class TestBB011AWSLongLived:
                 max-time: 30
                 image: amazon/aws-cli:2.15.0
                 variables:
-                  AWS_KEY: AKIAIOSFODNN7EXAMPLE
+                  AWS_KEY: AKIAZ3MHALF2TESTHIJK
                 script:
                   - aws s3 ls
         """
@@ -231,12 +233,32 @@ class TestBB023TLSBypass:
         f = run_check(cfg, "BB-023")
         assert not f.passed
 
+    def test_fails_on_clone_skip_ssl_verify(self):
+        # Structural bypass: ``clone: { skip-ssl-verify: true }`` disables
+        # cert verification on the repo clone itself (a YAML key + bool,
+        # so it never reaches the script blob).
+        cfg = """
+        pipelines:
+          default:
+            - step:
+                max-time: 30
+                clone:
+                  skip-ssl-verify: true
+                script:
+                  - make build
+        """
+        f = run_check(cfg, "BB-023")
+        assert not f.passed
+        assert "clone" in f.description.lower()
+
     def test_passes_when_no_tls_bypass(self):
         cfg = """
         pipelines:
           default:
             - step:
                 max-time: 30
+                clone:
+                  skip-ssl-verify: false
                 script:
                   - curl -fsSL https://example.com/data
         """

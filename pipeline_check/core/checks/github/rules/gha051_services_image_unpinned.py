@@ -11,7 +11,7 @@ from ..base import iter_jobs
 RULE = Rule(
     id="GHA-051",
     title="services / container image is not pinned by digest",
-    severity=Severity.MEDIUM,
+    severity=Severity.HIGH,
     owasp=("CICD-SEC-3", "CICD-SEC-8"),
     esf=("ESF-S-PIN-DEPS",),
     cwe=("CWE-829", "CWE-1357"),
@@ -56,6 +56,27 @@ RULE = Rule(
         "to audit, while a digest pin is self-verifying. "
         "Suppress with a rationale that names the registry and "
         "the audit channel.",
+    ),
+    exploit_example=(
+        "# Vulnerable: sidecar image pinned by tag. A registry\n"
+        "# compromise replaces the tag's content and the runner\n"
+        "# pulls the backdoored image next run.\n"
+        "jobs:\n"
+        "  test:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    services:\n"
+        "      db:\n"
+        "        image: postgres:16\n"
+        "    steps:\n"
+        "      - run: pg_isready\n"
+        "\n"
+        "# Safe: pin by digest.\n"
+        "jobs:\n"
+        "  test:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    services:\n"
+        "      db:\n"
+        "        image: postgres@sha256:abc123...  # from imagetools inspect"
     ),
 )
 

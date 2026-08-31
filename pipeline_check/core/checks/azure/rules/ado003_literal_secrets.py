@@ -6,7 +6,7 @@ from typing import Any
 from ...base import Finding, Severity
 from ...rule import Rule
 from ..base import iter_jobs
-from ._helpers import AWS_KEY_RE, SECRETISH_KEY_RE
+from ._helpers import SECRETISH_KEY_RE, aws_key_in, is_placeholder_value
 
 RULE = Rule(
     id="ADO-003",
@@ -27,6 +27,26 @@ RULE = Rule(
         "supports. AWS keys are detected by value shape regardless "
         "of variable name."
     ),
+    exploit_example=(
+        "# Vulnerable: the AWS access key literal lives in the\n"
+        "# pipeline ``variables:`` block. The YAML is committed\n"
+        "# to git, printed in build logs when the step echoes\n"
+        "# its environment, and visible to anyone with repo read.\n"
+        "variables:\n"
+        "  AWS_ACCESS_KEY_ID: AKIAZ3MHALF2TESTHIJK\n"
+        "  AWS_SECRET_ACCESS_KEY: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n"
+        "steps:\n"
+        "  - script: aws s3 cp ./build s3://bucket/\n"
+        "\n"
+        "# Safe: store credentials in a variable group linked to\n"
+        "# Azure Key Vault. The pipeline references the group;\n"
+        "# the actual values stay in Key Vault, rotate there\n"
+        "# without a pipeline-file change, and are masked in logs.\n"
+        "variables:\n"
+        "  - group: aws-deploy   # backed by Key Vault\n"
+        "steps:\n"
+        "  - script: aws s3 cp ./build s3://bucket/"
+    ),
 )
 
 
@@ -38,9 +58,13 @@ def check(path: str, doc: dict[str, Any]) -> Finding:
             for key, value in mapping.items():
                 if not isinstance(key, str) or not isinstance(value, str):
                     continue
-                if AWS_KEY_RE.search(value):
+                if aws_key_in(value):
                     offenders.append(f"{where}.{key} (AWS access key)")
-                elif SECRETISH_KEY_RE.search(key) and value and "$" not in value:
+                elif (
+                    SECRETISH_KEY_RE.search(key)
+                    and value and "$" not in value
+                    and not is_placeholder_value(value)
+                ):
                     offenders.append(f"{where}.{key}")
         elif isinstance(mapping, list):
             for entry in mapping:
@@ -50,13 +74,22 @@ def check(path: str, doc: dict[str, Any]) -> Finding:
                 value = entry.get("value")
                 if not isinstance(name, str) or not isinstance(value, str):
                     continue
-                if AWS_KEY_RE.search(value):
+                if aws_key_in(value):
                     offenders.append(f"{where}.{name} (AWS access key)")
-                elif SECRETISH_KEY_RE.search(name) and value and "$" not in value:
+                elif (
+                    SECRETISH_KEY_RE.search(name)
+                    and value and "$" not in value
+                    and not is_placeholder_value(value)
+                ):
                     offenders.append(f"{where}.{name}")
 
     _scan(doc.get("variables"), "<top>")
     for job_loc, job in iter_jobs(doc):
+        # For the bare top-level ``steps:`` shape, iter_jobs yields the
+        # document itself as the sole job; its ``variables:`` were already
+        # scanned as ``<top>`` above, so skip it to avoid double-counting.
+        if job is doc:
+            continue
         _scan(job.get("variables"), job_loc)
 
     passed = not offenders
@@ -67,7 +100,14 @@ def check(path: str, doc: dict[str, Any]) -> Finding:
         f"values: {', '.join(offenders[:5])}"
         f"{'…' if len(offenders) > 5 else ''}."
     )
-    severity = Severity.CRITICAL if any("AWS" in o for o in offenders) else Severity.HIGH
+    # Escalate to CRITICAL only for a real AWS access key (matched by
+    # value shape), not merely a variable whose NAME contains "AWS"
+    # (e.g. a plain ``AWS_DB_PASSWORD`` secret is HIGH, not CRITICAL).
+    severity = (
+        Severity.CRITICAL
+        if any("(AWS access key)" in o for o in offenders)
+        else Severity.HIGH
+    )
     return Finding(
         check_id=RULE.id, title=RULE.title, severity=severity,
         resource=path, description=desc,

@@ -60,6 +60,7 @@ from typing import Any, Protocol
 
 import yaml
 
+from .._primitives.safe_http import urlopen_https_only
 from ..base import safe_load_yaml
 from .base import GitHubContext, Workflow
 from .uses_parser import UsesRef, parse_uses
@@ -159,14 +160,14 @@ class HttpFetcher:
         self, owner: str, repo: str, ref: str, path: str,
     ) -> bytes | None:
         url = f"{self.BASE_URL}/{owner}/{repo}/{ref}/{path}"
-        req = urllib.request.Request(url)  # noqa: S310, fixed scheme, fixed host
+        req = urllib.request.Request(url)
         if self.token:
             req.add_header("Authorization", f"token {self.token}")
         # Identify ourselves so a server-side rate-limit log can tell
         # pipeline-check apart from a generic ``urllib`` consumer.
         req.add_header("User-Agent", "pipeline-check-resolver")
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # noqa: S310
+            with urlopen_https_only(req, timeout=self.timeout) as resp:
                 # Cap reads at ``_MAX_RESPONSE_BYTES + 1``; any extra
                 # byte indicates the body is over the cap, in which
                 # case we treat the fetch as a failure rather than
@@ -656,6 +657,17 @@ class Resolver:
             first_line = str(exc).split("\n", 1)[0]
             self.stats.failures.append(
                 f"YAML parse error in {pending.ref.raw}: {first_line}"
+            )
+            return None
+        except (RecursionError, MemoryError):
+            # A deeply-nested callee body raises a builtin, not a
+            # ``yaml.YAMLError``, on the pure-Python loader (the no-libyaml
+            # fallback). Degrade the resolved action like a parse failure
+            # so a crafted reusable workflow / composite action can't abort
+            # the resolver.
+            self.stats.failures.append(
+                f"unparsable callee body (too deeply nested or large): "
+                f"{pending.ref.raw}"
             )
             return None
         if not isinstance(doc, dict):

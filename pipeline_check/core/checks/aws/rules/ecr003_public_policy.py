@@ -5,6 +5,8 @@ import json
 
 from botocore.exceptions import ClientError
 
+from ..._context import statement_is_constrained
+from ..._iam_policy import iter_allow, public_principal
 from ...base import Finding, Severity
 from ...rule import Rule
 from .._catalog import ResourceCatalog
@@ -26,6 +28,36 @@ RULE = Rule(
         "deliberate exposure, typically via the ECR Public registry "
         "rather than a private repo with a public policy. The "
         "default for build-output images should never be public."
+    ),
+    exploit_example=(
+        "# Vulnerable: ECR repository policy with\n"
+        "# ``Principal: '*'``. Anyone on the internet can pull\n"
+        "# images from the repo (and discover internal app\n"
+        "# names + base-image versions). For repos that store\n"
+        "# private internal images, this is a direct supply-\n"
+        "# chain disclosure.\n"
+        "{\n"
+        "  \"Version\": \"2012-10-17\",\n"
+        "  \"Statement\": [{\n"
+        "    \"Effect\": \"Allow\",\n"
+        "    \"Principal\": \"*\",\n"
+        "    \"Action\": [\"ecr:BatchGetImage\", \"ecr:GetDownloadUrlForLayer\"]\n"
+        "  }]\n"
+        "}\n"
+        "\n"
+        "# Safe: scope to the account / org. If the image really\n"
+        "# is meant to be public, use ECR Public (a separate\n"
+        "# service for community-distributed images) rather than\n"
+        "# a wildcard policy on a private registry.\n"
+        "{\n"
+        "  \"Version\": \"2012-10-17\",\n"
+        "  \"Statement\": [{\n"
+        "    \"Effect\": \"Allow\",\n"
+        "    \"Principal\": {\"AWS\": \"*\"},\n"
+        "    \"Action\": [\"ecr:BatchGetImage\", \"ecr:GetDownloadUrlForLayer\"],\n"
+        "    \"Condition\": {\"StringEquals\": {\"aws:PrincipalOrgID\": \"o-abc123def4\"}}\n"
+        "  }]\n"
+        "}"
     ),
 )
 
@@ -61,14 +93,14 @@ def check(catalog: ResourceCatalog) -> list[Finding]:
             ))
             continue
 
+        # A wildcard principal scoped by a narrowing Condition
+        # (aws:PrincipalOrgID, aws:SourceArn, ...) is the documented
+        # org-sharing idiom, not public access. iter_allow tolerates a
+        # single-dict Statement and non-dict junk; public_principal
+        # handles the list-form wildcard {"AWS": ["*"]}.
         public_statements = [
-            s for s in policy.get("Statement", [])
-            if s.get("Effect") == "Allow"
-            and (
-                s.get("Principal") == "*"
-                or s.get("Principal", {}).get("AWS") == "*"
-                or s.get("Principal", {}).get("Service") == "*"
-            )
+            s for s in iter_allow(policy)
+            if public_principal(s) and not statement_is_constrained(s)
         ]
         passed = not public_statements
         if passed:

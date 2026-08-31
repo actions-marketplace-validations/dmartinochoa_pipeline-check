@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ...base import Finding, Severity, has_vuln_scanning, produces_artifacts
+from ...base import NO_ARTIFACT_DESC, Finding, Severity, has_vuln_scanning, produces_artifacts
 from ...rule import Rule
 
 RULE = Rule(
@@ -21,8 +21,9 @@ RULE = Rule(
     docs_note=(
         "Without a vulnerability scanning step, known-vulnerable "
         "dependencies ship to production undetected. The check "
-        "recognizes trivy, grype, snyk, npm audit, yarn audit, "
-        "safety check, pip-audit, osv-scanner, and govulncheck."
+        "recognizes common scanners including trivy, grype, snyk, "
+        "pip-audit, osv-scanner, govulncheck, semgrep, checkov, and "
+        "others."
     ),
 )
 
@@ -33,7 +34,7 @@ def check(path: str, doc: dict[str, Any]) -> Finding:
         return Finding(
             check_id=RULE.id, title=RULE.title, severity=RULE.severity,
             resource=path,
-            description="No artifact production detected, check not applicable.",
+            description=NO_ARTIFACT_DESC,
             recommendation=RULE.recommendation, passed=True,
         )
     desc = (

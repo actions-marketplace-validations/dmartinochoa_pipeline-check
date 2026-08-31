@@ -1,8 +1,8 @@
 """Lock doc claims against the live code.
 
-Numerical claims in `README.md` and `docs/index.md` ("13 providers",
-"13 compliance standards", "68 autofixers", "8 attack chains",
-"370+ checks") are easy to lie about and easy to forget when adding
+Numerical claims in `README.md` and `docs/index.md` ("32 providers",
+"18 compliance standards", "111 autofixers", "50 attack chains",
+"1110+ checks") are easy to lie about and easy to forget when adding
 a new provider, fixer, or standard. This test scans the doc set for
 those claims and asserts each one matches what the registries
 actually expose.
@@ -57,6 +57,14 @@ DOCS_WITH_CLAIMS = [
     REPO / "action.yml",
     REPO / "pyproject.toml",
     REPO / "mkdocs.yml",
+    # Contributor docs that recite the same headline counts (most often
+    # via "Counts in README and docs/index.md (...)" prose) but used to
+    # drift silently. The CONTRIBUTING.md / Docker Hub README are
+    # contributor- and consumer-facing surfaces, so stale numbers there
+    # are a real user-experience bug.
+    REPO / "CONTRIBUTING.md",
+    REPO / ".github" / "DOCKERHUB.md",
+    REPO / "docs" / "usage.md",
 ]
 
 
@@ -167,7 +175,9 @@ _STANDARD_CLAIM = re.compile(
 _AUTOFIXER_CLAIM = re.compile(
     r"\b(\d+)\s+(?:autofixer|fixer)s?\b", re.IGNORECASE
 )
-_CHAIN_CLAIM = re.compile(r"\b(\d+)\s+attack\s+chains?\b", re.IGNORECASE)
+_CHAIN_CLAIM = re.compile(
+    r"\b(\d+)\s+(?:attack|multi-finding)\s+chains?\b", re.IGNORECASE,
+)
 # "430+ checks". The trailing ``+`` is mandatory so per-provider rows
 # in the README provider table ("71 checks") aren't read as total-
 # catalog claims. Total-catalog claims always carry the ``+``.
@@ -224,6 +234,47 @@ def test_canonical_docs_carry_provider_claim(doc: Path):
         f"This file is canonical user-facing surface; add a "
         f"'<count> providers' claim so the drift guard has a value "
         f"to enforce."
+    )
+
+
+# Canonical surfaces that must carry a standards count and a total-
+# check count so the corresponding drift guards have values to enforce.
+# action.yml is excluded from these because it carries a single-line
+# description where fitting all five claim types is impractical.
+DOCS_REQUIRING_STANDARDS_CLAIM = [
+    REPO / "README.md",
+    REPO / "docs" / "index.md",
+]
+
+DOCS_REQUIRING_CHECK_CLAIM = [
+    REPO / "README.md",
+    REPO / "docs" / "index.md",
+]
+
+
+@pytest.mark.parametrize("doc", DOCS_REQUIRING_STANDARDS_CLAIM)
+def test_canonical_docs_carry_standards_claim(doc: Path):
+    """README and docs home must advertise a standards/frameworks
+    count. Without the claim the drift guard has nothing to enforce
+    and the number can silently disappear during a rewrite."""
+    text = doc.read_text(encoding="utf-8")
+    found = _findall(_STANDARD_CLAIM, text)
+    assert found, (
+        f"{doc.relative_to(REPO)}: no '<N> standards/frameworks' "
+        f"claim found. Add the count so the drift guard can enforce it."
+    )
+
+
+@pytest.mark.parametrize("doc", DOCS_REQUIRING_CHECK_CLAIM)
+def test_canonical_docs_carry_check_claim(doc: Path):
+    """README and docs home must advertise a total-check floor
+    (``<N>+ checks``). Without the claim the drift guard has nothing
+    to enforce."""
+    text = doc.read_text(encoding="utf-8")
+    found = _findall(_CHECK_CLAIM, text)
+    assert found, (
+        f"{doc.relative_to(REPO)}: no '<N>+ checks' claim found. "
+        f"Add the count so the drift guard can enforce it."
     )
 
 
@@ -368,9 +419,8 @@ def _existing_ids_for_prefix(provider: str, prefix: str) -> set[int]:
 # token wiring is intact and that the hook has a label for every
 # slug referenced on the home page.
 _PROVIDER_TILE_RE = re.compile(
-    r'href="providers/(?P<name>[^/"]+)/"'
+    r'class="pg-provider"\s+href="providers/(?P<name>[^/"]+)/"'
     r'.*?<span class="pg-provider__count">(?P<count>[^<]+)</span>',
-    re.DOTALL,
 )
 _PROVIDER_TOKEN_RE = re.compile(
     r"\{\{\s*providers\.(?P<slug>[a-z0-9_]+)\.checks\s*\}\}"
@@ -539,6 +589,118 @@ def test_readme_architecture_rule_ranges_match_registry():
 
     assert not drift, (
         "README.md architecture block drift:\n  " + "\n  ".join(drift)
+    )
+
+
+# ──────────────────────────────────────────────────────────────────
+# README 'Supported providers' table per-cell drift guard.
+#
+# The table cells declare per-provider rule counts in the fourth
+# column ("71 checks", "65 checks", ...). The architecture-block
+# range test above covers the tree-listing, but the provider table is
+# the first surface a README reader sees and used to silently drift
+# whenever a provider gained a rule but the table cell wasn't bumped.
+# ──────────────────────────────────────────────────────────────────
+
+# Maps the bolded row label in the README provider table to the rule
+# directory slug. Covers every row whose fourth column leads with a
+# bare ``<N> checks`` figure: live-cloud, CI, IaC, and the package-
+# ecosystem ``↳`` continuation sub-rows. Rows with a composite cell
+# (Helm, SCM, the npm/PyPI header) are verified by their own dedicated
+# assertions instead.
+_README_PROVIDER_TABLE_ROWS: dict[str, str] = {
+    "AWS": "aws",
+    "Azure (live)": "azure_cloud",
+    "GCP (live)": "gcp",
+    "Pulumi": "pulumi",
+    "GitHub Actions": "github",
+    "GitLab CI": "gitlab",
+    "Bitbucket Pipelines": "bitbucket",
+    "Azure DevOps": "azure",
+    "Jenkins": "jenkins",
+    "CircleCI": "circleci",
+    "Google Cloud Build": "cloudbuild",
+    "Buildkite": "buildkite",
+    "Drone CI": "drone",
+    "Tekton": "tekton",
+    "Argo Workflows": "argo",
+    "Argo CD": "argocd",
+    "Dockerfile": "dockerfile",
+    "Kubernetes": "kubernetes",
+    "OCI image manifest": "oci",
+    "Maven": "maven",
+    "NuGet": "nuget",
+    "Composer": "composer",
+    "Cargo": "cargo",
+    "Go modules": "gomod",
+    "RubyGems": "rubygems",
+}
+
+
+def test_readme_provider_table_per_row_rule_counts_match_registry():
+    """Every row in the README's Supported-providers table must
+    declare a leading ``<N> checks`` figure that equals the number of
+    rule files under that provider's ``rules/`` directory.
+
+    Helm is a deliberate exception, the cell carries a composite
+    "43 K8S-* + 10 HELM-*" claim because rendered Helm reuses the
+    Kubernetes pack; covered by a dedicated assertion below.
+    """
+    text = (REPO / "README.md").read_text(encoding="utf-8")
+    drift: list[str] = []
+
+    for row_name, slug in _README_PROVIDER_TABLE_ROWS.items():
+        # Match ``| **<Name>** | <input> | <flag> | <N> checks`` —
+        # bold row label, anything up to the fourth column, then the
+        # leading "<N> checks" we want to verify.
+        pat = re.compile(
+            rf"\|\s*(?:↳\s*)?\*\*{re.escape(row_name)}\*\*[^|]*\|"
+            rf"[^|]*\|[^|]*\|\s*(\d+)\s+checks?",
+        )
+        m = pat.search(text)
+        if not m:
+            drift.append(
+                f"README provider-table row '{row_name}': not found "
+                f"or its fourth column doesn't lead with '<N> checks'"
+            )
+            continue
+        claimed = int(m.group(1))
+        actual = _count_rules_in(slug)
+        if claimed != actual:
+            drift.append(
+                f"README provider-table row '{row_name}' ({slug}): "
+                f"claims {claimed} checks, registry has {actual}"
+            )
+
+    assert not drift, (
+        "README provider-table drift:\n  " + "\n  ".join(drift)
+    )
+
+
+def test_readme_helm_row_carries_correct_composite_claim():
+    """The Helm row says "<N> K8S-* rules ... plus <M> chart-supply-
+    chain rules (HELM-001..N)". N must equal the kubernetes rule
+    count and M must equal the helm rule count."""
+    text = (REPO / "README.md").read_text(encoding="utf-8")
+    pat = re.compile(
+        r"\|\s*\*\*Helm\*\*[^|]*\|[^|]*\|[^|]*\|[^|]*?"
+        r"(\d+)\s+K8S-\*\s+rules[^|]*?plus\s+(\d+)\s+chart-supply-chain",
+    )
+    m = pat.search(text)
+    assert m, (
+        "README.md Helm row missing or its cell no longer carries "
+        "the '<N> K8S-* rules ... plus <M> chart-supply-chain' shape"
+    )
+    k8s_claimed, helm_claimed = int(m.group(1)), int(m.group(2))
+    k8s_actual = _count_rules_in("kubernetes")
+    helm_actual = _count_rules_in("helm")
+    assert k8s_claimed == k8s_actual, (
+        f"README Helm row claims {k8s_claimed} K8S-* rules; registry "
+        f"has {k8s_actual}"
+    )
+    assert helm_claimed == helm_actual, (
+        f"README Helm row claims {helm_claimed} chart-supply-chain "
+        f"rules; registry has {helm_actual}"
     )
 
 
@@ -758,3 +920,76 @@ def test_severity_legend_in_readme_matches_constants():
             )
 
     assert not drift, "severity-legend drift:\n  " + "\n  ".join(drift)
+
+
+# ──────────────────────────────────────────────────────────────────
+# Coverage-completeness guards.
+#
+# The per-claim drift tests above verify that a number *present* in a
+# doc agrees with the registry. They stay silent when a registered
+# provider / standard / tool is simply *absent* from the doc, which is
+# how the README under-listed providers and standards for several
+# releases while the headline counts stayed green (the aggregate
+# "32 providers" / "18 standards" claims matched, but the enumerated
+# tables and the --pipeline value list lagged behind). These guards
+# close that gap: every registered item must be enumerated, not merely
+# counted.
+# ──────────────────────────────────────────────────────────────────
+
+
+def test_readme_pipeline_row_enumerates_every_provider():
+    """The ``--pipeline`` / ``-p`` row in the README CLI-reference
+    table must list every registered provider as a backticked value.
+
+    Catches a provider that lands in the registry (and is selectable
+    via ``--pipeline <name>``) but never gets added to the documented
+    value list.
+    """
+    text = (REPO / "README.md").read_text(encoding="utf-8")
+    m = re.search(r"`--pipeline`\s*/\s*`-p`.*", text)
+    assert m, "README CLI table: '--pipeline / -p' row not found"
+    documented = set(re.findall(r"`([a-z0-9_]+)`", m.group(0)))
+    missing = sorted(set(_providers_available()) - documented)
+    assert not missing, (
+        f"README '--pipeline' row doesn't enumerate these registered "
+        f"providers: {missing}. Add each as a `<name>` value so the "
+        f"documented selector list matches pipeline_check.core.providers."
+    )
+
+
+def test_readme_standards_table_lists_every_registered_standard():
+    """Every registered standard must have a row in the README
+    compliance table linking to ``docs/standards/<slug>.md``.
+
+    Catches the case where a standard is added to the registry (so the
+    aggregate '18 standards' headline auto-bumps and passes) but its
+    table row is forgotten, leaving the visible table under-listing
+    the real coverage.
+    """
+    text = (REPO / "README.md").read_text(encoding="utf-8")
+    linked = set(re.findall(r"docs/standards/([a-z0-9_]+)\.md", text))
+    missing = sorted(set(_standards_available()) - linked)
+    assert not missing, (
+        f"README standards table is missing rows for these registered "
+        f"standards: {missing}. Add a row linking to "
+        f"docs/standards/<slug>.md."
+    )
+
+
+def test_readme_mcp_tool_count_matches_registry():
+    """The MCP feature row claims '<N> tools advertised'. N must equal
+    the number of tool specs the server actually exposes via
+    ``TOOL_SPECS``."""
+    from pipeline_check.mcp_server.tools import TOOL_SPECS
+
+    text = (REPO / "README.md").read_text(encoding="utf-8")
+    m = re.search(r"(\d+)\s+tools advertised", text)
+    assert m, (
+        "README MCP feature row: no '<N> tools advertised' claim found"
+    )
+    claimed = int(m.group(1))
+    expected = len(TOOL_SPECS)
+    assert claimed == expected, (
+        f"README says {claimed} MCP tools advertised; TOOL_SPECS "
+        f"exposes {expected}. Update the README or the tool registry."
+    )

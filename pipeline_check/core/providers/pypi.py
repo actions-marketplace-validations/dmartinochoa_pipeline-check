@@ -14,15 +14,23 @@ import re
 from typing import Any
 
 from ..checks.base import BaseCheck
-from ..checks.pypi.base import PypiContext, iter_specs
+from ..checks.pypi.base import (
+    PypiContext,
+    iter_specs,
+    requirement_package_name,
+)
 from ..checks.pypi.pipelines import PypiChecks
 from ..checks.pypi.registry_fetcher import (
     FileSystemCache,
     HttpRegistryFetcher,
     default_cache_dir,
+    fetch_provenance,
+    fetch_provenance_refs,
     fetch_publish_times,
+    fetch_repo_slugs,
 )
 from ..inventory import Component
+from ..sbom import BuildDependency, make_pypi_purl, parse_requirement_line
 from .base import BaseProvider
 
 # Matches ``name==version`` (with optional ``[extras]``) — the
@@ -55,7 +63,7 @@ class PypiProvider(BaseProvider):
         return PypiContext.from_path(pypi_path)
 
     @property
-    def check_classes(self) -> list[type[BaseCheck]]:
+    def check_classes(self) -> list[type[BaseCheck[Any]]]:
         return [PypiChecks]
 
     def post_filter(
@@ -96,6 +104,94 @@ class PypiProvider(BaseProvider):
         )
         context.publish_times = publish_times
         context.warnings.extend(warnings)
+
+        osv_queries: list[tuple[str, str, str]] = []
+        for rf in context.files:
+            for line in iter_specs(rf):
+                m = _NAME_FROM_EXACT_PIN_RE.match(line.body)
+                if m is not None:
+                    parts = line.body.split("==", 1)
+                    if len(parts) == 2:
+                        version = parts[1].strip().split(";")[0].strip()
+                        if version:
+                            osv_queries.append((
+                                m.group(1).strip().lower(), version, "PyPI",
+                            ))
+        if osv_queries:
+            from ..checks._primitives.osv_fetcher import query_osv_batch
+            osv_cache = FileSystemCache(
+                default_cache_dir() / "osv", enabled=not no_cache,
+            )
+            context.osv_advisories = query_osv_batch(
+                osv_queries, cache=osv_cache,
+                warnings=context.warnings,
+            )
+
+        # Behavioral-trust signals (PYPI-019 / PYPI-020), scoped to
+        # direct (named, index-resolved) dependencies. Reuse the same
+        # per-package JSON document the publish-time pass fetched, so
+        # provenance + repo-slug add no requests beyond the Scorecard
+        # API lookup. The maintainer-depth signal (the NPM-014 analog)
+        # is deliberately absent: PyPI exposes no public maintainer-
+        # account-list API, only the freeform ``info.maintainer`` /
+        # ``info.author`` fields, which are too unreliable to flag on.
+        dep_names: list[str] = []
+        for rf in context.files:
+            for line in iter_specs(rf):
+                pkg = requirement_package_name(line.body)
+                if pkg is not None:
+                    dep_names.append(pkg)
+        if dep_names:
+            provenance, prov_warnings = fetch_provenance(
+                dep_names, fetcher, cache=cache,
+            )
+            context.provenance = provenance
+            context.warnings.extend(prov_warnings)
+
+            prov_refs, prov_ref_warnings = fetch_provenance_refs(
+                dep_names, fetcher, cache=cache,
+            )
+            context.provenance_ref = prov_refs
+            context.warnings.extend(prov_ref_warnings)
+
+            slugs, slug_warnings = fetch_repo_slugs(
+                dep_names, fetcher, cache=cache,
+            )
+            context.warnings.extend(slug_warnings)
+            if slugs:
+                from ..checks._primitives.scorecard import (
+                    fetch_scorecards,
+                    scorecard_cache_dir,
+                )
+                sc_cache = FileSystemCache(
+                    scorecard_cache_dir(), enabled=not no_cache,
+                )
+                scorecards, sc_warnings = fetch_scorecards(
+                    slugs, cache=sc_cache,
+                )
+                context.scorecards = scorecards
+                context.warnings.extend(sc_warnings)
+
+    def build_dependencies(
+        self, context: PypiContext,
+    ) -> list[BuildDependency]:
+        deps: list[BuildDependency] = []
+        for rf in context.files:
+            for rl in rf.lines:
+                parsed = parse_requirement_line(rl.body)
+                if parsed is None:
+                    continue
+                name, version = parsed
+                deps.append(BuildDependency(
+                    name=name,
+                    version=version,
+                    dep_type="pypi",
+                    purl=make_pypi_purl(name, version),
+                    provider=self.NAME,
+                    source=rf.path,
+                    pinned="==" in rl.body,
+                ))
+        return deps
 
     def inventory(self, context: PypiContext) -> list[Component]:
         out: list[Component] = []

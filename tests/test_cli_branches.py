@@ -48,6 +48,107 @@ def _finding(
     )
 
 
+class TestIncompleteScan:
+    """A degraded scan (unparseable file, failed cloud probe) must not
+    present as a confident pass. The terminal report flags the grade as
+    incomplete and explains why."""
+
+    def test_terminal_flags_unparseable_file(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        wf = tmp_path / ".github" / "workflows"
+        wf.mkdir(parents=True)
+        # Unbalanced bracket: YAML parse error, so no checks run on it.
+        (wf / "bad.yml").write_text("on: [push\njobs:\n  b:\n")
+        result = CliRunner().invoke(
+            scan, ["--pipeline", "github", "--output", "terminal"]
+        )
+        out = result.output
+        assert "incomplete scan:" in out
+        assert "could not be parsed" in out
+        # The grade carries the explicit tag rather than reading clean.
+        assert "(incomplete)" in out
+
+    def test_reason_helper(self):
+        from types import SimpleNamespace
+
+        from pipeline_check.cli import _scan_incomplete_reason
+
+        # A parse-error warning marks the scan incomplete.
+        meta = SimpleNamespace(warnings=["bad.yml: YAML parse error: ..."])
+        assert "could not be parsed" in _scan_incomplete_reason(meta, [])
+
+        # A degraded ``*-000`` cloud probe marks it incomplete too.
+        degraded = _finding(check_id="IAM-000", passed=False)
+        clean_meta = SimpleNamespace(warnings=[])
+        reason = _scan_incomplete_reason(clean_meta, [degraded])
+        assert reason is not None and "failed API access" in reason
+
+        # A clean scan returns None (no banner).
+        ok = _finding(check_id="CB-001", passed=True)
+        assert _scan_incomplete_reason(SimpleNamespace(warnings=[]), [ok]) is None
+
+    def test_status_helper_counts(self):
+        from types import SimpleNamespace
+
+        from pipeline_check.cli import _scan_status
+
+        # A parse-error warning: incomplete, with counts and a reason.
+        meta = SimpleNamespace(
+            warnings=["bad.yml: YAML parse error: ..."], files_scanned=3,
+        )
+        status = _scan_status(meta, [])
+        assert status["complete"] is False
+        assert status["files_scanned"] == 3
+        assert status["files_unparsed"] == 1
+        assert status["degraded_modules"] == 0
+        assert "could not be parsed" in status["reason"]
+        # The raw warning strings ride along so a JSON/SARIF consumer sees
+        # the same detail the stderr summary prints, not just the counts.
+        assert status["warnings"] == ["bad.yml: YAML parse error: ..."]
+
+        # A clean scan: complete, no reason key (consumers test `complete`),
+        # and no ``warnings`` key when nothing warned (exact-dict below).
+        ok = _finding(check_id="CB-001", passed=True)
+        clean = _scan_status(SimpleNamespace(warnings=[], files_scanned=2), [ok])
+        assert clean == {
+            "complete": True, "files_scanned": 2,
+            "files_unparsed": 0, "degraded_modules": 0,
+        }
+
+        # A degraded ``*-000`` probe counts as a degraded module.
+        degraded = _finding(check_id="IAM-000", passed=False)
+        d = _scan_status(SimpleNamespace(warnings=[], files_scanned=0), [degraded])
+        assert d["degraded_modules"] == 1 and d["complete"] is False
+
+    def test_json_emits_scan_status(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        wf = tmp_path / ".github" / "workflows"
+        wf.mkdir(parents=True)
+        (wf / "bad.yml").write_text("on: [push\njobs:\n  b:\n")
+        out_file = tmp_path / "report.json"
+        CliRunner().invoke(
+            scan,
+            ["--pipeline", "github", "--output", "json",
+             "--output-file", str(out_file)],
+        )
+        data = json.loads(out_file.read_text())
+        assert data["scan_status"]["complete"] is False
+        assert data["scan_status"]["files_unparsed"] == 1
+
+    def test_fail_on_parse_error_gate(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        wf = tmp_path / ".github" / "workflows"
+        wf.mkdir(parents=True)
+        (wf / "bad.yml").write_text("on: [push\njobs:\n  b:\n")
+        args = ["--pipeline", "github", "--output", "terminal"]
+        # Without the flag a parse failure is a warning, not a gate fail.
+        assert CliRunner().invoke(scan, args).exit_code == 0
+        # With it, the unparseable file trips the gate.
+        result = CliRunner().invoke(scan, [*args, "--fail-on-parse-error"])
+        assert result.exit_code == 1
+        assert "could not be parsed" in result.output
+
+
 class TestListStandards:
     def test_prints_every_registered_standard(self, runner):
         from pipeline_check.core import standards
@@ -63,10 +164,14 @@ class TestListStandards:
 
 
 class TestProviderUsageErrors:
-    def test_terraform_missing_flag(self, runner):
+    def test_terraform_missing_flag(self, runner, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
         result = runner.invoke(scan, ["--pipeline", "terraform"])
         assert result.exit_code != 0
-        assert "tf-plan" in result.output
+        # The error message may appear in output (UsageError) or in the
+        # exception text (ValueError raised from build_context).
+        combined = result.output + (str(result.exception) if result.exception else "")
+        assert "tf-plan" in combined
 
     def test_terraform_missing_file(self, runner, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -146,6 +251,37 @@ class TestGateSummary:
         assert result.exit_code == 0
         assert "[gate] FAIL" not in result.output
 
+    def test_grade_note_when_high_grade_fails_gate(self, runner):
+        """Grade A/B sitting on a failing gate is the confusing case; the
+        summary adds a note clarifying the grade is posture, not the gate."""
+        findings = [
+            _finding(check_id=f"CB-{i:03d}", passed=True) for i in range(1, 40)
+        ]
+        findings.append(
+            _finding(check_id="CB-099", passed=False, severity=Severity.HIGH),
+        )
+        with patch("pipeline_check.cli.Scanner") as MockScanner:
+            MockScanner.return_value.run.return_value = findings
+            result = runner.invoke(
+                scan, ["--output", "terminal", "--fail-on-check", "CB-099"],
+            )
+        assert result.exit_code == 1
+        assert "[gate] FAIL" in result.output
+        assert "[gate] note: Grade" in result.output
+        assert "overall posture" in result.output
+
+    def test_no_grade_note_when_grade_is_low(self, runner):
+        """A low grade (C/D) failing the gate is unsurprising, so the
+        clarifying note is suppressed."""
+        with patch("pipeline_check.cli.Scanner") as MockScanner:
+            MockScanner.return_value.run.return_value = [
+                _finding(severity=Severity.CRITICAL),  # one CRITICAL fail → grade D
+            ]
+            result = runner.invoke(scan, ["--output", "terminal"])
+        assert result.exit_code == 1
+        assert "[gate] FAIL" in result.output
+        assert "[gate] note: Grade" not in result.output
+
     def test_baseline_suppression_is_reported(self, runner, tmp_path):
         # Baseline contains the exact (check_id, resource) we'll emit.
         baseline = tmp_path / "b.json"
@@ -201,3 +337,55 @@ class TestScanFailure:
             result = runner.invoke(scan, ["--output", "json"])
         assert result.exit_code == 2
         assert "boom" in result.output
+
+
+class TestGateTrailerAutofixTier:
+    """The gate "what next" trailer must point at the fixer tier that will
+    actually write changes: bare ``--fix`` is safe-only, so an unsafe-only
+    failing set needs ``--fix unsafe --apply`` (the terminal report footer
+    already does this; the gate trailer now matches)."""
+
+    def test_unsafe_only_trailer_suggests_unsafe_tier(self):
+        from types import SimpleNamespace
+
+        from pipeline_check.cli import _build_gate_trailer
+        from pipeline_check.core import autofix
+
+        assert autofix.fixer_safety("GHA-003") == "unsafe"  # precondition
+        gate = SimpleNamespace(effective=[_finding(check_id="GHA-003")])
+        trailer = _build_gate_trailer(
+            gate, baseline_path=None, baseline_from_git=None,
+        )
+        assert trailer is not None
+        assert "--fix unsafe --apply" in trailer
+
+    def test_safe_trailer_suggests_bare_fix(self):
+        from types import SimpleNamespace
+
+        from pipeline_check.cli import _build_gate_trailer
+        from pipeline_check.core import autofix
+
+        assert autofix.fixer_safety("GHA-001") == "safe"  # precondition
+        gate = SimpleNamespace(effective=[_finding(check_id="GHA-001")])
+        trailer = _build_gate_trailer(
+            gate, baseline_path=None, baseline_from_git=None,
+        )
+        assert trailer is not None
+        assert "--fix --apply" in trailer
+        assert "--fix unsafe --apply" not in trailer
+
+    def test_mixed_trailer_counts_safe_and_notes_unsafe(self):
+        from types import SimpleNamespace
+
+        from pipeline_check.cli import _build_gate_trailer
+
+        gate = SimpleNamespace(effective=[
+            _finding(check_id="GHA-001"),  # safe fixer
+            _finding(check_id="GHA-003"),  # unsafe fixer
+        ])
+        trailer = _build_gate_trailer(
+            gate, baseline_path=None, baseline_from_git=None,
+        )
+        assert trailer is not None
+        assert "1 of 2" in trailer  # only the safe one applies with bare --fix
+        assert "--fix unsafe --apply" in trailer

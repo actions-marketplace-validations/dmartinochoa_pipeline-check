@@ -3,9 +3,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from ...base import Finding, Severity
+from ...base import Finding, Location, Severity
 from ...rule import Rule
-from ..base import ArgoContext, iter_templates, template_name
+from ..base import (
+    ArgoContext,
+    doc_location,
+    iter_templates,
+    template_name,
+    workflow_spec,
+)
 
 RULE = Rule(
     id="ARGO-015",
@@ -50,6 +56,41 @@ RULE = Rule(
         "encryption; suppress on the specific template name when "
         "this is the deliberate shape.",
     ),
+    exploit_example=(
+        "# Vulnerable: ``http://`` artifact URL means Argo fetches\n"
+        "# the input over plaintext. Any on-path attacker (compromised\n"
+        "# corporate proxy, malicious VPN, BGP hijack on the internal\n"
+        "# mirror) substitutes the dataset; Argo executes whatever\n"
+        "# bytes arrive. ``git://`` is the same shape — legacy\n"
+        "# unauthenticated git with no integrity check.\n"
+        "apiVersion: argoproj.io/v1alpha1\n"
+        "kind: Workflow\n"
+        "spec:\n"
+        "  templates:\n"
+        "    - name: process\n"
+        "      inputs:\n"
+        "        artifacts:\n"
+        "          - name: dataset\n"
+        "            path: /input/dataset.tar.gz\n"
+        "            http:\n"
+        "              url: http://internal-mirror.example.com/datasets/v1.tar.gz\n"
+        "\n"
+        "# Safe: HTTPS for the fetch. For high-value artifacts, also\n"
+        "# verify a producer-signed checksum after download (the\n"
+        "# artifact source providing an integrity guarantee, e.g.\n"
+        "# S3 + ETag or an OCI artifact + content digest).\n"
+        "apiVersion: argoproj.io/v1alpha1\n"
+        "kind: Workflow\n"
+        "spec:\n"
+        "  templates:\n"
+        "    - name: process\n"
+        "      inputs:\n"
+        "        artifacts:\n"
+        "          - name: dataset\n"
+        "            path: /input/dataset.tar.gz\n"
+        "            http:\n"
+        "              url: https://internal-mirror.example.com/datasets/v1.tar.gz"
+    ),
 )
 
 
@@ -84,6 +125,7 @@ def _template_artifacts(tmpl: dict[str, Any]) -> list[dict[str, Any]]:
 
 def check(ctx: ArgoContext) -> Finding:
     offenders: list[str] = []
+    locations: list[Location] = []
     for doc in ctx.docs:
         for idx, tmpl in enumerate(iter_templates(doc)):
             for art in _template_artifacts(tmpl):
@@ -94,6 +136,21 @@ def check(ctx: ArgoContext) -> Finding:
                         f"{template_name(tmpl, idx)} "
                         f"artifact[{art.get('name', '?')}]: {reason}"
                     )
+                    locations.append(doc_location(doc, tmpl))
+        # Workflow-global input artifacts (``spec.arguments.artifacts``)
+        # are a valid Argo source location too, not just template inputs.
+        arguments = workflow_spec(doc).get("arguments")
+        global_arts = arguments.get("artifacts") if isinstance(arguments, dict) else None
+        if isinstance(global_arts, list):
+            for art in (a for a in global_arts if isinstance(a, dict)):
+                reason = _scan_artifact(art)
+                if reason:
+                    offenders.append(
+                        f"{doc.kind}/{doc.name} "
+                        f"spec.arguments artifact[{art.get('name', '?')}]: "
+                        f"{reason}"
+                    )
+                    locations.append(doc_location(doc))
     if not ctx.docs:
         return Finding(
             check_id=RULE.id, title=RULE.title, severity=RULE.severity,
@@ -113,4 +170,5 @@ def check(ctx: ArgoContext) -> Finding:
         check_id=RULE.id, title=RULE.title, severity=RULE.severity,
         resource="argo", description=desc,
         recommendation=RULE.recommendation, passed=passed,
+        locations=locations,
     )

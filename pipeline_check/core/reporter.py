@@ -5,18 +5,38 @@ from typing import Any
 
 from rich import box
 from rich.console import Console
+from rich.markup import escape as rich_escape
 from rich.panel import Panel
 from rich.table import Table
 
 from .chains import Chain
-from .checks.base import Confidence, Finding, Severity, severity_rank
+from .checks.base import (
+    Confidence,
+    Finding,
+    Severity,
+    inline_exploit,
+    severity_rank,
+)
 from .inventory import Component
+from .report_view import failure_sort_key, report_sort_key
 from .scorer import ScoreResult
 
+#: Confidence styling for the findings table. HIGH is the default a
+#: rule keeps unless it opts down to a heuristic match, so it recedes
+#: (dim); MEDIUM and LOW are the ones worth a second look, so they read
+#: at full weight. The column itself only renders when confidence
+#: actually varies (see ``report_terminal``).
 _CONFIDENCE_STYLE: dict[Confidence, str] = {
-    Confidence.HIGH: "bold",
-    Confidence.MEDIUM: "dim",
-    Confidence.LOW: "dim italic",
+    Confidence.HIGH: "dim",
+    Confidence.MEDIUM: "",
+    Confidence.LOW: "italic",
+}
+
+#: Short, lowercase confidence labels for the table cell.
+_CONF_LABEL: dict[Confidence, str] = {
+    Confidence.HIGH: "high",
+    Confidence.MEDIUM: "med",
+    Confidence.LOW: "low",
 }
 
 # Bump when the JSON payload shape changes in a way consumers need to
@@ -24,13 +44,33 @@ _CONFIDENCE_STYLE: dict[Confidence, str] = {
 # adds (appending an optional field) do NOT require a version bump.
 JSON_SCHEMA_VERSION = "1.1"
 
+# Severity scale, matching the design system's terminal-tuned tokens
+# (the same hues the HTML report and docs site use, brightened for
+# legibility on a dark terminal background). CRITICAL red, HIGH orange,
+# MEDIUM gold, LOW cyan, INFO gray. Keeping these 1:1 with the other
+# surfaces is what makes a screenshot of the CLI read as the same
+# product as the docs.
 _SEVERITY_STYLE: dict[Severity, str] = {
-    Severity.CRITICAL: "bold red",
-    Severity.HIGH: "red",
-    Severity.MEDIUM: "yellow",
-    Severity.LOW: "cyan",
-    Severity.INFO: "dim",
+    Severity.CRITICAL: "bold #dc3545",
+    Severity.HIGH: "#ff8c63",
+    Severity.MEDIUM: "#f4c430",
+    Severity.LOW: "#6dd5ed",
+    Severity.INFO: "#6c757d",
 }
+
+def severity_style_for(sev: str) -> str:
+    """Rich style for a severity *string* (the enum ``.value``), or
+    "white" when unrecognized.
+
+    Lets the listing commands (``--list-checks`` / ``--list-chains`` /
+    ``--list-fixers``) color the severity column with the same scale the
+    scan report uses, without each one re-deriving the map.
+    """
+    try:
+        return _SEVERITY_STYLE.get(Severity(sev), "white")
+    except ValueError:
+        return "white"
+
 
 _GRADE_STYLE: dict[str, str] = {
     "A": "bold green",
@@ -53,14 +93,45 @@ _GRADE_COLOR: dict[str, str] = {
 _FOLLOWER_LINES_CAP = 10
 
 
+def _display_path(text: str, limit: int = 50) -> str:
+    """Resource string tuned for the terminal table cell.
+
+    Backslashes render as forward slashes so a Windows scan reads the
+    same as the docs and the HTML report. When a path is longer than
+    *limit*, it's truncated on the *head* (``…ows/release.yml:172``) so
+    the filename and line number, the part the operator acts on, always
+    survive. Right-side truncation would keep the useless ``.github/wo``
+    prefix and drop the filename, so we never do that.
+    """
+    text = text.replace("\\", "/")
+    if len(text) <= limit:
+        return text
+    return "…" + text[-(limit - 1):]
+
+
+def _resource_cell(f: Finding, limit: int) -> str:
+    """The Resource-column display string for *f*.
+
+    The resource with the primary line number appended (when the rule
+    emitted a Location), forward-slashed, and head-truncated to *limit*
+    so the filename and line, the part the operator acts on, always
+    survive. Shared by the column-width precompute and ``_render_row``
+    so both agree on the rendered width.
+    """
+    resource_full = f.resource
+    if f.locations:
+        primary = f.locations[0]
+        if primary.start_line is not None:
+            resource_full = f"{f.resource}:{primary.start_line}"
+    return _display_path(resource_full, limit)
+
+
 def _visible(findings: list[Finding], threshold: Severity) -> list[Finding]:
     """Return findings at or above *threshold* severity, failures first."""
     min_rank = severity_rank(threshold)
     filtered = [f for f in findings if severity_rank(f.severity) >= min_rank]
-    # Sort: failures before passes, then most-severe first, then by check_id.
-    filtered.sort(
-        key=lambda f: (f.passed, -severity_rank(f.severity), f.check_id)
-    )
+    # Failures before passes, then most-severe first, then by check_id.
+    filtered.sort(key=report_sort_key)
     return filtered
 
 
@@ -107,8 +178,18 @@ def report_terminal(
     show_controls: bool = False,
     show_passed: bool = False,
     group_similar: bool = True,
+    inline_explain: bool = False,
+    incomplete_reason: str | None = None,
 ) -> None:
     """Print a rich-formatted report to the terminal.
+
+    When ``incomplete_reason`` is set, the scan could not read
+    everything it was asked to (a malformed file, a credential-less
+    cloud probe). A confident green "Grade A" would be false
+    reassurance in that case, since the grade only reflects what was
+    actually parsed. The headline renders the grade in a caution style
+    with an explicit "(incomplete)" tag plus a status line carrying the
+    reason, so a partial scan can't be mistaken for a clean one.
 
     By default the table renders only failures: passed findings sit
     behind ``show_passed`` because on a real repo with 50 GHA checks
@@ -129,7 +210,9 @@ def report_terminal(
     visible row plus a "+N similar" follower row that lists the
     extra line numbers. Detail panels still render for the
     representative; the followers' line numbers are folded into its
-    panel. Pass ``group_similar=False`` to render every row
+    panel, and panels whose prose is byte-identical across different
+    resources roll up into a single "Affected resources" panel. Pass
+    ``group_similar=False`` to render every row and every panel
     individually (matches the pre-1.x behavior).
     """
     if console is None:
@@ -139,6 +222,13 @@ def report_terminal(
     score = score_result["score"]
     grade_style = _GRADE_STYLE.get(grade, "white")
     summary = score_result.get("summary", {})
+
+    # A degraded scan must not present as a confident pass. Override the
+    # grade/bar palette to a caution color so a green "Grade A" can't
+    # sit on top of an unparseable file or a failed cloud probe.
+    incomplete = bool(incomplete_reason)
+    if incomplete:
+        grade_style = "bold yellow"
 
     total = len(findings)
     failed = sum(1 for f in findings if not f.passed)
@@ -156,16 +246,19 @@ def report_terminal(
         sev_parts.append(f"[{style}]{n_fail} {sev.value.lower()}[/{style}]")
 
     # Score bar
-    bar_color = _GRADE_COLOR.get(grade, "white")
+    bar_color = "yellow" if incomplete else _GRADE_COLOR.get(grade, "white")
     filled = score // 5
     bar = f"[{bar_color}]{'#' * filled}[/{bar_color}][dim]{'.' * (20 - filled)}[/dim]"
 
     # Headline grading copy:
     #     Score 47 / 100 · Grade D · 2 critical · 4 high · 7 medium · 3 low
     sep = "[dim] · [/dim]"
+    grade_text = f"[{grade_style}]Grade {grade}[/{grade_style}]"
+    if incomplete:
+        grade_text += "[yellow] (incomplete)[/yellow]"
     headline_parts = [
         f"[bold]Score {score} / 100[/bold]",
-        f"[{grade_style}]Grade {grade}[/{grade_style}]",
+        grade_text,
     ]
     headline_parts.extend(sev_parts)
     headline = sep.join(headline_parts)
@@ -176,16 +269,55 @@ def report_terminal(
         f"[red]{failed} failed[/red] / [green]{passed_count} passed[/green] "
         f"[dim]({total} checks)[/dim]",
     ]
-
-    console.print(
-        Panel(
-            "\n".join(header_lines),
-            title="[bold]Pipeline-Check[/bold]",
-            border_style="blue",
-            padding=(0, 2),
+    if incomplete:
+        reason = rich_escape(incomplete_reason or "")
+        header_lines.append(f"[yellow]incomplete scan: {reason}[/yellow]")
+    elif failed and grade in ("A", "B"):
+        # A strong grade sitting on top of real failures is the most
+        # confusing headline a first-time reader hits: "Grade A" scans
+        # as "all clear" while HIGH findings wait in the table below.
+        # The score is severity-weighted, so a stack of LOW/MEDIUM
+        # findings barely dents it. Spell that out so the grade can't be
+        # mistaken for a clean bill of health. (The gate summary makes
+        # the same point when a gate is configured; this covers the
+        # plain scan, which far more users see.) We don't claim the
+        # failures are "listed below": a raised --severity-threshold can
+        # filter some (or all) of them out of the table, so the count is
+        # the honest total, not a promise about what the table shows.
+        header_lines.append(
+            f"[dim]Grade is a severity-weighted posture score; "
+            f"{failed} check(s) still failed.[/dim]"
         )
-    )
-    console.print()
+
+    def _print_headline(table_width: int | None = None) -> None:
+        # Match the header box to the findings table so the two read as
+        # one unit, rather than a full-terminal-width box floating over a
+        # content-width table. When the table is narrower than the
+        # header's own text (a tiny scan), keep the header at its natural
+        # width so the prose doesn't wrap. With no table (the no-findings
+        # path) the header sizes to its content. ``width`` must be passed
+        # to the constructor; Rich ignores it set as an attribute.
+        body = "\n".join(header_lines)
+        title = "[bold]Pipeline-Check[/bold]"
+        border = "yellow" if incomplete else "blue"
+        if table_width is None:
+            # No table to match: size the box to its content. (Rich's
+            # ``expand=False`` overrides any explicit width, so the two
+            # are mutually exclusive.)
+            panel = Panel(body, title=title, border_style=border,
+                          padding=(0, 2), expand=False)
+        else:
+            # Match the table, but never below the header's natural width
+            # or the prose wraps. An explicit ``width`` (without
+            # ``expand=False``) pins the box to exactly that width.
+            natural = console.measure(
+                Panel(body, title=title, border_style=border,
+                      padding=(0, 2), expand=False)
+            ).maximum
+            width = max(table_width, min(natural, console.width))
+            panel = Panel(body, title=title, border_style=border,
+                          padding=(0, 2), width=width)
+        console.print(panel)
 
     # Findings table. Passing findings render only when explicitly
     # requested — they're noise in the everyday "what's broken?"
@@ -195,6 +327,9 @@ def report_terminal(
         visible = [f for f in visible if not f.passed]
 
     if not visible:
+        # No table to match, so the header box is content-sized.
+        _print_headline()
+        console.print()
         if any(not f.passed for f in findings):
             # Failures exist but were filtered out by severity threshold.
             console.print(
@@ -220,36 +355,85 @@ def report_terminal(
     else:
         groups = [(f, []) for f in visible_failures]
 
-    table = Table(box=box.SIMPLE_HEAVY, expand=True, pad_edge=False)
-    table.add_column("", no_wrap=True, width=4)
-    table.add_column("Check", style="bold", no_wrap=True, width=8)
-    table.add_column("Severity", no_wrap=True, width=10)
-    table.add_column("Conf.", no_wrap=True, width=7)
-    table.add_column("Resource", overflow="fold", max_width=28)
-    table.add_column("Title", ratio=1)
+    # Confidence is HIGH for the overwhelming majority of rules (it's
+    # the default a rule keeps unless it opts down to a heuristic
+    # match). A column reading "high / high / high …" all the way down
+    # is pure noise, so the column only appears when at least one shown
+    # finding sits *below* HIGH. When it does appear, the HIGH rows dim
+    # away and the MEDIUM / LOW ones catch the eye, which is exactly the
+    # set worth a second look.
+    conf_pool = visible_failures + (visible_passes if show_passed else [])
+    show_conf = any(f.confidence != Confidence.HIGH for f in conf_pool)
+
+    # Resource-column budget, scaled to the actual console width so the
+    # path stays on one line instead of folding mid-filename on a narrow
+    # terminal (``release.ym`` / ``l:172``). ``_resource_cell`` head-
+    # truncates each path to this cap, keeping the filename and line; the
+    # column is then sized to the longest surviving cell so a short scan
+    # stays compact and a long path still renders on one line. ~1/3 of
+    # the width, floored at 18 (room for ``…/file.yml:NN``) and capped at
+    # 50 (a wide terminal gains nothing past that).
+    res_cap = max(18, min(50, console.width // 3))
+    width_pool = [rep for rep, _ in groups] + (
+        visible_passes if show_passed else []
+    )
+    res_cells = [_resource_cell(f, res_cap) for f in width_pool]
+    res_width = max([len("Resource")] + [len(c) for c in res_cells])
+
+    # No ``expand=True``: the table sizes to its content rather than
+    # padding out to the full terminal width, so a scan on a 200-column
+    # terminal doesn't leave a lake of empty space to the right. The
+    # short columns never wrap; Resource is fixed to the width-aware
+    # budget above (no_wrap, head-truncated) so it never breaks a
+    # filename across lines, and Title folds to absorb the remaining
+    # width on a narrow terminal.
+    table = Table(box=box.SIMPLE_HEAVY, pad_edge=False)
+    table.add_column("", no_wrap=True)
+    table.add_column("Check", style="bold", no_wrap=True)
+    table.add_column("Severity", no_wrap=True)
+    if show_conf:
+        table.add_column("Conf.", no_wrap=True)
+    table.add_column(
+        "Resource", width=res_width, no_wrap=True, overflow="ellipsis",
+    )
+    # No max_width on Title: it's the flexible column. On a wide
+    # terminal it takes its natural width (no wrap); on a narrow one
+    # Rich shrinks it to fit and folds the text. Capping it would only
+    # truncate titles when there's room to spare.
+    table.add_column("Title", overflow="fold")
 
     def _render_row(f: Finding) -> None:
+        """Add one finding to the table as a status/severity/resource row."""
         sev_style = _SEVERITY_STYLE.get(f.severity, "white")
-        conf_style = _CONFIDENCE_STYLE.get(f.confidence, "")
         status = "[red]FAIL[/red]" if not f.passed else "[green]PASS[/green]"
-        conf_label = f.confidence.value[:3]
-        conf_cell = (
-            f"[{conf_style}]{conf_label}[/{conf_style}]"
-            if conf_style else conf_label
-        )
-        resource_cell = f.resource
-        if f.locations:
-            primary = f.locations[0]
-            if primary.start_line is not None:
-                resource_cell = f"{f.resource}:{primary.start_line}"
-        table.add_row(
+        # ``_resource_cell`` appends the primary line number, forward-
+        # slashes, and head-truncates to the width-aware ``res_cap``.
+        # Escape through ``rich.markup.escape`` because real content
+        # carries literal ``[...]`` tokens (YAML lists, TF refs like
+        # ``[aws_subnet.foo.id]``, capabilities ``[ALL]``) that the
+        # table renderer would otherwise parse as Rich style markup and
+        # silently strip.
+        resource_cell = rich_escape(_resource_cell(f, res_cap))
+        cells = [
             status,
             f.check_id,
             f"[{sev_style}]{f.severity.value}[/{sev_style}]",
-            conf_cell,
-            resource_cell,
-            f.title,
-        )
+        ]
+        if show_conf:
+            conf_style = _CONFIDENCE_STYLE.get(f.confidence, "")
+            conf_label = _CONF_LABEL.get(f.confidence, f.confidence.value.lower())
+            cells.append(
+                f"[{conf_style}]{conf_label}[/{conf_style}]"
+                if conf_style else conf_label
+            )
+        cells.append(resource_cell)
+        cells.append(rich_escape(f.title))
+        table.add_row(*cells)
+
+    # Leading blank cells a follower-summary row needs before the Title
+    # column (which carries the "+N more" text): one per column except
+    # Title, so one fewer when the Conf. column is hidden.
+    n_blanks = 5 if show_conf else 4
 
     # Failures first, in group order.
     for representative, followers in groups:
@@ -282,29 +466,87 @@ def report_terminal(
             )
         # Render the follower-summary in the Title column so the row
         # height stays one line and the eye scans down the Check column.
-        table.add_row("", "", "", "", "", follower_cell)
+        table.add_row(*([""] * n_blanks), follower_cell)
 
     # Passes (only present when show_passed is set).
     for f in visible_passes:
         _render_row(f)
 
+    # Now that every row is in, measure the table and size the header box
+    # to match it (clamped to the console) so the two read as one unit.
+    table_width = min(console.measure(table).maximum, console.width)
+    _print_headline(table_width)
+    console.print()
     console.print(table)
 
     if not visible_failures:
         return
 
     console.print()
-    for representative, followers in groups:
-        f = representative
+
+    def _emit_detail_panel(f: Finding, middle: str, title_suffix: str) -> None:
+        """Print one detail Panel, the shell both variants share.
+
+        Body order is fixed: description, recommendation, the CWE line,
+        the optional Controls block, then the variant-specific *middle*
+        block (the single panel's Locations line vs. the merged panel's
+        "Affected resources" list), then the optional Proof-of-exploit
+        block. *title_suffix* is the trailing ``[dim]...[/dim]`` (a
+        resource path, or the resource count). Funneling both callers
+        through here keeps them from drifting on the escaping rules or
+        the body order.
+        """
         style = _SEVERITY_STYLE.get(f.severity, "white")
         cwe_line = ""
         if f.cwe:
-            cwe_line = f"\n[dim]CWE: {', '.join(f.cwe)}[/dim]"
+            cwe_line = f"\n[dim]CWE: {rich_escape(', '.join(f.cwe))}[/dim]"
         controls_text = ""
         if f.controls and show_controls:
             controls_text = "\n[bold]Controls:[/bold]\n" + "\n".join(
-                f"  [{c.standard_title}] {c.label()}" for c in f.controls
+                f"  {rich_escape('[' + c.standard_title + '] ' + c.label())}"
+                for c in f.controls
             )
+        # ``--inline-explain`` surfaces the rule's ``exploit_example``
+        # (when one is recorded) right under the recommendation so the
+        # operator doesn't need a separate ``--explain CHECK_ID``
+        # round-trip. The gate lives in ``inline_exploit`` so SARIF,
+        # JUnit, markdown, and codequality make the same decision. The
+        # example is escaped through ``rich.markup.escape`` because real
+        # exploit snippets contain literal ``[...]`` tokens (YAML lists
+        # like ``types: [opened, edited]``, Terraform refs like
+        # ``subnets = [aws_subnet.foo.id]``, K8s capabilities ``[ALL]``)
+        # that the Panel renderer would otherwise parse as Rich style
+        # markup and silently strip. Label matches ``--explain`` and the
+        # HTML report so the same field reads the same on every surface.
+        exploit_text = ""
+        exploit = inline_exploit(f, inline_explain)
+        if exploit:
+            exploit_text = (
+                f"\n[bold]Proof of exploit:[/bold]\n{rich_escape(exploit)}"
+            )
+        console.print(
+            Panel(
+                f"{rich_escape(f.description)}\n\n"
+                f"[bold]Recommendation:[/bold] {rich_escape(f.recommendation)}"
+                f"{cwe_line}{controls_text}{middle}{exploit_text}",
+                title=(
+                    f"[{style}]{f.check_id}[/{style}]  "
+                    f"{rich_escape(f.title)}  "
+                    f"{title_suffix}"
+                ),
+                border_style="dim",
+                padding=(0, 2),
+            )
+        )
+
+    def _render_detail_panel(f: Finding, followers: list[Finding]) -> None:
+        """Render one finding's detail panel for a single resource.
+
+        Builds the per-resource Locations block (every offending line
+        when the rule hit more than one, or a "grouped with N similar"
+        note), then hands the shared shell the resource path as the
+        title suffix.
+        """
         # When the rule emitted >1 location OR there are grouped
         # followers with locations, list every offending line in the
         # panel so users see every hit at a glance.
@@ -323,25 +565,168 @@ def report_terminal(
             if extra:
                 lines_csv += f" (and {extra} more)"
             path = f.locations[0].path if f.locations else f.resource
-            locations_text = f"\n[bold]Locations:[/bold] {path}:{lines_csv}"
+            locations_text = (
+                f"\n[bold]Locations:[/bold] {rich_escape(path)}:{lines_csv}"
+            )
         elif followers:
             locations_text = (
                 f"\n[dim]Grouped with {len(followers)} similar finding(s) "
                 f"on the same resource.[/dim]"
             )
-        console.print(
-            Panel(
-                f"{f.description}\n\n"
-                f"[bold]Recommendation:[/bold] {f.recommendation}"
-                f"{cwe_line}{controls_text}{locations_text}",
-                title=(
-                    f"[{style}]{f.check_id}[/{style}]  "
-                    f"{f.title}  [dim]{f.resource}[/dim]"
-                ),
-                border_style="dim",
-                padding=(0, 2),
-            )
+        # Forward-slash the panel-title resource so a Windows scan reads
+        # like the docs (the table cell already does this via
+        # ``_display_path``).
+        panel_resource = rich_escape(f.resource.replace("\\", "/"))
+        _emit_detail_panel(f, locations_text, f"[dim]{panel_resource}[/dim]")
+
+    def _render_merged_detail_panel(
+        members: list[tuple[Finding, list[Finding]]],
+    ) -> None:
+        """Render one panel for several resources that share identical prose.
+
+        When the same rule fires across multiple resources with a
+        byte-identical description / recommendation / CWE / exploit, the
+        per-resource panels say nothing new each time (four "Artifacts
+        not signed" panels, one per workflow). Collapse them into a
+        single panel that carries the shared prose once and lists every
+        affected resource (with its offending line numbers) under an
+        "Affected resources" block. Panels whose prose differs per file
+        never reach here, so no per-file detail is lost.
+        """
+        f = members[0][0]
+        # One line per affected resource, forward-slashed, with the
+        # offending line numbers folded in (capped like the table's
+        # follower list so a rule that fires on dozens of files doesn't
+        # run off the panel).
+        resource_lines: list[str] = []
+        for rep, foll in members:
+            lines = [
+                loc.start_line for loc in rep.locations
+                if loc.start_line is not None
+            ]
+            for follower in foll:
+                if follower.locations and follower.locations[0].start_line is not None:
+                    lines.append(follower.locations[0].start_line)
+            label = rich_escape(rep.resource.replace("\\", "/"))
+            if lines:
+                shown = lines[:_FOLLOWER_LINES_CAP]
+                extra = len(lines) - len(shown)
+                csv = ", ".join(str(n) for n in shown)
+                if extra:
+                    csv += f" (and {extra} more)"
+                resource_lines.append(f"  {label}:{csv}")
+            else:
+                resource_lines.append(f"  {label}")
+        shown_resources = resource_lines[:_FOLLOWER_LINES_CAP]
+        hidden = len(resource_lines) - len(shown_resources)
+        if hidden:
+            shown_resources.append(f"  [dim](and {hidden} more)[/dim]")
+        resources_text = (
+            f"\n[bold]Affected resources ({len(members)}):[/bold]\n"
+            + "\n".join(shown_resources)
         )
+        _emit_detail_panel(f, resources_text, f"[dim]{len(members)} resources[/dim]")
+
+    if not group_similar:
+        # ``--no-group`` means "show me everything, unrolled". The table
+        # above already renders one row per finding; render one panel per
+        # finding too, in findings order, rather than rolling identical
+        # prose up into a merged panel. Collapsing here would contradict
+        # the flag (and the "+N similar (rerun with --no-group to
+        # expand)" hint the grouped table prints).
+        for representative, followers in groups:
+            _render_detail_panel(representative, followers)
+        return
+
+    # Default path: roll up byte-identical panels that differ only by
+    # resource. The findings table above stays per-file; this collapses
+    # only the repeated detail panels. The bucket key is everything the
+    # panel body renders except the resource and line numbers, so two
+    # findings land together only when their panel would otherwise be
+    # identical.
+    panel_buckets: dict[tuple[Any, ...], list[tuple[Finding, list[Finding]]]] = {}
+    panel_order: list[tuple[Any, ...]] = []
+    for representative, followers in groups:
+        key = (
+            representative.check_id.upper(),
+            # ``severity`` colors the merged panel's border and title via
+            # ``members[0]``; keying on it too means findings only merge
+            # when that color is shared (deterministic per check_id today,
+            # so this is belt-and-suspenders). ``controls`` rides along
+            # with check_id the same way, so it needs no separate key.
+            representative.severity,
+            representative.title,
+            representative.description,
+            representative.recommendation,
+            tuple(representative.cwe or ()),
+            inline_exploit(representative, inline_explain) or "",
+        )
+        bucket = panel_buckets.get(key)
+        if bucket is None:
+            panel_buckets[key] = bucket = []
+            panel_order.append(key)
+        bucket.append((representative, followers))
+
+    for key in panel_order:
+        members = panel_buckets[key]
+        if len(members) == 1:
+            representative, followers = members[0]
+            _render_detail_panel(representative, followers)
+        else:
+            _render_merged_detail_panel(members)
+
+
+def next_steps_tip(
+    findings: list[Finding],
+    severity_threshold: Severity = Severity.INFO,
+) -> str | None:
+    """One-line "what next" nudge for the terminal, or None.
+
+    The findings panels explain *why* each finding fired; this says
+    *what to do next*. Returns None when there's nothing actionable
+    (no failures at or above the threshold). The CLI renders it as the
+    final line of a terminal scan, after the table, panels, chains, and
+    inventory, so even a passing run with findings points somewhere.
+    The gate trailer (stderr, only when the gate trips) is the CI-log
+    analog; this is the interactive nudge.
+    """
+    min_rank = severity_rank(severity_threshold)
+    fails = [
+        f for f in findings
+        if not f.passed and severity_rank(f.severity) >= min_rank
+    ]
+    if not fails:
+        return None
+    fails.sort(key=failure_sort_key)
+    from .autofix import SAFE, available_fixers, fixer_safety
+
+    fixers = set(available_fixers())
+    fixable = [f for f in fails if f.check_id.upper() in fixers]
+    top_id = fails[0].check_id
+    tip = (
+        f"[dim]Next →[/dim] inspect a rule: "
+        f"[bold]pipeline_check explain {top_id}[/bold]"
+    )
+    if fixable:
+        n_safe = sum(1 for f in fixable if fixer_safety(f.check_id.upper()) == SAFE)
+        if n_safe:
+            # Bare ``--fix`` applies safe fixers only; count what it will
+            # actually write, and flag the unsafe remainder separately.
+            tip += (
+                f"   [dim]·[/dim]   autofix {n_safe} of {len(fails)}: "
+                f"[bold]pipeline_check --fix --apply[/bold]"
+            )
+            n_unsafe = len(fixable) - n_safe
+            if n_unsafe:
+                tip += f" [dim](+{n_unsafe} via --fix unsafe)[/dim]"
+        else:
+            # Every available fixer is unsafe-tier, so bare ``--fix``
+            # would skip them all; point at the unsafe tier explicitly.
+            tip += (
+                f"   [dim]·[/dim]   autofix {len(fixable)} of {len(fails)}: "
+                f"[bold]pipeline_check --fix unsafe --apply[/bold]"
+            )
+    return tip
 
 
 def report_json(
@@ -350,8 +735,19 @@ def report_json(
     tool_version: str = "",
     inventory: list[Component] | None = None,
     chains: list[Chain] | None = None,
+    scan_status: dict[str, Any] | None = None,
+    show_passed: bool = False,
 ) -> str:
-    """Serialize all findings and the score to a JSON string.
+    """Serialize the findings and the score to a JSON string.
+
+    The ``findings`` array carries the *failing* findings only by
+    default, matching the terminal table and SARIF output (a real repo
+    runs ~100 checks per file, almost all passing, so the full list is
+    mostly noise and bloats the report by ~50x). The per-severity
+    ``passed`` / ``failed`` tallies live in the ``score.summary`` block
+    regardless, so the grade and counts are unaffected. Pass
+    ``show_passed=True`` (the ``--show-passed`` flag) to emit every
+    check, passed and failed, as the full audit record.
 
     The payload carries ``schema_version`` (bumped on breaking format
     changes) and ``tool_version`` (the pipeline_check release that
@@ -367,13 +763,22 @@ def report_json(
     array, multi-finding attack-chain correlations. Always present
     (possibly empty) when chain evaluation ran; omitted when the caller
     explicitly disabled chains via ``--no-chains``.
+
+    When *scan_status* is supplied the payload gains a ``scan_status``
+    object (``complete`` plus the files-scanned / unparsed / degraded
+    counts, and a ``reason`` when incomplete), so a CI consumer can tell
+    a fully-completed scan from one where a file failed to parse or a
+    cloud module degraded. The score alone can't convey that.
     """
+    emitted = findings if show_passed else [f for f in findings if not f.passed]
     payload: dict[str, Any] = {
         "schema_version": JSON_SCHEMA_VERSION,
         "tool_version": tool_version or "0.0.0",
         "score": score_result,
-        "findings": [f.to_dict() for f in findings],
+        "findings": [f.to_dict() for f in emitted],
     }
+    if scan_status is not None:
+        payload["scan_status"] = scan_status
     if inventory is not None:
         payload["inventory"] = [c.to_dict() for c in inventory]
     if chains is not None:
@@ -413,29 +818,52 @@ def report_chains_terminal(
     for chain in chains:
         sev_style = _SEVERITY_STYLE.get(chain.severity, "white")
         conf_style = _CONFIDENCE_STYLE.get(chain.confidence, "")
+        # Escape narrative/summary/recommendation/references: chain prose
+        # quotes bracketed payloads and resource refs that would
+        # otherwise be parsed as Rich style markup and stripped.
         body_lines = [
-            f"[bold]{chain.summary}[/bold]",
+            f"[bold]{rich_escape(chain.summary)}[/bold]",
             "",
-            chain.narrative,
+            rich_escape(chain.narrative),
             "",
-            f"[bold]Triggering checks:[/bold] {', '.join(chain.triggering_check_ids)}",
+            f"[bold]Triggering checks:[/bold] "
+            f"{rich_escape(', '.join(chain.triggering_check_ids))}",
         ]
         if chain.confirmed_reachable:
-            reach_line = "[bold green]✓ Reachability confirmed[/bold green]"
+            # Three tiers: a proven source-to-sink dataflow path and a
+            # structural-identity link (same artifact / role / SA / repo)
+            # are both confirmed (green) signals; the shared-job fallback
+            # is only co-location, so it gets a weaker caution (yellow)
+            # label, not a confident "confirmed".
+            if chain.via_dataflow:
+                reach_line = (
+                    "[bold green]✓ Reachability confirmed (dataflow)[/bold green]"
+                )
+            elif chain.via_structural:
+                reach_line = (
+                    "[bold green]✓ Reachability confirmed (structural)[/bold green]"
+                )
+            else:
+                reach_line = "[bold yellow]≈ Co-located (unverified)[/bold yellow]"
             if chain.reachability_note:
-                reach_line += f": {chain.reachability_note}"
+                reach_line += f": {rich_escape(chain.reachability_note)}"
             body_lines.append(reach_line)
         if chain.mitre_attack:
             body_lines.append(
-                f"[bold]MITRE ATT&CK:[/bold] {', '.join(chain.mitre_attack)}"
+                f"[bold]MITRE ATT&CK:[/bold] "
+                f"{rich_escape(', '.join(chain.mitre_attack))}"
             )
         if chain.kill_chain_phase:
-            body_lines.append(f"[bold]Kill chain:[/bold] {chain.kill_chain_phase}")
-        body_lines.append(f"[bold]Recommendation:[/bold] {chain.recommendation}")
+            body_lines.append(
+                f"[bold]Kill chain:[/bold] {rich_escape(chain.kill_chain_phase)}"
+            )
+        body_lines.append(
+            f"[bold]Recommendation:[/bold] {rich_escape(chain.recommendation)}"
+        )
         if chain.references:
             body_lines.append("[bold]References:[/bold]")
             for ref in chain.references:
-                body_lines.append(f"  - {ref}")
+                body_lines.append(f"  - {rich_escape(ref)}")
         conf_label = (
             f"[{conf_style}]{chain.confidence.value}[/{conf_style}]"
             if conf_style else chain.confidence.value
@@ -445,7 +873,7 @@ def report_chains_terminal(
                 "\n".join(body_lines),
                 title=(
                     f"[{sev_style}]{chain.chain_id}[/{sev_style}]  "
-                    f"{chain.title}  "
+                    f"{rich_escape(chain.title)}  "
                     f"[dim](severity: {chain.severity.value}, "
                     f"confidence: {conf_label})[/dim]"
                 ),

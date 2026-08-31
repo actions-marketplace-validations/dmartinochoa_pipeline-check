@@ -10,7 +10,8 @@ from ..base import iter_steps
 
 _SECRET_REF_RE = re.compile(
     r"\$\{?(?:BITBUCKET_TOKEN|REPOSITORY_OAUTH_ACCESS_TOKEN)\}?"
-    r"|\$\{?[A-Z_]*(?:SECRET|TOKEN|PASSWORD|KEY)[A-Z_]*\}?"
+    r"|\$\{?[A-Za-z_]*(?:SECRET|TOKEN|PASSWORD|KEY)[A-Za-z_]*\}?",
+    re.IGNORECASE,
 )
 
 RULE = Rule(
@@ -45,6 +46,31 @@ RULE = Rule(
         "tell from the name alone, suppress per-step via "
         "``--ignore-file`` when the referenced value is benign.",
     ),
+    exploit_example=(
+        "# Vulnerable: ``after-script`` runs even when the main\n"
+        "# script fails. Echoing a secret env var here lands the\n"
+        "# value in the build log on every failed build — which\n"
+        "# is exactly when the log gets the most attention.\n"
+        "pipelines:\n"
+        "  default:\n"
+        "    - step:\n"
+        "        script:\n"
+        "          - ./deploy.sh   # uses $DEPLOY_KEY\n"
+        "        after-script:\n"
+        "          - echo \"Deploy attempted with $DEPLOY_KEY\"   # leaks on failure\n"
+        "\n"
+        "# Safe: after-script body references only step IDs /\n"
+        "# build metadata, never the secret env vars themselves.\n"
+        "# Failure diagnostics belong in the main script, where\n"
+        "# Bitbucket masks secured-variable values in output.\n"
+        "pipelines:\n"
+        "  default:\n"
+        "    - step:\n"
+        "        script:\n"
+        "          - ./deploy.sh\n"
+        "        after-script:\n"
+        "          - echo \"Deploy step $BITBUCKET_BUILD_NUMBER complete.\""
+    ),
 )
 
 
@@ -52,6 +78,10 @@ def check(path: str, doc: dict[str, Any]) -> Finding:
     offenders: list[str] = []
     for loc, step in iter_steps(doc):
         after = step.get("after-script")
+        # ``after-script`` may be a scalar string or a list of lines;
+        # normalize so the scalar form is scanned too.
+        if isinstance(after, str):
+            after = [after]
         if not isinstance(after, list):
             continue
         for line in after:

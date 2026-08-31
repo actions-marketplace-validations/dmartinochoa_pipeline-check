@@ -7,7 +7,7 @@ from typing import Any
 from ...base import Finding, Severity
 from ...rule import Rule
 from ..base import iter_jobs, job_scripts
-from ._helpers import AWS_KEY_RE
+from ._helpers import aws_key_in
 
 _AWS_CONFIGURE_RE = re.compile(
     r"aws\s+configure\s+set\s+aws_access_key_id\b"
@@ -15,8 +15,23 @@ _AWS_CONFIGURE_RE = re.compile(
 )
 
 _ENV_AWS_KEY_RE = re.compile(
-    r"(?:export\s+)?AWS_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY)\s*=\s*['\"]?AKIA"
+    # An access key id starts with AKIA; a secret access key is an opaque
+    # 40-char string (never AKIA), so match any non-``$`` literal assigned
+    # to it (``$VAR`` references are OIDC/secret indirection, not literals).
+    r"(?:export\s+)?AWS_ACCESS_KEY_ID\s*=\s*['\"]?AKIA"
+    r"|(?:export\s+)?AWS_SECRET_ACCESS_KEY\s*=\s*['\"]?(?!\$)[^\s'\"]"
 )
+
+
+def _var_literal(v: Any) -> str | None:
+    """Unwrap a GitLab variable value to its literal string, handling the
+    ``{value: "...", description: "..."}`` form GL-002/GL-003 also accept."""
+    if isinstance(v, str):
+        return v
+    if isinstance(v, dict):
+        val = v.get("value")
+        return val if isinstance(val, str) else None
+    return None
 
 RULE = Rule(
     id="GL-013",
@@ -37,6 +52,32 @@ RULE = Rule(
         "schedule. GitLab supports OIDC via `id_tokens:` for short-"
         "lived credential injection."
     ),
+    exploit_example=(
+        "# Vulnerable: long-lived IAM user keys in CI/CD variables.\n"
+        "variables:\n"
+        "  AWS_ACCESS_KEY_ID: \"AKIA…\"        # long-lived user key\n"
+        "  AWS_SECRET_ACCESS_KEY: \"…\"\n"
+        "deploy:\n"
+        "  script:\n"
+        "    - aws s3 sync ./dist s3://prod-site\n"
+        "\n"
+        "# Attack: the keys are exposed to every job's environment. A\n"
+        "# script running untrusted code (a compromised dependency, an\n"
+        "# MR that edits the pipeline, a leaked job log) reads and\n"
+        "# exfiltrates them. Because they're long-lived IAM user keys,\n"
+        "# the attacker keeps AWS access until someone rotates them by\n"
+        "# hand.\n"
+        "\n"
+        "# Safe: OIDC. id_tokens mints a short-lived role session per job.\n"
+        "deploy:\n"
+        "  id_tokens:\n"
+        "    AWS_TOKEN:\n"
+        "      aud: https://gitlab.example.com\n"
+        "  script:\n"
+        "    - aws sts assume-role-with-web-identity"
+        " --role-arn \"$AWS_ROLE_ARN\""
+        " --web-identity-token \"$AWS_TOKEN\" ..."
+    ),
 )
 
 
@@ -46,14 +87,16 @@ def check(path: str, doc: dict[str, Any]) -> Finding:
     top_vars = doc.get("variables") or {}
     if isinstance(top_vars, dict):
         for v in top_vars.values():
-            if isinstance(v, str) and AWS_KEY_RE.search(v):
+            raw = _var_literal(v)
+            if raw and aws_key_in(raw):
                 static_keys = True
     # Scan per-job variables and script bodies.
     for _, job in iter_jobs(doc):
         job_vars = job.get("variables") or {}
         if isinstance(job_vars, dict):
             for v in job_vars.values():
-                if isinstance(v, str) and AWS_KEY_RE.search(v):
+                raw = _var_literal(v)
+                if raw and aws_key_in(raw):
                     static_keys = True
         # Detect `aws configure set` and inline key assignments in scripts.
         for line in job_scripts(job):

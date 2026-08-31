@@ -31,6 +31,42 @@ RULE = Rule(
         "without those conditions, any account using that service "
         "can invoke."
     ),
+    exploit_example=(
+        "# Vulnerable: any AWS account on the internet can invoke\n"
+        "# this function. If the function reads from S3, writes to\n"
+        "# DynamoDB, or calls a downstream service, the attacker\n"
+        "# gets that downstream authority at whatever rate they're\n"
+        "# willing to pay for the invocations.\n"
+        "{\n"
+        '  "Version": "2012-10-17",\n'
+        '  "Statement": [{\n'
+        '    "Sid": "AllowAnyoneToInvoke",\n'
+        '    "Effect": "Allow",\n'
+        '    "Principal": "*",\n'
+        '    "Action": "lambda:InvokeFunction",\n'
+        '    "Resource": "arn:aws:lambda:us-east-1:123456789012:function:my-fn"\n'
+        "  }]\n"
+        "}\n"
+        "\n"
+        "# Safe: keep the service-principal binding (API Gateway,\n"
+        "# S3 events, etc.) but pair it with a SourceArn or\n"
+        "# SourceAccount Condition so AWS rejects invokes that\n"
+        "# don't originate from the expected upstream.\n"
+        "{\n"
+        '  "Version": "2012-10-17",\n'
+        '  "Statement": [{\n'
+        '    "Effect": "Allow",\n'
+        '    "Principal": {"Service": "apigateway.amazonaws.com"},\n'
+        '    "Action": "lambda:InvokeFunction",\n'
+        '    "Resource": "arn:aws:lambda:us-east-1:123456789012:function:my-fn",\n'
+        '    "Condition": {\n'
+        '      "ArnLike": {\n'
+        '        "AWS:SourceArn": "arn:aws:execute-api:us-east-1:123456789012:abc123/*"\n'
+        "      }\n"
+        "    }\n"
+        "  }]\n"
+        "}"
+    ),
 )
 
 
@@ -55,8 +91,10 @@ def check(catalog: ResourceCatalog) -> list[Finding]:
             if not public_principal(stmt):
                 continue
             # If the statement has a SourceArn / SourceAccount condition,
-            # the wildcard is effectively scoped.
-            conditions = stmt.get("Condition", {}) or {}
+            # the wildcard is effectively scoped. A non-dict Condition
+            # (malformed policy) carries no scoping keys.
+            cond_raw = stmt.get("Condition")
+            conditions = cond_raw if isinstance(cond_raw, dict) else {}
             scoped = any(
                 any(
                     isinstance(key, str) and key.lower() in ("aws:sourcearn", "aws:sourceaccount")

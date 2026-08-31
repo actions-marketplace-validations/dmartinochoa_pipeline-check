@@ -4,8 +4,12 @@ The common CLI flags can be set in a config file so CI invocations
 stay short and repo policy lives alongside the code. Both TOML
 (inside `pyproject.toml`) and YAML (`.pipeline-check.yml`) are
 supported. The supported keys are the allowlist `_TOPLEVEL_KEYS` /
-`_GATE_KEYS` in `pipeline_check/core/config.py`; provider-specific
-path flags and many of the newer flags are CLI-only.
+`_GATE_KEYS` in `pipeline_check/core/config.py`, which is the source of
+truth: every provider path flag (`gha_path`, `gitlab_path`, `npm_path`,
+…) plus `min_confidence`, `custom_rules`, `rego_rules`, `detect_entropy`,
+and `resolve_remote` are all config-settable. The examples below show a
+representative subset; the run-mode flags (`--fix`, `--ingest`,
+`--verify-secrets`, the `--chains-require-*` gates, …) stay CLI-only.
 
 ## Precedence
 
@@ -41,8 +45,13 @@ region = "eu-west-1"
 profile = "prod"
 standards = ["owasp_cicd_top_10", "nist_ssdf"]
 severity_threshold = "MEDIUM"
+min_confidence = "MEDIUM"          # drop LOW-confidence findings from the gate
 output = "sarif"
 output_file = "pipeline-check.sarif"
+
+# Load org-specific rules alongside the built-in catalog.
+custom_rules = ["policies/internal-rules.yml"]
+rego_rules = ["policies/forbidden-runner.rego"]
 
 # Provider-specific paths (auto-detected if omitted and a canonical
 # file exists at cwd).
@@ -167,7 +176,11 @@ overrides:
 
 Activate with `pipeline_check --policy pre-merge` (or
 `pipeline_check --list-policies` to enumerate everything
-discoverable). Policy values feed click's option defaults so the
+discoverable). Five curated packs ship built in (`pr-gate`,
+`release-gate`, `slsa-l3`, `pci-dss`, `supply-chain-strict`), so the
+common gates work by name without authoring a file; a local policy of
+the same name shadows the built-in. Policy values feed click's option
+defaults so the
 config file, env vars, and explicit CLI flags all override them
 where they overlap. Per-rule overrides merge with the config file's
 `overrides:` block on a per-key basis (config wins on conflicts).
@@ -236,6 +249,26 @@ on the cause:
   run: pipeline_check --config-check
 # ↑ fails the job immediately on any unknown key
 ```
+
+### `--config-strict`: fail the scan itself on typos
+
+`--config-check` is a separate preflight step that scans nothing.
+`--config-strict` instead guards a *normal* scan: an unknown key aborts
+with a `UsageError` (exit 2) before scanning, while a clean config runs
+as usual. Use it when you'd rather not add a dedicated validation step:
+
+```bash
+pipeline_check --pipeline github --config-strict
+# [config] .pipeline-check.yml: 'fail_on', unknown key
+# Error: --config-strict: 1 unknown config key(s) detected ...
+# exit 2
+```
+
+The classic catch is a gate key written at the top level instead of
+under `gate:` (`fail_on: HIGH` at the root is ignored, silently
+disabling the threshold). `--config-strict` turns that into a hard
+failure. A clean config makes the flag a no-op, so it's safe to leave
+on in CI.
 
 ## Tips
 

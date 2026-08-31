@@ -3,13 +3,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from ...base import Finding, Severity
+from ...base import Finding, Location, Severity
 from ...rule import Rule
 from ..base import (
     KubernetesContext,
     container_name,
     iter_containers,
     iter_workload_pod_specs,
+    manifest_location,
 )
 
 #: Capabilities that grant kernel-level escape paths if added to a container.
@@ -44,6 +45,39 @@ RULE = Rule(
         "SYS_PTRACE, SYS_MODULE, DAC_READ_SEARCH, DAC_OVERRIDE, "
         "SYS_RAWIO, SYS_BOOT, BPF, PERFMON, or the literal ``ALL``."
     ),
+    exploit_example=(
+        "# Vulnerable: no ``capabilities`` block means the\n"
+        "# container starts with the default Linux capability\n"
+        "# set (NET_RAW, NET_BIND_SERVICE, etc.). Worse:\n"
+        "# explicitly adding NET_ADMIN / SYS_ADMIN /\n"
+        "# SYS_PTRACE gives the container nearly-root reach\n"
+        "# into the kernel.\n"
+        "apiVersion: v1\n"
+        "kind: Pod\n"
+        "metadata: { name: net-tool }\n"
+        "spec:\n"
+        "  containers:\n"
+        "    - name: app\n"
+        "      image: app@sha256:abc123...\n"
+        "      securityContext:\n"
+        "        capabilities:\n"
+        "          add: [\"NET_ADMIN\", \"SYS_ADMIN\"]\n"
+        "\n"
+        "# Safe: drop ``ALL`` capabilities, then add back ONLY\n"
+        "# what the workload genuinely needs (e.g.\n"
+        "# ``NET_BIND_SERVICE`` to bind port 80 as non-root).\n"
+        "apiVersion: v1\n"
+        "kind: Pod\n"
+        "metadata: { name: app }\n"
+        "spec:\n"
+        "  containers:\n"
+        "    - name: app\n"
+        "      image: app@sha256:abc123...\n"
+        "      securityContext:\n"
+        "        capabilities:\n"
+        "          drop: [\"ALL\"]\n"
+        "          add: [\"NET_BIND_SERVICE\"]"
+    ),
 )
 
 
@@ -61,6 +95,7 @@ def _cap_list(caps: dict[str, Any], key: str) -> list[str]:
 
 def check(ctx: KubernetesContext) -> Finding:
     offenders: list[str] = []
+    locations: list[Location] = []
     for m, ps in iter_workload_pod_specs(ctx):
         for kind, c in iter_containers(ps):
             caps = _sec_ctx(c).get("capabilities") or {}
@@ -79,6 +114,7 @@ def check(ctx: KubernetesContext) -> Finding:
                     f"{m.kind}/{m.name} {kind}={container_name(c)} "
                     f"({'; '.join(why)})"
                 )
+                locations.append(manifest_location(m, c))
     passed = not offenders
     desc = (
         "Every container drops ALL capabilities and adds none that "
@@ -93,4 +129,5 @@ def check(ctx: KubernetesContext) -> Finding:
         resource="kubernetes/manifests",
         description=desc,
         recommendation=RULE.recommendation, passed=passed,
+        locations=locations,
     )

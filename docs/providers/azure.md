@@ -30,7 +30,7 @@ The walker handles every layout ADO supports:
 
 ## What it covers
 
-30 checks · 11 have an autofix patch (``--fix``).
+38 checks · 11 have an autofix patch (``--fix``).
 
 | Check | Title | Severity | Fix |
 |-------|-------|----------|-----|
@@ -64,6 +64,14 @@ The walker handles every layout ADO supports:
 | [ADO-028](#ado-028) | Package install bypasses registry integrity (git / path / tarball source) | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
 | [ADO-029](#ado-029) | Service-connection-using job without environment or branch gate | <span class="pg-sev pg-sev--high">HIGH</span> |  |
 | [ADO-030](#ado-030) | pool interpolates attacker-controllable value | <span class="pg-sev pg-sev--high">HIGH</span> | <span class="pg-fix" title="`--fix` will patch this rule">🔧 fix</span> |
+| [ADO-031](#ado-031) | Secret variable echoed / printed in a script step | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [ADO-032](#ado-032) | checkout persistCredentials leaves the pipeline token in .git/config | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [ADO-033](#ado-033) | IaC apply on a PR-validated pipeline | <span class="pg-sev pg-sev--critical">CRITICAL</span> |  |
+| [ADO-034](#ado-034) | ML model loaded with trust_remote_code (code execution) | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [ADO-035](#ado-035) | Untrusted PR/commit context reaches an agentic AI CLI (prompt injection) | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [ADO-036](#ado-036) | Unsafe deserialization of a fetched artifact (pickle RCE) | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [ADO-037](#ado-037) | AI model pulled without a pinned revision | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
+| [ADO-038](#ado-038) | Agentic CLI output lands without human review | <span class="pg-sev pg-sev--high">HIGH</span> |  |
 
 ---
 
@@ -96,6 +104,12 @@ Reference tasks by a full semver (`DownloadSecureFile@1.2.3`) or extension-publi
 </div>
 
 `$(Build.SourceBranch*)`, `$(Build.SourceVersionMessage)`, and `$(System.PullRequest.*)` are populated from SCM event metadata the attacker controls. Inline interpolation into a script body executes crafted content.
+
+The rule inspects:
+
+- Script bodies from the `script:` / `bash:` / `pwsh:` / `powershell:` shorthands.
+- Inline scripts in a task's `inputs.script` (Bash@3 / PowerShell@2 / CmdLine@2).
+- Compile-time template injection: a free-form `string` parameter (no `values:` allowlist) spliced into a script via `${{ parameters.X }}`, which becomes pipeline structure before any quoting applies.
 
 <div class="pg-rule__rec" markdown>
 
@@ -223,7 +237,7 @@ Complements ADO-003 (which looks at `variables:` keys). ADO-008 scans every stri
 
 **Known false-positive modes**
 
-- Test fixtures and documentation blobs sometimes embed credential-shaped strings (JWT samples, AKIAI... examples). The AWS canonical example ``AKIAIOSFODNN7EXAMPLE`` is deliberately NOT suppressed, if it appears in a real pipeline it almost always means a copy-paste from docs was never substituted. Defaults to LOW confidence.
+- Test fixtures and documentation blobs sometimes embed credential-shaped strings (JWT samples, vendor example keys). Well-known vendor example tokens (``AKIAIOSFODNN7EXAMPLE``, Stripe ``sk_test_`` docs keys) are suppressed via the ``VENDOR_EXAMPLE_TOKENS`` allowlist. Defaults to LOW confidence.
 
 <div class="pg-rule__rec" markdown>
 
@@ -347,7 +361,7 @@ Long-lived `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` values in pipeline vari
 
 **Known false-positive modes**
 
-- Variable values that *reference* a secret rather than embed one (``$(MySecretVar)`` / ``$(AwsKey)`` mapped from a variable group backed by Key Vault) still match the ``AWS_ACCESS_KEY_ID`` / ``AWS_SECRET_ACCESS_KEY`` name regex because the variable name itself looks long-lived. The rule has no way to follow the binding to its source. Suppress per-pipeline via ``--ignore-file`` once you've confirmed the value is injected at runtime from a Key Vault group rather than stored in the YAML.
+- The check only flags literal AKIA-shaped *values*, never variable names. The residual false positive is a literal AKIA-shaped value that is actually a deactivated or test key (a documentation sample, or a deliberately revoked credential left in place). The rule can't tell a live key from a dead one. Suppress per-pipeline via ``--ignore-file`` once you've confirmed the value is deactivated or non-production.
 
 <div class="pg-rule__rec" markdown>
 
@@ -471,7 +485,7 @@ Pin the extends template to a protected repository ref (`template@ref`). Local t
 <span class="pg-sev pg-sev--medium">MEDIUM</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--esf">ESF-S-VULN-MGMT</span> <span class="pg-tag pg-tag--cwe">CWE-1104</span>
 </div>
 
-Without a vulnerability scanning step, known-vulnerable dependencies ship to production undetected. The check recognizes trivy, grype, snyk, npm audit, yarn audit, safety check, pip-audit, osv-scanner, and govulncheck.
+Without a vulnerability scanning step, known-vulnerable dependencies ship to production undetected. The check recognizes common scanners including trivy, grype, snyk, pip-audit, osv-scanner, govulncheck, semgrep, checkov, and others.
 
 <div class="pg-rule__rec" markdown>
 
@@ -552,7 +566,7 @@ Remove TLS verification bypasses. Fix certificate issues at the source (install 
 ## ADO-024: No SLSA provenance attestation produced { #ado-024 }
 
 <div class="pg-rule__tags">
-<span class="pg-sev pg-sev--medium">MEDIUM</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-9</span> <span class="pg-tag pg-tag--esf">ESF-S-PROVENANCE</span> <span class="pg-tag pg-tag--cwe">CWE-345</span>
+<span class="pg-sev pg-sev--medium">MEDIUM</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-9</span> <span class="pg-tag pg-tag--esf">ESF-D-SBOM</span> <span class="pg-tag pg-tag--esf">ESF-D-SIGN-ARTIFACTS</span> <span class="pg-tag pg-tag--cwe">CWE-345</span>
 </div>
 
 On Azure Pipelines the common pattern is a ``Bash@3`` task invoking ``cosign attest --yes --predicate=provenance.json $(image)``. The native Microsoft SBOM tool emits ``_manifest/spdx_2.2/manifest.spdx.json`` for SBOM but does not produce provenance on its own.
@@ -694,7 +708,185 @@ ADO-013 catches self-hosted pools that aren't ephemeral; this rule catches the u
 
 **Recommended action**
 
-Hard-code ``pool:`` to a specific agent pool name (or ``vmImage:`` for Microsoft-hosted). If pool selection has to be parameterised, validate the candidate against an explicit allowlist before the job runs (e.g. a ``condition:`` guard against a vetted set), and never inline ``$(Build.*)`` / ``$(System.PullRequest.*)`` / ``${{ parameters.X }}`` values as the pool name or as a demand.
+Hard-code ``pool:`` to a specific agent pool name (or ``vmImage:`` for Microsoft-hosted). If pool selection has to be parameterized, validate the candidate against an explicit allowlist before the job runs (e.g. a ``condition:`` guard against a vetted set), and never inline ``$(Build.*)`` / ``$(System.PullRequest.*)`` / ``${{ parameters.X }}`` values as the pool name or as a demand.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## ADO-031: Secret variable echoed / printed in a script step { #ado-031 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-6</span> <span class="pg-tag pg-tag--esf">ESF-D-SECRETS</span> <span class="pg-tag pg-tag--cwe">CWE-532</span> <span class="pg-tag pg-tag--cwe">CWE-200</span>
+</div>
+
+Scans ``script:``, ``bash:``, ``powershell:``, and ``pwsh:`` step bodies. Azure template expressions ``$(VAR)`` are matched alongside POSIX ``$VAR`` / ``${VAR}`` forms.
+
+Variables declared with ``issecret: true`` in the pipeline YAML are treated as known secrets (highest confidence). Variables whose names match common secret patterns (PASSWORD, TOKEN, API_KEY, etc.) are flagged heuristically.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Don't print secret values in pipeline scripts. Azure Pipelines masks variables marked ``issecret=true`` in logs, but only exact-match substrings. Encoded, truncated, or derived forms bypass the mask, and raw API log downloads are not masked. Log a boolean instead. Avoid ``set -x`` when secret-bound variables are in scope.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## ADO-032: checkout persistCredentials leaves the pipeline token in .git/config { #ado-032 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-6</span> <span class="pg-tag pg-tag--esf">ESF-D-SECRETS</span> <span class="pg-tag pg-tag--cwe">CWE-522</span> <span class="pg-tag pg-tag--cwe">CWE-200</span>
+</div>
+
+The Azure analogue of the GitHub ``persist-credentials`` / ArtiPACKED leak (GHA-037). Fires on any ``checkout`` step (``checkout: self`` / a repository resource) that sets ``persistCredentials: true``. The persisted token survives in ``.git/config`` for the rest of the job, so a later ``git config --get http.<host>.extraheader`` (or attacker-controlled build code) recovers it. Both the bare boolean and the quoted-string form are matched.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Drop ``persistCredentials: true`` from ``checkout`` steps (the default is ``false``). When set, Azure Pipelines writes the ``System.AccessToken`` (the pipeline's OAuth token) into ``.git/config`` as an ``AUTHORIZATION: bearer`` extraheader after fetch, where every later step, including code from an untrusted PR, can read and reuse it to push or reach other repos. If a step genuinely needs to push back, scope a dedicated credential to that step instead of persisting the ambient token for the whole job.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--critical" markdown>
+
+## ADO-033: IaC apply on a PR-validated pipeline { #ado-033 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--critical">CRITICAL</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-4</span> <span class="pg-tag pg-tag--esf">ESF-D-INJECTION</span> <span class="pg-tag pg-tag--cwe">CWE-94</span> <span class="pg-tag pg-tag--cwe">CWE-78</span>
+</div>
+
+Fires when a pipeline declares PR validation (`pr:` set to anything other than `none` / `false`) and any `script:` / `bash:` / `pwsh:` / `powershell:` step (or a task's `inputs.script`) runs an IaC apply command. A `pr:`-validated pipeline runs the PR branch's YAML and scripts, so the apply executes untrusted IaC. This is the Azure DevOps analog of GHA-117 / GL-041 / BB-033. A pipeline with no `pr:` key (or `pr: none`) is out of scope, matching ADO-011 / ADO-019.
+
+**Known false-positive modes**
+
+- A pipeline that runs `apply` only against a short-lived, fully-sandboxed review environment with no production-adjacent credentials. Even then the apply executes unreviewed IaC on the agent; prefer `plan` on PR validation. Suppress with a rationale naming the sandbox scope.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Never run `terraform apply` (or `cloudformation deploy` / `cdk deploy` / `pulumi up` / `sam deploy` / `terragrunt apply`) in a pipeline that opts into PR validation (`pr:`). The PR branch's IaC executes at apply time, so an `external` data source, a `local-exec` provisioner, or a hijacked provider runs arbitrary code on the agent with whatever cloud credentials (often a federated service connection) the apply uses, before the change is reviewed or merged. On PR validation run a read-only `plan`; move the `apply` onto the default-branch (`trigger:`) leg, gated by a protected `environment:`.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## ADO-034: ML model loaded with trust_remote_code (code execution) { #ado-034 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-4</span> <span class="pg-tag pg-tag--esf">ESF-D-INJECTION</span> <span class="pg-tag pg-tag--cwe">CWE-494</span> <span class="pg-tag pg-tag--cwe">CWE-829</span>
+</div>
+
+Fires on ``trust_remote_code=True`` / ``--trust-remote-code`` in a step's ``script`` / ``bash`` / ``pwsh`` / ``powershell`` body or a task-based step's ``inputs.script``. The transformers / huggingface_hub loader executes the model repo's own Python at load time, so an untrusted or unpinned model is arbitrary code execution on the agent with its credentials in scope.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Load models with ``trust_remote_code=False`` (the library default). If a model genuinely needs custom code, vet it and pin an exact revision (a commit SHA, not a tag or branch), run the load in a job scoped to no production service connections, and prefer safetensors weights over pickle.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## ADO-035: Untrusted PR/commit context reaches an agentic AI CLI (prompt injection) { #ado-035 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-4</span> <span class="pg-tag pg-tag--esf">ESF-D-INJECTION</span> <span class="pg-tag pg-tag--cwe">CWE-94</span> <span class="pg-tag pg-tag--cwe">CWE-77</span>
+</div>
+
+The AI analog of ADO-002 (script injection). Fires when a step's script body (``script`` / ``bash`` / ``pwsh`` / ``powershell`` or a task-based step's ``inputs.script``) invokes an agentic CLI (claude / gemini / cursor-agent / aider / openhands / goose / ``q chat``) AND attacker-controllable Azure context reaches it, either an untrusted macro (`$(Build.SourceVersionMessage)`) interpolated directly, or a ``variables:`` entry whose value carries one. Unlike a shell, an LLM ingests a quoted / env-routed value as prompt text, so the ADO-002 mitigation does not apply, which is why this is separate.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Do not place attacker-controllable context (a PR's commit message, source branch, or `$(System.PullRequest.*)` metadata) in an agentic CLI's prompt. Routing through a quoted `env:` variable does NOT sanitize a prompt the way it does a shell command, the model still reads the value. If the agent must see PR content, run it on a job with no service-connection secrets and no tool / shell access, and treat its output as untrusted.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## ADO-036: Unsafe deserialization of a fetched artifact (pickle RCE) { #ado-036 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-4</span> <span class="pg-tag pg-tag--esf">ESF-D-INJECTION</span> <span class="pg-tag pg-tag--cwe">CWE-502</span> <span class="pg-tag pg-tag--cwe">CWE-494</span> <span class="pg-tag pg-tag--cwe">CWE-829</span>
+</div>
+
+Fires per script body (``script`` / ``bash`` / ``pwsh`` / ``powershell`` or a task-based step's ``inputs.script``) in two shapes (shared with GHA-122 / GL-047 via ``_primitives/unsafe_deser``): an explicit unsafe opt-in (``weights_only=False`` / ``allow_pickle=True``) always; or a remote fetch (curl / wget / ``hf_hub_download`` / ``snapshot_download`` / ``huggingface-cli download`` / ``requests``) alongside a pickle-backed loader (``torch.load`` / ``pickle.load(s)`` / ``joblib.load``) with no safe path (``weights_only=True`` or safetensors) in the same body. A bare local load with no fetch does not fire.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Load models / artifacts through a non-executing format: prefer ``safetensors``, or pass ``weights_only=True`` to ``torch.load`` (default in PyTorch 2.6+). Never ``pickle.load`` / ``joblib.load`` / ``numpy.load(allow_pickle=True)`` a file fetched at build time, and pin + checksum any model you must deserialize.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--medium" markdown>
+
+## ADO-037: AI model pulled without a pinned revision { #ado-037 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--medium">MEDIUM</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--esf">ESF-S-PIN-DEPS</span> <span class="pg-tag pg-tag--esf">ESF-S-VERIFY-DEPS</span> <span class="pg-tag pg-tag--cwe">CWE-494</span> <span class="pg-tag pg-tag--cwe">CWE-829</span>
+</div>
+
+Fires on a step ``script`` / ``bash`` / ``pwsh`` / ``powershell`` body (or a task-based step's ``inputs.script``) that fetches a model by a mutable registry reference and supplies no revision pin. Detected fetch forms: ``from_pretrained("org/model")``, ``hf_hub_download`` / ``snapshot_download`` with a ``org/model`` repo id, and ``huggingface-cli download org/model`` / ``hf download org/model``.
+
+Does NOT fire when a revision is pinned in the same command (``revision='<sha>'`` / ``--revision <sha>``), when the reference is a local path (``./model``, ``/models/x``) or a variable interpolation (the value can't be judged statically), or on a bare single-segment canonical hub name (``bert-base-uncased``) that has no ``org/`` namespace, since those are first-party and the org-scoped third-party models are the higher-risk surface.
+
+**Known false-positive modes**
+
+- A team that re-pulls its own org's model on every run may treat the latest revision as intentional. The right fix is still to pin the revision (it makes an upstream compromise visible); if a rolling pull is genuinely wanted, suppress on the specific step with a rationale naming the model and who controls it.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Pin the model to an immutable revision. Pass an exact commit ``revision=`` to ``from_pretrained`` / ``hf_hub_download`` / ``snapshot_download`` (a 40-char commit SHA, not a branch or a tag, both of which the owner can move), or ``--revision <sha>`` to ``huggingface-cli download``. A pinned revision is what makes a swapped-weights or swapped-loader-code attack show up as a diff in your repo instead of silently landing on the next build. Pair with ``trust_remote_code=False`` (ADO-034) and prefer safetensors weights over pickle.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## ADO-038: Agentic CLI output lands without human review { #ado-038 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-1</span> <span class="pg-tag pg-tag--esf">ESF-C-APPROVAL</span> <span class="pg-tag pg-tag--cwe">CWE-94</span> <span class="pg-tag pg-tag--cwe">CWE-693</span>
+</div>
+
+Fires when one job both invokes an agentic CLI (``claude`` / ``gemini`` / ``cursor-agent`` / ``aider`` / ``openhands`` / ``goose`` / ``q chat``) in a step body (``script`` / ``bash`` / ``pwsh`` / ``powershell`` or a task-based step's ``inputs.script``) and, in the same job, lands the result with no review gate. The landing command is one of: an ``az repos pr create`` / ``update`` carrying ``--auto-complete`` (Azure Repos merges the PR once policies pass), or a plain ``git push`` (committing straight to a branch). Coupling is per job because the steps of one Azure job share a checkout.
+
+Does NOT fire when the agent only opens a pull request for review (``az repos pr create`` with no ``--auto-complete``), nor on a push / auto-complete job that does not run an agent (ordinary formatting / generated-file bots). The agent-plus-auto-land coupling is the signal. A ``git push --dry-run`` is ignored.
+
+**Known false-positive modes**
+
+- A job that runs an agent for a read-only task (triage, labeling) but also pushes an unrelated generated file would match by co-location. Split the agent and the push into separate jobs, or suppress on the job with a rationale noting the agent does not write the pushed paths.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Don't let an agentic CLI's output reach a branch or a merge without a human review gate. Have the agent open a normal pull request (``az repos pr create`` with no ``--auto-complete``) so a person reviews the diff before it lands; drop ``--auto-complete`` from the agent's job, and don't pair the agent with a ``git push`` straight to a branch. If the agent's prompt can be influenced by untrusted input (a PR commit message, a fetched page), treat the committed result as attacker-controlled.
 
 </div>
 

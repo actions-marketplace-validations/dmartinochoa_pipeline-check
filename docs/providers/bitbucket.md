@@ -15,7 +15,7 @@ pipeline_check --pipeline bitbucket --bitbucket-path ci/
 
 ## What it covers
 
-31 checks · 11 have an autofix patch (``--fix``).
+39 checks · 11 have an autofix patch (``--fix``).
 
 | Check | Title | Severity | Fix |
 |-------|-------|----------|-----|
@@ -50,6 +50,14 @@ pipeline_check --pipeline bitbucket --bitbucket-path ci/
 | [BB-029](#bb-029) | image: (step or service) not pinned by sha256 digest | <span class="pg-sev pg-sev--high">HIGH</span> |  |
 | [BB-030](#bb-030) | npm install without registry-signature verification step | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
 | [BB-031](#bb-031) | pip install without `--require-hashes` verification | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
+| [BB-032](#bb-032) | Secret-named variable echoed / printed in a script block | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [BB-033](#bb-033) | IaC apply on a pull-request pipeline | <span class="pg-sev pg-sev--critical">CRITICAL</span> |  |
+| [BB-034](#bb-034) | Production deployment on a pull-request pipeline | <span class="pg-sev pg-sev--critical">CRITICAL</span> |  |
+| [BB-035](#bb-035) | ML model loaded with trust_remote_code (code execution) | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [BB-036](#bb-036) | Untrusted PR/branch context reaches an agentic AI CLI (prompt injection) | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [BB-037](#bb-037) | Unsafe deserialization of a fetched artifact (pickle RCE) | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [BB-038](#bb-038) | AI model pulled without a pinned revision | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
+| [BB-039](#bb-039) | Agentic CLI output lands without human review | <span class="pg-sev pg-sev--high">HIGH</span> |  |
 
 ---
 
@@ -81,7 +89,7 @@ Pin every `pipe:` to a full semver tag (e.g. `atlassian/aws-s3-deploy:1.4.0`) or
 <span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-4</span> <span class="pg-tag pg-tag--esf">ESF-D-INJECTION</span> <span class="pg-tag pg-tag--cwe">CWE-78</span>
 </div>
 
-$BITBUCKET_BRANCH, $BITBUCKET_TAG, and $BITBUCKET_PR_* are populated from SCM event metadata the attacker controls. Interpolating them unquoted into a shell command lets a crafted branch or tag name can execute inline.
+$BITBUCKET_BRANCH, $BITBUCKET_TAG, and $BITBUCKET_PR_* are populated from SCM event metadata the attacker controls. Interpolating them unquoted into a shell command lets a crafted branch or tag name can execute inline. The same applies to trigger-time ``variables:`` declared by a ``custom:`` pipeline: anyone with run / trigger rights supplies the value (UI or API), so an unquoted reference in a later ``script:`` step is injection (the Bitbucket analogue of a workflow_dispatch input).
 
 **Known false-positive modes**
 
@@ -145,7 +153,7 @@ Add `deployment: production` (or `staging` / `test`) to the step. Configure the 
 <span class="pg-sev pg-sev--medium">MEDIUM</span> <span class="pg-fix pg-fix--rule" title="`--fix` will patch this rule">🔧 autofix</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-7</span> <span class="pg-tag pg-tag--esf">ESF-D-BUILD-TIMEOUT</span> <span class="pg-tag pg-tag--cwe">CWE-400</span>
 </div>
 
-Without `max-time`, the step runs until Bitbucket's 120-minute global default kills it. Explicit per-step timeouts cap blast radius and cost.
+Without `max-time`, the step runs until Bitbucket's 120-minute global default kills it. Explicit per-step timeouts cap blast radius and cost. A global `options.max-time` sets the default for all steps and satisfies this control when no per-step override is present.
 
 <div class="pg-rule__rec" markdown>
 
@@ -209,7 +217,7 @@ Complements BB-003 (variable-name scan). BB-008 checks every string in the pipel
 
 **Known false-positive modes**
 
-- Test fixtures and documentation blobs sometimes embed credential-shaped strings (JWT samples, AKIAI... examples). The AWS canonical example ``AKIAIOSFODNN7EXAMPLE`` is deliberately NOT suppressed, if it appears in a real pipeline it almost always means a copy-paste from docs was never substituted. Defaults to LOW confidence.
+- Test fixtures and documentation blobs sometimes embed credential-shaped strings (JWT samples, vendor example keys). Well-known vendor example tokens (``AKIAIOSFODNN7EXAMPLE``, Stripe ``sk_test_`` docs keys) are suppressed via the ``VENDOR_EXAMPLE_TOKENS`` allowlist. Defaults to LOW confidence.
 
 <div class="pg-rule__rec" markdown>
 
@@ -353,7 +361,7 @@ Use HTTPS registry URLs. Remove --trusted-host and --no-verify flags. Pin to a p
 <span class="pg-sev pg-sev--medium">MEDIUM</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--esf">ESF-S-VULN-MGMT</span> <span class="pg-tag pg-tag--cwe">CWE-1104</span>
 </div>
 
-Without a vulnerability scanning step, known-vulnerable dependencies ship to production undetected. The check recognizes trivy, grype, snyk, npm audit, yarn audit, safety check, pip-audit, osv-scanner, and govulncheck.
+Without a vulnerability scanning step, known-vulnerable dependencies ship to production undetected. The check recognizes common scanners including trivy, grype, snyk, pip-audit, osv-scanner, govulncheck, semgrep, checkov, and others.
 
 <div class="pg-rule__rec" markdown>
 
@@ -373,13 +381,13 @@ Add a vulnerability scanning step, trivy, grype, snyk test, npm audit, pip-audit
 <span class="pg-sev pg-sev--medium">MEDIUM</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-7</span> <span class="pg-tag pg-tag--esf">ESF-D-BUILD-ENV</span> <span class="pg-tag pg-tag--esf">ESF-D-PRIV-BUILD</span> <span class="pg-tag pg-tag--cwe">CWE-269</span>
 </div>
 
-Self-hosted runners that persist between jobs leak filesystem and process state. A PR-triggered step writes to a well-known path; a subsequent deploy step on the same runner reads it. Detects `runs-on: self.hosted` without an `ephemeral` marker or Docker image override.
+Self-hosted runners that persist between jobs leak filesystem and process state. A PR-triggered step writes to a well-known path; a subsequent deploy step on the same runner reads it. Detects `runs-on: self.hosted` without an `ephemeral` marker.
 
 <div class="pg-rule__rec" markdown>
 
 **Recommended action**
 
-Use Docker-based self-hosted runners or configure runners to tear down between jobs. Add 'ephemeral' to `runs-on` labels or use Bitbucket's runner images that are rebuilt per-job.
+Configure runners to tear down between jobs. Add 'ephemeral' to `runs-on` labels or use Bitbucket's runner images that are rebuilt per-job.
 
 </div>
 
@@ -413,7 +421,7 @@ Never write BITBUCKET_TOKEN or REPOSITORY_OAUTH_ACCESS_TOKEN to files or artifac
 <span class="pg-sev pg-sev--medium">MEDIUM</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-4</span> <span class="pg-tag pg-tag--esf">ESF-D-INJECTION</span> <span class="pg-tag pg-tag--esf">ESF-S-VERIFY-DEPS</span> <span class="pg-tag pg-tag--cwe">CWE-345</span>
 </div>
 
-Bitbucket caches are restored by key. When the key includes a value the attacker controls (branch name, tag, PR ID), a pull-request pipeline can plant a poisoned cache entry that a subsequent default-branch build restores.
+Bitbucket caches are restored by key. When the key includes a value the PR author controls (the source branch name, tag, or bookmark), a pull-request pipeline can plant a poisoned cache entry that a subsequent default-branch build restores. The PR *destination* branch and the Bitbucket-assigned PR ID aren't author-controlled, so they don't taint the key.
 
 <div class="pg-rule__rec" markdown>
 
@@ -457,7 +465,7 @@ Move secret-dependent operations into the main `script:` block. `after-script` r
 <span class="pg-sev pg-sev--low">LOW</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-7</span> <span class="pg-tag pg-tag--esf">ESF-D-BUILD-ENV</span> <span class="pg-tag pg-tag--cwe">CWE-250</span>
 </div>
 
-By default Bitbucket Pipelines clone with `depth: 50`. Setting `depth: full` exposes the entire commit history, including any secrets that were committed and later removed. This check flags explicit `clone: depth: full` settings.
+By default Bitbucket Pipelines clone with `depth: 50`. Setting `depth: full` exposes the entire commit history, including any secrets that were committed and later removed. This check flags explicit `clone: depth: full` settings at the top level or inside individual steps.
 
 <div class="pg-rule__rec" markdown>
 
@@ -522,6 +530,8 @@ Remove dependency-update commands from CI. Use lockfile-pinned install commands 
 </div>
 
 Detects patterns that disable TLS certificate verification: `git config http.sslVerify false`, `NODE_TLS_REJECT_UNAUTHORIZED=0`, `npm config set strict-ssl false`, `curl -k`, `wget --no-check-certificate`, `PYTHONHTTPSVERIFY=0`, and `GOINSECURE=`. Disabling TLS verification allows MITM injection of malicious packages, repositories, or build tools.
+
+Also flags Bitbucket's structural clone bypass, a step-level `clone: { skip-ssl-verify: true }`, which turns off certificate verification on the repository clone itself so a MITM can inject source into the build before any script runs.
 
 <div class="pg-rule__rec" markdown>
 
@@ -722,6 +732,186 @@ Fires once per ``bitbucket-pipelines.yml`` when some step's ``script:`` runs a r
 **Recommended action**
 
 Pin every dependency with a SHA-256 hash and install with ``pip install -r requirements.txt --require-hashes``, or migrate to a manager that hash-pins by default: ``uv sync``, ``poetry install``, ``pipenv install --deploy``. Hash-pinned install is the PyPI equivalent of npm's lockfile-integrity guarantee.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## BB-032: Secret-named variable echoed / printed in a script block { #bb-032 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-6</span> <span class="pg-tag pg-tag--esf">ESF-D-SECRETS</span> <span class="pg-tag pg-tag--cwe">CWE-532</span> <span class="pg-tag pg-tag--cwe">CWE-200</span>
+</div>
+
+Scans every ``script:`` line across all pipeline steps. Variable names matching common secret patterns (PASSWORD, TOKEN, API_KEY, SECRET, CREDENTIAL) trigger the rule when they appear as arguments to ``echo``, ``printf``, ``cat``, or ``tee``. Also fires on ``printenv`` / ``env`` (full environment dump) and ``set -x`` with secret-named variables in scope.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Don't print secret values in pipeline scripts. Bitbucket's log masking covers secured variables, but only when the full value appears as a contiguous string. Base64-encoded, URL-encoded, or partial substrings bypass the mask. Log a boolean instead (``[ -n "$X" ] && echo set || echo unset``). Avoid ``set -x`` when secret-bound variables are in scope.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--critical" markdown>
+
+## BB-033: IaC apply on a pull-request pipeline { #bb-033 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--critical">CRITICAL</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-4</span> <span class="pg-tag pg-tag--esf">ESF-D-INJECTION</span> <span class="pg-tag pg-tag--cwe">CWE-94</span> <span class="pg-tag pg-tag--cwe">CWE-78</span>
+</div>
+
+Fires when a step in the `pull-requests:` section runs an IaC apply command (`terraform apply`, `cloudformation deploy`, `cdk deploy`, `pulumi up`, `sam deploy`, `terragrunt apply`) in its `script:` or `after-script:`. Steps under `branches:`, `default:`, `custom:`, and `tags:` are out of scope, only the pull-request-triggered section runs untrusted branch content. This is the Bitbucket analog of GL-041 / GHA-117.
+
+**Known false-positive modes**
+
+- A pipeline that runs `apply` only against a short-lived, fully-sandboxed review environment with no production-adjacent credentials. Even then the apply executes unreviewed IaC on the runner; prefer `plan` on PRs. Suppress with a rationale naming the sandbox scope.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Never run `terraform apply` (or `cloudformation deploy` / `cdk deploy` / `pulumi up` / `sam deploy`) in a step under the `pull-requests:` section. That pipeline runs the PR branch's IaC, so an `external` data source, a `local-exec` provisioner, or a hijacked provider executes arbitrary code on the runner with whatever cloud credentials (often an OIDC identity) the apply uses, before the change is reviewed or merged. On pull requests run a read-only `plan`; move the `apply` into the `branches:` section for your default branch (or a `custom:` manual pipeline) gated by a `deployment:` environment so it runs against merged, reviewed code.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--critical" markdown>
+
+## BB-034: Production deployment on a pull-request pipeline { #bb-034 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--critical">CRITICAL</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-1</span> <span class="pg-tag pg-tag--esf">ESF-C-APPROVAL</span> <span class="pg-tag pg-tag--esf">ESF-C-ENV-SEP</span> <span class="pg-tag pg-tag--cwe">CWE-284</span>
+</div>
+
+Fires when a step under the `pull-requests:` section declares a production-tier `deployment:` environment (a name matching `production` / `prod`). The PR branch's code reaches production before it is reviewed or merged, and the production deployment's scoped variables are exposed to PR-controlled pipeline steps. Steps under `branches:` / `default:` / `custom:` / `tags:` are out of scope, and per-PR preview, `test`, or `staging` environments don't fire, only a production-tier name on the pull-request-triggered section.
+
+**Known false-positive modes**
+
+- A repo that intentionally publishes a per-PR preview deployment to an environment it happens to have named `production`. Rename it to a preview / review tier, or suppress with a rationale. A production environment configured under a custom name (not `production` / `prod`) can't be recognized from the YAML alone and won't fire.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Don't bind a `pull-requests:` step to a production `deployment:` environment. A pull-request pipeline runs the PR branch's code, so this ships unreviewed (and on fork PRs, untrusted) changes straight to production with the production environment's scoped credentials, before any reviewer or merge gate. On pull requests deploy only to an ephemeral preview or `test` environment; move the production `deployment:` into the `branches:` section for your default branch (or a manual `custom:` pipeline) so it runs against merged, reviewed code with the environment's required reviewers enforced.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## BB-035: ML model loaded with trust_remote_code (code execution) { #bb-035 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-4</span> <span class="pg-tag pg-tag--esf">ESF-D-INJECTION</span> <span class="pg-tag pg-tag--cwe">CWE-494</span> <span class="pg-tag pg-tag--cwe">CWE-829</span>
+</div>
+
+Fires on ``trust_remote_code=True`` / ``--trust-remote-code`` in a step's ``script``. The transformers / huggingface_hub loader executes the model repo's own Python at load time, so an untrusted or unpinned model is arbitrary code execution in the pipeline with the step's credentials in scope.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Load models with ``trust_remote_code=False`` (the library default). If a model genuinely needs custom code, vet it and pin an exact revision (a commit SHA, not a tag or branch), run the load in a step scoped to no production deployment credentials, and prefer safetensors weights over pickle.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## BB-036: Untrusted PR/branch context reaches an agentic AI CLI (prompt injection) { #bb-036 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-4</span> <span class="pg-tag pg-tag--esf">ESF-D-INJECTION</span> <span class="pg-tag pg-tag--cwe">CWE-94</span> <span class="pg-tag pg-tag--cwe">CWE-77</span>
+</div>
+
+The AI analog of BB-002 (script injection). Fires when a ``script:`` line invokes an agentic CLI (claude / gemini / cursor-agent / aider / openhands / goose / ``q chat``) AND attacker-controllable Bitbucket context reaches it, either a predefined untrusted variable (`$BITBUCKET_BRANCH` / `$BITBUCKET_TAG` / `$BITBUCKET_PR_*`) interpolated directly, or a local shell variable assigned from one earlier in the step. Unlike a shell, an LLM ingests a quoted value as prompt text, so the BB-002 mitigation (quote the value) does not apply, which is why this is separate.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Do not place attacker-controllable context (a PR's branch / tag name or `$BITBUCKET_PR_*` metadata) in an agentic CLI's prompt. Quoting does NOT sanitize a prompt the way it does a shell command, the model still reads the value. If the agent must see PR content, run it on a step with no deployment / repository secrets in scope and no tool / shell access, and treat its output as untrusted.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## BB-037: Unsafe deserialization of a fetched artifact (pickle RCE) { #bb-037 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-4</span> <span class="pg-tag pg-tag--esf">ESF-D-INJECTION</span> <span class="pg-tag pg-tag--cwe">CWE-502</span> <span class="pg-tag pg-tag--cwe">CWE-494</span> <span class="pg-tag pg-tag--cwe">CWE-829</span>
+</div>
+
+Fires per ``script:`` step in two shapes (shared with GHA-122 / GL-047 via ``_primitives/unsafe_deser``): an explicit unsafe opt-in (``weights_only=False`` / ``allow_pickle=True``) always; or a remote fetch (curl / wget / ``hf_hub_download`` / ``snapshot_download`` / ``huggingface-cli download`` / ``requests``) alongside a pickle-backed loader (``torch.load`` / ``pickle.load(s)`` / ``joblib.load``) with no safe path (``weights_only=True`` or safetensors) in the same step. A bare local load with no fetch does not fire.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Load models / artifacts through a non-executing format: prefer ``safetensors``, or pass ``weights_only=True`` to ``torch.load`` (default in PyTorch 2.6+). Never ``pickle.load`` / ``joblib.load`` / ``numpy.load(allow_pickle=True)`` a file fetched at build time, and pin + checksum any model you must deserialize.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--medium" markdown>
+
+## BB-038: AI model pulled without a pinned revision { #bb-038 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--medium">MEDIUM</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--esf">ESF-S-PIN-DEPS</span> <span class="pg-tag pg-tag--esf">ESF-S-VERIFY-DEPS</span> <span class="pg-tag pg-tag--cwe">CWE-494</span> <span class="pg-tag pg-tag--cwe">CWE-829</span>
+</div>
+
+Fires on a step ``script`` that fetches a model by a mutable registry reference and supplies no revision pin. Detected fetch forms: ``from_pretrained("org/model")``, ``hf_hub_download`` / ``snapshot_download`` with a ``org/model`` repo id, and ``huggingface-cli download org/model`` / ``hf download org/model``.
+
+Does NOT fire when a revision is pinned in the same command (``revision='<sha>'`` / ``--revision <sha>``), when the reference is a local path (``./model``, ``/models/x``) or a variable interpolation (the value can't be judged statically), or on a bare single-segment canonical hub name (``bert-base-uncased``) that has no ``org/`` namespace, since those are first-party and the org-scoped third-party models are the higher-risk surface.
+
+**Known false-positive modes**
+
+- A team that re-pulls its own workspace's model on every pipeline may treat the latest revision as intentional. The right fix is still to pin the revision (it makes an upstream compromise visible); if a rolling pull is genuinely wanted, suppress on the specific step with a rationale naming the model and who controls it.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Pin the model to an immutable revision. Pass an exact commit ``revision=`` to ``from_pretrained`` / ``hf_hub_download`` / ``snapshot_download`` (a 40-char commit SHA, not a branch or a tag, both of which the owner can move), or ``--revision <sha>`` to ``huggingface-cli download``. A pinned revision is what makes a swapped-weights or swapped-loader-code attack show up as a diff in your repo instead of silently landing on the next build. Pair with ``trust_remote_code=False`` (BB-035) and prefer safetensors weights over pickle.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## BB-039: Agentic CLI output lands without human review { #bb-039 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-1</span> <span class="pg-tag pg-tag--esf">ESF-C-APPROVAL</span> <span class="pg-tag pg-tag--cwe">CWE-94</span> <span class="pg-tag pg-tag--cwe">CWE-693</span>
+</div>
+
+Fires when one ``script:`` step both invokes an agentic CLI (``claude`` / ``gemini`` / ``cursor-agent`` / ``aider`` / ``openhands`` / ``goose`` / ``q chat``) and, in the same step, lands the result with a ``git push`` (the Bitbucket idiom for committing straight to a branch, since there are no ``uses:`` actions). Coupling is per step because each Bitbucket step runs in its own container with a fresh clone.
+
+Does NOT fire when the agent only opens a pull request for review, nor on a push step that does not run an agent (ordinary formatting / generated-file bots). The agent-plus-push coupling is the signal. A ``git push --dry-run`` is ignored.
+
+**Known false-positive modes**
+
+- A step that runs an agent for a read-only task (triage, labeling) but also pushes an unrelated generated file would match by co-location. Split the agent and the push into separate steps, or suppress on the step with a rationale noting the agent does not write the pushed paths.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Don't let an agentic CLI's output reach a branch without a human review gate. Have the agent open a normal pull request (no auto-merge) so a person reviews the diff before it lands, and don't pair the agent with a ``git push`` straight to a branch in the same step. If the agent's prompt can be influenced by untrusted input (a PR title / description, a fetched page), treat the committed result as attacker-controlled.
 
 </div>
 

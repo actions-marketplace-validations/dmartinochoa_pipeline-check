@@ -190,7 +190,7 @@ def test_iam008_oidc_pinned_passes():
         "Action": "sts:AssumeRoleWithWebIdentity",
         "Condition": {
             "StringEquals": {"token.actions.githubusercontent.com:aud": "sts.amazonaws.com"},
-            "StringLike": {"token.actions.githubusercontent.com:sub": "repo:corp/*"},
+            "StringLike": {"token.actions.githubusercontent.com:sub": "repo:corp/app:ref:refs/heads/main"},
         },
     }]}
     ctx = make_context({
@@ -198,6 +198,24 @@ def test_iam008_oidc_pinned_passes():
     })
     f = next(x for x in ExtendedChecks(ctx).run() if x.check_id == "IAM-008")
     assert f.passed is True
+
+
+def test_iam008_broad_subject_fails():
+    # repo + ref both pinned is required; a bare org wildcard is not.
+    trust = {"Statement": [{
+        "Effect": "Allow",
+        "Principal": {"Federated": _GH_OIDC},
+        "Action": "sts:AssumeRoleWithWebIdentity",
+        "Condition": {
+            "StringEquals": {"token.actions.githubusercontent.com:aud": "sts.amazonaws.com"},
+            "StringLike": {"token.actions.githubusercontent.com:sub": "repo:corp/*"},
+        },
+    }]}
+    ctx = make_context({
+        "R": r("R", "AWS::IAM::Role", {"AssumeRolePolicyDocument": trust}),
+    })
+    f = next(x for x in ExtendedChecks(ctx).run() if x.check_id == "IAM-008")
+    assert f.passed is False
 
 
 def test_iam008_non_oidc_skipped():
@@ -363,12 +381,16 @@ def test_kms001_rotation_off_fails():
 
 
 def test_kms002_wildcard_fails():
+    # kms:* granted to a non-root principal is the over-broad case.
+    # (Granting kms:* to the account root is the AWS-recommended
+    # baseline and is intentionally not flagged; see TestKMS002 in
+    # test_audit_regressions.py.)
     ctx = make_context({
         "K": r("K", "AWS::KMS::Key", {
             "EnableKeyRotation": True,
             "KeyPolicy": {"Statement": [{
                 "Effect": "Allow",
-                "Principal": {"AWS": "arn:aws:iam::1:root"},
+                "Principal": {"AWS": "arn:aws:iam::1:role/admin"},
                 "Action": "kms:*",
             }]},
         }),

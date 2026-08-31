@@ -21,7 +21,37 @@ RULE = Rule(
     docs_note=(
         "Reads ``AWS::Events::Rule.Properties.Targets[*].Arn``. A "
         "literal ``*`` in the ARN is the offending shape — it makes "
-        "the target opaque to any reviewer tracing event flow."
+        "the target opaque to any reviewer tracing event flow. A "
+        "CloudWatch Logs target ARN, whose documented form ends in "
+        "``:log-group:/name:*`` (the mandatory log-stream selector), "
+        "is not treated as a wildcard target."
+    ),
+    exploit_example=(
+        "# Vulnerable: an EventBridge rule whose target ARN\n"
+        "# contains a wildcard. Events fire at every matching\n"
+        "# resource — every Lambda, every SNS topic.\n"
+        "Resources:\n"
+        "  Rule:\n"
+        "    Type: AWS::Events::Rule\n"
+        "    Properties:\n"
+        "      Name: on-codebuild-failure\n"
+        "      EventPattern:\n"
+        "        source: [aws.codebuild]\n"
+        "      Targets:\n"
+        "        - Id: '1'\n"
+        "          Arn: arn:aws:lambda:us-east-1:123:function:*\n"
+        "\n"
+        "# Safe: target a specific Lambda by full ARN.\n"
+        "Resources:\n"
+        "  Rule:\n"
+        "    Type: AWS::Events::Rule\n"
+        "    Properties:\n"
+        "      Name: on-codebuild-failure\n"
+        "      EventPattern:\n"
+        "        source: [aws.codebuild]\n"
+        "      Targets:\n"
+        "        - Id: '1'\n"
+        "          Arn: !GetAtt NotifyOncall.Arn"
     ),
 )
 

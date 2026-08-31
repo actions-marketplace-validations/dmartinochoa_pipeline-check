@@ -1,9 +1,9 @@
 """K8S-025. System priority class used outside kube-system."""
 from __future__ import annotations
 
-from ...base import Finding, Severity
+from ...base import Finding, Location, Severity
 from ...rule import Rule
-from ..base import KubernetesContext, iter_workload_pod_specs
+from ..base import KubernetesContext, iter_workload_pod_specs, manifest_location
 
 RULE = Rule(
     id="K8S-025",
@@ -28,6 +28,43 @@ RULE = Rule(
         "the cluster. Outside kube-system this is almost always a "
         "misconfiguration copy-pasted from a control-plane manifest."
     ),
+    exploit_example=(
+        "# Vulnerable: a non-system workload uses\n"
+        "# ``priorityClassName: system-cluster-critical`` or\n"
+        "# ``system-node-critical``. Those classes are reserved\n"
+        "# for kube-system control-plane components; using them\n"
+        "# on app workloads lets the app preempt critical\n"
+        "# system Pods under resource pressure and degrade\n"
+        "# the cluster control plane.\n"
+        "apiVersion: apps/v1\n"
+        "kind: Deployment\n"
+        "metadata: { name: app, namespace: prod }\n"
+        "spec:\n"
+        "  template:\n"
+        "    spec:\n"
+        "      priorityClassName: system-cluster-critical\n"
+        "      containers:\n"
+        "        - name: app\n"
+        "          image: app@sha256:abc123...\n"
+        "\n"
+        "# Safe: use a custom PriorityClass for app workloads\n"
+        "# that need elevated priority. The class can preempt\n"
+        "# best-effort workloads but never system Pods.\n"
+        "apiVersion: scheduling.k8s.io/v1\n"
+        "kind: PriorityClass\n"
+        "metadata: { name: app-high }\n"
+        "value: 100000\n"
+        "globalDefault: false\n"
+        "description: \"High-priority app workloads\"\n"
+        "---\n"
+        "apiVersion: apps/v1\n"
+        "kind: Deployment\n"
+        "metadata: { name: app, namespace: prod }\n"
+        "spec:\n"
+        "  template:\n"
+        "    spec:\n"
+        "      priorityClassName: app-high"
+    ),
 )
 
 
@@ -36,6 +73,7 @@ _SYSTEM_PCS = frozenset({"system-cluster-critical", "system-node-critical"})
 
 def check(ctx: KubernetesContext) -> Finding:
     offenders: list[str] = []
+    locations: list[Location] = []
     for m, ps in iter_workload_pod_specs(ctx):
         if m.namespace == "kube-system":
             continue
@@ -43,6 +81,7 @@ def check(ctx: KubernetesContext) -> Finding:
         if isinstance(pc, str) and pc in _SYSTEM_PCS:
             ns = m.namespace or "(no-namespace)"
             offenders.append(f"{m.kind}/{m.name} in {ns}: {pc}")
+            locations.append(manifest_location(m, ps))
     passed = not offenders
     desc = (
         "No workload outside kube-system claims a system-* priority class."
@@ -56,4 +95,5 @@ def check(ctx: KubernetesContext) -> Finding:
         resource="kubernetes/manifests",
         description=desc,
         recommendation=RULE.recommendation, passed=passed,
+        locations=locations,
     )

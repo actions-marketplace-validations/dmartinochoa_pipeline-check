@@ -6,6 +6,7 @@ subclass :class:`GitHubBaseCheck` and iterate ``self.ctx.workflows``.
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -61,6 +62,15 @@ class Workflow:
     #: ``inherited_secret_names`` being empty: an explicit empty map
     #: means no secrets crossed the boundary.
     inherits_secrets: bool = False
+    #: Raw on-disk text of the workflow file, populated by
+    #: :meth:`GitHubContext.from_path` so rules that need to read the
+    #: pre-parse layer (YAML comments, line whitespace) can do so
+    #: without re-opening the file. ``None`` for resolver-synthesized
+    #: workflows (composite-action bodies, remote callees) whose
+    #: source isn't a single on-disk file. Consumed by GHA-095
+    #: (ref-version-mismatch) for the ``uses: o/r@<sha>  # vX.Y.Z``
+    #: comment shape PyYAML strips during parsing.
+    raw_text: str | None = None
 
 
 class GitHubContext:
@@ -80,6 +90,13 @@ class GitHubContext:
         #: opt-in flag isn't set; the reputation rules pass silently
         #: in that case rather than firing on missing data.
         self.action_metadata: dict[str, ActionRepoMetadata] = {}
+        #: Action ``owner/repo`` slugs (lower-cased) whose repo-
+        #: metadata fetch ran and came back empty. Most commonly a
+        #: 404, the repojacking signal GHA-091 fires on. Populated by
+        #: the same ``--resolve-remote`` path that fills
+        #: :attr:`action_metadata`; an empty set means either the
+        #: flag is off or every referenced action's fetch succeeded.
+        self.action_fetch_failures: set[str] = set()
 
     @classmethod
     def from_path(cls, path: str | Path) -> GitHubContext:
@@ -102,14 +119,43 @@ class GitHubContext:
             data = entry.docs[0]
             if not isinstance(data, dict):
                 continue
-            workflows.append(Workflow(path=str(entry.path), data=data))
+            # Re-read the raw file text so rules that need to inspect
+            # the pre-parse layer (YAML comments, the literal line
+            # whitespace PyYAML strips on its way to a dict) have it
+            # without re-opening per-rule. The file is still in OS
+            # cache from ``load_yaml_files``; failures fall back to
+            # ``None`` and the consuming rule treats that as
+            # "raw layer unavailable" rather than raising.
+            try:
+                raw_text: str | None = entry.path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                raw_text = None
+            workflows.append(
+                Workflow(path=str(entry.path), data=data, raw_text=raw_text),
+            )
+        # Discover local composite actions referenced via
+        # ``uses: ./path`` and synthesize them as ``__composite__``
+        # job workflows so the rule pack runs against their bodies.
+        # On by default (no network needed); inference falls back to
+        # the directory's parent for ad-hoc test layouts.
+        from .local_actions import (
+            discover_local_composite_actions,
+            infer_repo_root,
+        )
+        repo_root = infer_repo_root(root)
+        if repo_root is not None:
+            synthesized, action_warnings = discover_local_composite_actions(
+                workflows, repo_root,
+            )
+            workflows.extend(synthesized)
+            warnings.extend(action_warnings)
         ctx = cls(workflows)
         ctx.files_skipped = skipped
         ctx.warnings = warnings
         return ctx
 
 
-class GitHubBaseCheck(BaseCheck):
+class GitHubBaseCheck(BaseCheck[GitHubContext]):
     """Base class for GitHub Actions workflow checks."""
 
     PROVIDER = "github"
@@ -153,21 +199,50 @@ def job_location(path: str, job: dict[str, Any]) -> Location:
     return Location(path=path, start_line=line, end_line=line)
 
 
-def effective_permissions(
-    workflow: dict[str, Any],
-    inherited: dict[str, Any] | str | None = None,
-) -> dict[str, Any] | str | None:
-    """Return the permissions block that *runtime* sees for this workflow.
+#: Shell command separators used to split a ``run:`` line into the
+#: individual commands it chains. Not a full shell parser; enough to
+#: keep ``cd repo && claude ...`` (two commands) from being read as one.
+_CMD_SEPARATOR_RE = re.compile(r"[;&|]+")
 
-    A workflow's own ``permissions:`` always wins; only when it's
-    absent does the caller's block apply (this matches GitHub's
-    runtime semantics for reusable workflows). For top-level scans
-    this is just the workflow's own ``permissions:``.
+
+def _run_command_chunks(run: str) -> Iterator[str]:
+    """Yield the executable command chunks of a shell ``run:`` body.
+
+    Skips comment lines and the arguments of ``echo`` / ``printf`` so a
+    name that only appears in a comment (``# aider ...``) or echoed
+    output (``echo "claude -p x"``) isn't read as a real invocation.
+    Lines are split on ``;`` / ``&&`` / ``||`` / ``|`` so a command
+    chained after another (``cd repo && claude ...``) still surfaces.
+    This is a heuristic, not a shell parser: it strips the common
+    false-positive shapes without modeling quoting exhaustively.
     """
-    own = workflow.get("permissions")
-    if own is not None:
-        return own  # type: ignore[no-any-return]
-    return inherited
+    for raw_line in run.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        for chunk in _CMD_SEPARATOR_RE.split(line):
+            chunk = chunk.strip()
+            if not chunk or chunk.startswith("#"):
+                continue
+            if chunk.split(None, 1)[0].lower() in ("echo", "printf"):
+                continue
+            yield chunk
+
+
+def find_run_command(
+    run: str, pattern: re.Pattern[str],
+) -> re.Match[str] | None:
+    """Search *pattern* against the real command chunks of *run*.
+
+    A drop-in replacement for ``pattern.search(run)`` that ignores
+    matches appearing only in comments or echoed output. Returns the
+    first match, or ``None``.
+    """
+    for chunk in _run_command_chunks(run):
+        m = pattern.search(chunk)
+        if m:
+            return m
+    return None
 
 
 def workflow_triggers(workflow: dict[str, Any]) -> list[str]:
@@ -195,5 +270,5 @@ def workflow_triggers(workflow: dict[str, Any]) -> list[str]:
     if isinstance(on, list):
         return [str(v) for v in on]
     if isinstance(on, dict):
-        return [str(k) for k in on.keys()]
+        return [str(k) for k in on]
     return []

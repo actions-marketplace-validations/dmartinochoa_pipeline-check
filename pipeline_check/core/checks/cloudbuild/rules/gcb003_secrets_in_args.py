@@ -57,6 +57,38 @@ RULE = Rule(
         "specific steps via ``--ignore-file`` once you've "
         "confirmed the gcloud subcommand is administrative.",
     ),
+    exploit_example=(
+        "# Vulnerable: the step shell-fetches the secret at runtime\n"
+        "# via ``gcloud secrets versions access``. The resolved\n"
+        "# plaintext lands in the step's args[], which Cloud Build\n"
+        "# logs record verbatim. Any IAM principal with\n"
+        "# ``cloudbuild.builds.get`` can read the value.\n"
+        "steps:\n"
+        "  - name: gcr.io/cloud-builders/curl@sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08\n"
+        "    entrypoint: bash\n"
+        "    args:\n"
+        "      - -c\n"
+        "      - 'TOKEN=$(gcloud secrets versions access latest "
+        "--secret=api-token); curl --header \"Authorization: Bearer "
+        "$TOKEN\" https://api.example.com/deploy'\n"
+        "\n"
+        "# Safe: keep the secret in ``secretEnv`` only, never in\n"
+        "# ``args``. The step body references the env var by name\n"
+        "# (``$$API_TOKEN`` is a Cloud Build escape that becomes\n"
+        "# ``$API_TOKEN`` at shell-runtime), so the build log\n"
+        "# records the env name rather than the value.\n"
+        "steps:\n"
+        "  - name: gcr.io/cloud-builders/curl@sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08\n"
+        "    entrypoint: bash\n"
+        "    args:\n"
+        "      - -c\n"
+        "      - curl --header \"Authorization: Bearer $$API_TOKEN\" https://api.example.com/deploy\n"
+        "    secretEnv: [API_TOKEN]\n"
+        "availableSecrets:\n"
+        "  secretManager:\n"
+        "    - versionName: projects/myproj/secrets/api-token/versions/1\n"
+        "      env: API_TOKEN"
+    ),
 )
 
 # Literal Secret Manager resource URI (also used by gcloud output).
@@ -70,12 +102,27 @@ _GCLOUD_SECRETS_RE = re.compile(
     r"gcloud\s+(?:secrets\s+(?:versions\s+)?access|beta\s+secrets\s+versions\s+access)"
 )
 
+# Read-only metadata subcommands that reference a version URI without
+# revealing the secret value (``describe``, ``list``, ``get-iam-policy``).
+_SECRET_METADATA_RE = re.compile(
+    r"secrets\s+(?:versions\s+)?(?:describe|list)\b|get-iam-policy",
+)
+
 
 def _step_uses_secret_in_args(step: dict[str, Any]) -> list[str]:
     """Return the list of offending evidence strings for one step."""
     offenders: list[str] = []
+    joined = " ".join(step_strings(step)).lower()
+    # A metadata-only op (describe/list/get-iam-policy) that references a
+    # version URI doesn't reveal the value, so a bare URI in such a step
+    # isn't inline value exposure.
+    metadata_only = (
+        bool(_SECRET_METADATA_RE.search(joined)) and "access" not in joined
+    )
     for blob in step_strings(step):
         if _SECRET_URI_RE.search(blob):
+            if metadata_only:
+                continue
             offenders.append(f"secret URI: {blob[:80]}")
             continue
         if _GCLOUD_SECRETS_RE.search(blob):

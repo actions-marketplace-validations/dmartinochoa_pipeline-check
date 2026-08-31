@@ -560,6 +560,45 @@ analogue in other providers:
   controlled shell-injection path.
 """,
     ),
+    "devenv": (
+        "Developer environment",
+        "pipeline_check.core.checks.devenv.rules",
+        _REPO_ROOT / "docs" / "providers" / "devenv.md",
+        """\
+# Developer-environment provider
+
+Scans the config files that run code the moment a developer opens or
+checks out the repository, a surface distinct from the CI pipeline
+definitions the rest of the scanner covers:
+
+- `.vscode/tasks.json` tasks set to `runOptions.runOn: folderOpen`
+- `.devcontainer/devcontainer.json` lifecycle commands
+  (`postCreateCommand` and friends) and the host-side
+  `initializeCommand`
+- `.claude/settings.json` Claude Code hooks of `type: command`
+
+Text-only JSON(C) parsing (comments and trailing commas are
+tolerated), no tokens, no network. The threat is the second stage of
+campaigns like the 2026 Red Hat npm compromise: a poisoned repo that
+runs a loader on folder-open / devcontainer-create / agent-session-
+start, before any build or test. `DEV-004` reserves CRITICAL for the
+remote-fetch-and-execute shape.
+
+## Producer workflow
+
+```bash
+# Auto-detected when .vscode/ , .devcontainer/ , or .claude/ config
+# files are present at cwd; defaults to scanning the current directory.
+pipeline_check --pipeline devenv
+
+# …or point it at a repo root or a single config file.
+pipeline_check --pipeline devenv --devenv-path ./checkout
+```
+
+All other flags (`--output`, `--severity-threshold`, `--checks`,
+`--standard`, …) behave the same as with the other providers.
+""",
+    ),
     "kubernetes": (
         "Kubernetes",
         "pipeline_check.core.checks.kubernetes.rules",
@@ -736,6 +775,55 @@ All other flags (`--output`, `--severity-threshold`, `--checks`,
   `default`.
 """,
     ),
+    "argocd": (
+        "Argo CD",
+        "pipeline_check.core.checks.argocd.rules",
+        _REPO_ROOT / "docs" / "providers" / "argocd.md",
+        """\
+# Argo CD provider
+
+Parses Argo CD documents from `.yaml` / `.yml` files on disk, text-
+only static analysis, no `argocd` binary, no cluster access.
+Recognized kinds: `Application`, `ApplicationSet`, `AppProject`
+(all under `apiVersion: argoproj.io/v1alpha1`), plus the core `v1
+ConfigMap` documents named `argocd-cm` or `argocd-rbac-cm` where
+Argo CD's instance-wide config lives. Other documents (including
+Argo Workflows CRDs, which belong to the `argo` provider) are
+silently skipped.
+
+## Producer workflow
+
+```bash
+pipeline_check --pipeline argocd --argocd-path applications/
+
+# A single Application file works too.
+pipeline_check --pipeline argocd --argocd-path applications/payments.yaml
+
+# Argo CD + Argo Workflows together; each provider's kind filter
+# is disjoint so pointing both at the same dir produces disjoint
+# findings, not duplicates.
+pipeline_check --pipelines argo,argocd --argo-path ci/ --argocd-path ci/
+```
+
+All other flags (`--output`, `--severity-threshold`, `--checks`,
+`--standard`, …) behave the same as with the other providers.
+
+### Argo CD-specific checks
+
+- **ARGOCD-004** walks `data.policy.csv` (and any `data.policy.<role>.csv`)
+  on the `argocd-rbac-cm` ConfigMap line by line, ignoring comments
+  and explicit denies. The unintuitive bit: `argocd-rbac-cm` is a
+  plain `kind: ConfigMap`, not an `argoproj.io` CRD, so this rule
+  fires off Kubernetes ConfigMap docs that have to be passed in
+  alongside the Application manifests.
+- **ARGOCD-007** flags Helm `valueFiles` / `parameters` that
+  interpolate generator placeholders (`{{branch}}`, `{{repo}}`)
+  without the ApplicationSet setting `spec.goTemplate: true`. Argo
+  CD's default fasttemplate substitution is a literal string-splice
+  and a generator-controlled value containing YAML structural
+  characters lands verbatim in the rendered values.
+""",
+    ),
     "drone": (
         "Drone CI",
         "pipeline_check.core.checks.drone.rules",
@@ -790,6 +878,50 @@ All other flags (`--output`, `--severity-threshold`, `--checks`,
   var, including any secret references. The rule fires
   specifically on plugin steps using a floating image tag, so
   a maintainer can ratchet plugin pinning up first.
+""",
+    ),
+    "harness": (
+        "Harness CI/CD",
+        "pipeline_check.core.checks.harness.rules",
+        _REPO_ROOT / "docs" / "providers" / "harness.md",
+        """\
+# Harness CI/CD provider
+
+Parses Harness pipeline YAML (the Git Experience / pipeline-as-code
+form) on disk. Harness has no canonical filename, so the loader globs
+``*.yml`` / ``*.yaml`` and keeps the documents whose top-level key is
+``pipeline:`` (its discriminator); a ``template:`` document or
+unrelated YAML in the same directory is skipped. A pipeline nests
+steps several levels deep (``stages`` -> ``stage.spec.execution.steps``
+-> ``step`` / ``parallel`` / ``stepGroup``); the rule pack flattens
+all of that and scans every leaf step across CI and CD stages.
+
+## Producer workflow
+
+```bash
+# --harness-path is auto-detected when a .harness/ directory exists at cwd.
+pipeline_check --pipeline harness
+
+# ...or pass it explicitly (a file or a directory of pipelines).
+pipeline_check --pipeline harness --harness-path .harness/
+
+pipeline_check --pipeline harness --harness-path pipelines/build.yaml
+```
+
+All other flags (`--output`, `--severity-threshold`, `--checks`,
+`--standard`, ...) behave the same as with the other providers.
+
+### Harness-specific checks
+
+- **HARNESS-002**, Harness substitutes a ``<+...>`` expression's text
+  into a step ``command`` *before* the shell runs it, so an
+  attacker-controllable expression (``<+codebase.prTitle>``,
+  ``<+codebase.commitMessage>``, a branch / tag name, or any
+  ``<+trigger.*>`` / ``<+eventPayload.*>`` value) is a command-injection
+  primitive. ``<+codebase.commitSha>`` / ``<+codebase.repoUrl>`` are
+  excluded (not injectable text). Bind the value to an ``envVariables``
+  entry and quote it (``"$PR_TITLE"``) to clear the finding. Same model
+  as GHA-002 / GL-002 / DR-003 in this catalog.
 """,
     ),
     "oci": (
@@ -856,99 +988,169 @@ authoring-time gaps that don't survive into the manifest.
   blob.
 """,
     ),
-    "scm": (
-        "SCM (GitHub / GitLab / Bitbucket) posture",
-        "pipeline_check.core.checks.scm.rules",
-        _REPO_ROOT / "docs" / "providers" / "scm.md",
+    "runs": (
+        "GitHub Actions run forensics",
+        "pipeline_check.core.checks.runs.rules",
+        _REPO_ROOT / "docs" / "providers" / "runs.md",
         """\
-# SCM (source control management) posture provider
+# GitHub Actions run forensics
 
-Scans repository governance via the platform's REST API: branch
-protection, required reviews, code scanning, secret scanning,
-Dependabot, signed commits, and the rest of the controls that
-live at the repo / org settings layer rather than in workflow YAML.
-Maps each rule to the OpenSSF Scorecard check it evidences and to
-the CIS Software Supply Chain Security Guide section it satisfies.
+Where the `github` provider reasons about what a workflow *could* do,
+the `runs` provider audits what *actually executed*. It pulls recent
+Actions runs via the REST API
+(`GET /repos/{owner}/{repo}/actions/runs`) and flags runs that fired on
+a privileged trigger (`pull_request_target` / `workflow_run`) and, in
+particular, any whose head came from a fork: untrusted code that ran
+with the base repository's secrets and a write-scoped `GITHUB_TOKEN`.
+That is the live shape of the tj-actions/changed-files (CVE-2025-30066)
+and GhostAction incidents, which were visible in run history before
+anyone read the workflow file.
 
-Three platforms today: **GitHub** (full 42-rule pack), **GitLab**
-and **Bitbucket Cloud** (universal subset of seven rules:
-``SCM-001``, ``SCM-002``, ``SCM-006``, ``SCM-007``, ``SCM-008``,
-``SCM-009``, ``SCM-017``). GitHub-only rules pass on the other
-platforms with a "not applicable on PLATFORM" note in the
-description so the operator sees the deliberate skip rather than
-a silent absence.
-
-Closes the gap between this scanner and Legitify / OpenSSF
-Scorecard, neither of which scan pipeline-config files. Together
-with the GitHub Actions provider, the posture coverage spans both
-the repo settings and the workflows the repo runs.
+Findings carry the run's URL, actor, and trigger so an operator can
+open the run directly. A missing token, a 404, or a network error
+degrades to a warning (every rule then sees an empty run list and
+passes) rather than crashing the scan.
 
 ## Producer workflow
 
 ```bash
-# GitHub. Token comes from --gh-token or $GITHUB_TOKEN. Without
-# admin scope on the repo, security_and_analysis features
-# (SCM-004 / SCM-005 / SCM-015 / SCM-016) cannot distinguish
-# "really disabled" from "I lacked visibility" — re-run with
-# admin scope to confirm those rules' verdicts.
+# Token comes from --gh-token or $GITHUB_TOKEN (needs ``actions:read``).
+pipeline_check --pipeline runs --scm-repo owner/name \\
+               --gh-token "$GITHUB_TOKEN"
+```
+""",
+    ),
+    "gitlab_runs": (
+        "GitLab pipeline run forensics",
+        "pipeline_check.core.checks.gitlab_runs.rules",
+        _REPO_ROOT / "docs" / "providers" / "gitlab_runs.md",
+        """\
+# GitLab pipeline run forensics
+
+Where the `gitlab` provider reasons about what a `.gitlab-ci.yml` *could*
+do, the `gitlab_runs` provider audits what *actually executed*. It pulls
+recent pipelines via the GitLab REST API
+(`GET /projects/:id/pipelines`) and flags pipelines that ran on a
+merge-request event: code a contributor proposed, and (when "Run
+pipelines for fork merge requests" is enabled) code from a fork running
+in the project's CI context. This is the GitLab analog of the `runs`
+provider's GitHub Actions forensics.
+
+Findings carry the pipeline's URL and trigger source so an operator can
+open the pipeline directly. A missing token, a 404, or a network error
+degrades to a warning (every rule then sees an empty pipeline list and
+passes) rather than crashing the scan.
+
+## Producer workflow
+
+```bash
+# Token comes from --gitlab-token or $GITLAB_TOKEN (needs ``read_api``).
+pipeline_check --pipeline gitlab_runs --scm-repo group/project \\
+               --gitlab-token "$GITLAB_TOKEN"
+```
+""",
+    ),
+    "scm_org": (
+        "SCM org governance (GitHub)",
+        "pipeline_check.core.checks.scm_org.rules",
+        _REPO_ROOT / "docs" / "providers" / "scm_org.md",
+        """\
+# SCM org governance: GitHub
+
+Where the [`scm`](scm_github.md) provider audits one repository's
+settings, the `scm_org` provider audits the organization-wide controls
+that govern every repository at once: whether two-factor authentication
+is required of all members, the default permission members get on org
+repos, and the rest of the org-admin settings layer. It pulls
+`GET /orgs/{org}` (and sibling endpoints as the rule pack grows) via the
+same GitHub REST fetcher the `scm` provider uses.
+
+The org-admin settings are only returned to a token with `admin:org` /
+`read:org` scope; without one, or on any 404 / network error, each rule
+passes with an "unavailable" note rather than firing on absence, so a
+low-scope token never produces a false finding.
+
+## Producer workflow
+
+```bash
+# Token comes from --gh-token or $GITHUB_TOKEN (needs admin:org / read:org).
+pipeline_check --pipeline scm_org --scm-org my-org --gh-token "$GITHUB_TOKEN"
+```
+""",
+    ),
+    "gitlab_group": (
+        "GitLab group governance",
+        "pipeline_check.core.checks.gitlab_group.rules",
+        _REPO_ROOT / "docs" / "providers" / "gitlab_group.md",
+        """\
+# GitLab group governance
+
+Where the [`gitlab`](gitlab.md) provider audits one project's
+`.gitlab-ci.yml`, the `gitlab_group` provider audits the group-wide
+controls that govern every project in a GitLab group at once: whether
+two-factor authentication is required of all members, whether members can
+fork the group's projects outside the group, and the rest of the
+group-owner settings layer. It pulls `GET /groups/{group}` via the same
+GitLab REST v4 fetcher the `scm` provider's GitLab path uses. The GitLab
+analog of the GitHub-only [`scm_org`](scm_org.md) provider.
+
+The group-owner settings are only returned to a token with `read_api`
+and Owner access to the group; without one, or on any 404 / network
+error, each rule passes with an "unavailable" note rather than firing on
+absence, so a low-scope token never produces a false finding.
+
+## Producer workflow
+
+```bash
+# Token comes from --gitlab-token or $GITLAB_TOKEN (needs read_api + Owner).
+pipeline_check --pipeline gitlab_group --scm-org my-group \\
+               --gitlab-token "$GITLAB_TOKEN"
+```
+""",
+    ),
+    "scm": (
+        "SCM posture (GitHub)",
+        "pipeline_check.core.checks.scm.rules",
+        _REPO_ROOT / "docs" / "providers" / "scm_github.md",
+        """\
+# SCM posture: GitHub
+
+Scans GitHub repository governance via the REST API: branch
+protection, required reviews, code scanning, secret scanning,
+Dependabot, signed commits, rulesets, environments, deploy keys,
+webhooks, outside collaborators, and the rest of the controls that
+live at the repo / org settings layer rather than in workflow YAML.
+
+GitHub runs the full SCM rule pack (49 rules). The seven universal
+rules shared with [GitLab](scm_gitlab.md) and
+[Bitbucket](scm_bitbucket.md) are: ``SCM-001``, ``SCM-002``,
+``SCM-006``, ``SCM-007``, ``SCM-008``, ``SCM-009``, ``SCM-017``.
+All other rules are GitHub-only. GitHub-only rules pass on the
+other platforms with a "not applicable on PLATFORM" note so the
+operator sees the deliberate skip rather than a silent absence.
+
+## Producer workflow
+
+```bash
+# Token comes from --gh-token or $GITHUB_TOKEN. Without admin
+# scope on the repo, security_and_analysis features (SCM-004 /
+# SCM-005 / SCM-015 / SCM-016) cannot distinguish "really
+# disabled" from "I lacked visibility" — re-run with admin scope
+# to confirm those rules' verdicts.
 pipeline_check --pipeline scm --scm-platform github \\
     --scm-repo octocat/hello-world
 
-# GitLab. Token comes from --gh-token (the flag is shared across
-# platforms) or $GITLAB_TOKEN; needs the ``read_api`` scope. Repo
-# spec is the full project path (nested subgroups allowed).
-pipeline_check --pipeline scm --scm-platform gitlab \\
-    --scm-repo group/subgroup/project
-
-# Bitbucket Cloud. Token is ``user:app_password`` or the existing
-# ``Basic <b64>`` Authorization value; falls back to
-# $BITBUCKET_TOKEN. Repo spec is ``workspace/repo_slug``.
-pipeline_check --pipeline scm --scm-platform bitbucket \\
-    --scm-repo acme/widget
-
 # Offline / CI mode: read JSON responses from disk instead of
-# hitting the network. Each endpoint maps to
-# <endpoint-with-slashes-as-underscores>.json under DIR. Works on
-# every platform.
+# hitting the network.
 pipeline_check --pipeline scm --scm-platform github \\
     --scm-repo octocat/hello-world \\
     --scm-fixture-dir ./scm-fixtures/
 ```
 
-### Per-platform rule coverage
-
-| Rule | GitHub | GitLab | Bitbucket | Notes |
-|------|--------|--------|-----------|-------|
-| SCM-001 (branch protection presence) | yes | yes | yes | Universal |
-| SCM-002 (required reviews) | yes | yes | yes | GitLab: ``approvals_before_merge``; Bitbucket: ``require_approvals_to_merge`` |
-| SCM-003 (default code scanning) | yes | skip | skip | GitHub-only |
-| SCM-004 (secret scanning) | yes | skip | skip | GitHub-only |
-| SCM-005 (Dependabot updates) | yes | skip | skip | GitHub-only |
-| SCM-006 (signed commits required) | yes | yes | yes | GitLab: ``push_rules.reject_unsigned_commits``; Bitbucket: no enforcement, always fires |
-| SCM-007 (force push allowed) | yes | yes | yes | Universal |
-| SCM-008 (required status checks) | yes | yes | yes | GitLab: pipeline-must-succeed; Bitbucket: ``require_passing_builds_to_merge`` |
-| SCM-009 (branch deletion allowed) | yes | yes | yes | GitLab protected branches block deletion implicitly; Bitbucket ``delete`` restriction |
-| SCM-010..SCM-016 | yes | skip | skip | GitHub-only protection knobs / security features |
-| SCM-017 (CODEOWNERS file present) | yes | yes | yes | GitLab also probes ``.gitlab/CODEOWNERS``; Bitbucket probes ``.bitbucket/CODEOWNERS`` |
-| SCM-018, SCM-019 | yes | skip | skip | GitHub-only protection-payload shape |
-
 All other flags (`--output`, `--severity-threshold`, `--checks`,
 `--standard`, …) behave the same as with the other providers.
 
-### Token permissions per scan
-
-Token requirements split into three tiers per platform: **none /
-public** runs the universal rule subset against public repos only
-and gets rate-limited; **read** gets the full branch-protection
-and CODEOWNERS coverage; **admin** unlocks the
-``security_and_analysis`` block, Actions / environments / deploy
-keys / webhooks / outside collaborators / rulesets endpoints. Rules
-whose endpoint comes back 401 / 403 / 404 pass silently with a
-"data unavailable" note, so a lower-privilege token degrades
-gracefully (it does not crash the scan), but the rules listed
-under ``admin`` below report no signal.
-
-#### GitHub
+## Token permissions
 
 Pass the token via ``--gh-token`` or ``$GITHUB_TOKEN``. Classic PAT
 scopes and fine-grained PAT permissions are listed side-by-side; on
@@ -961,8 +1163,9 @@ the same names on a GitHub App installation token.
 | read (public + private) | ``repo`` (or ``public_repo`` for public-only) | ``Metadata: read`` + ``Contents: read`` | adds private-repo coverage for the universal rules; raises rate limit to 5000 req/hr |
 | admin | ``repo`` + ``admin:repo_hook`` + ``read:org`` | ``Administration: read`` + ``Webhooks: read`` + ``Members: read`` + ``Environments: read`` + ``Code scanning alerts: read`` | adds SCM-003, -004, -005, -010..016, -018, -019, -020, -021, -022, -023, -024, -025, -026, -027, -028, -029..047 |
 
-Per-rule scope notes (admin-tier rules only; the universal rules
-work at read tier):
+### Per-rule scope notes
+
+Admin-tier rules only; the universal rules work at read tier.
 
   * **SCM-003 / SCM-004 / SCM-005 / SCM-015 / SCM-016** read
     ``security_and_analysis.<feature>.status`` from the repo
@@ -1011,85 +1214,9 @@ repo (or org); installation-only access is enough for repo-scoped
 endpoints. ``Members: read`` is org-level; install the App on the
 org to enumerate outside collaborators.
 
-#### GitLab
+## What the rules expect
 
-Pass the token via ``--gh-token`` (the flag is shared across
-platforms) or ``$GITLAB_TOKEN``.
-
-| Tier | GitLab token scope | Rules unlocked |
-|------|--------------------|----------------|
-| public (no token) | — | SCM-001, -002, -006, -007, -008, -009, -017 on public projects only |
-| read | ``read_api`` | full universal-rule coverage on private projects (and the rate-limit raise) |
-| maintainer-equivalent | ``read_api`` issued by a project Maintainer (or higher) | adds SCM-006's ``push_rules.reject_unsigned_commits`` signal (the push-rules endpoint is gated on Maintainer access to the project) |
-
-Notes:
-
-  * SCM-001 / -007 / -009 read
-    ``/projects/:id/protected_branches``. Available to any project
-    member with ``read_api``.
-  * SCM-002 reads ``approvals_before_merge`` from
-    ``/projects/:id``. Available at read tier.
-  * SCM-006 reads ``push_rules.reject_unsigned_commits`` from
-    ``/projects/:id/push_rule``. The push-rules endpoint is a
-    GitLab Premium feature and additionally requires Maintainer
-    access to the project to read; lower-privilege tokens get a
-    silent pass because the rule treats endpoint absence the same
-    as "feature disabled".
-  * SCM-008 reads
-    ``only_allow_merge_if_pipeline_succeeds`` from
-    ``/projects/:id``. Available at read tier.
-  * SCM-017 probes ``/projects/:id/repository/files/<path>`` for
-    the three CODEOWNERS locations. Available at read tier.
-
-Self-hosted GitLab: ``--scm-platform gitlab`` accepts a custom
-host via the fetcher's ``host=`` constructor argument. Self-hosted
-tokens use the same scope name.
-
-#### Bitbucket Cloud
-
-Pass the credential as ``user:app_password`` via ``--gh-token`` (or
-``$BITBUCKET_TOKEN``). Bitbucket Server is a different surface and
-not currently in scope.
-
-| Tier | App-password permissions | Rules unlocked |
-|------|--------------------------|----------------|
-| public (no credential) | — | SCM-001, -002, -007, -008, -009, -017 on public repos only |
-| read | ``repositories:read`` | full universal-rule coverage on private repos |
-
-Notes:
-
-  * SCM-001 / -007 / -009 read
-    ``/repositories/{workspace}/{repo}/branch-restrictions``
-    (``push`` / ``force`` / ``delete`` restriction kinds).
-    Available at ``repositories:read``.
-  * SCM-002 / SCM-008 read ``require_approvals_to_merge`` and
-    ``require_passing_builds_to_merge`` from the same endpoint.
-    Available at ``repositories:read``.
-  * **SCM-006 has no Bitbucket Cloud equivalent** — Bitbucket
-    Cloud has no per-branch signed-commit enforcement (GPG
-    signing is a personal-account UI setting, not a protection
-    rule). The rule always fires on Bitbucket snapshots; suppress
-    per repo with a rationale if the team enforces signing via a
-    different mechanism.
-  * SCM-017 probes
-    ``/repositories/{workspace}/{repo}/src/<branch>/<path>?format=meta``
-    for the three CODEOWNERS locations. Available at
-    ``repositories:read``.
-
-#### Offline / fixture mode
-
-``--scm-fixture-dir DIR`` reads JSON responses from disk instead of
-hitting the network on every platform. No token is required and no
-HTTP traffic leaves the host. Useful for CI runs, air-gapped
-evaluation, and reproducing a customer's posture against a captured
-fixture set. Endpoint paths map to
-``<endpoint-with-slashes-as-underscores>.json`` under DIR; a
-missing file is treated as a 404 (the rule passes silently with an
-unavailability note, same as when a real call fails).
-
-### What the rules expect
-
-The provider hits three endpoints per repo:
+The provider hits these endpoints per repo:
 
   * ``GET /repos/{owner}/{repo}`` — repo metadata, default
     branch name, ``security_and_analysis`` feature states.
@@ -1107,7 +1234,7 @@ description):
     (e.g. private-repo Dependabot on a free org).
   * The repo metadata fetch itself failed.
 
-Three FP-prevention guards keep noise out of the report:
+### FP-prevention guards
 
   * **Empty repos** (``repo_meta.size == 0`` and no protection
     rule). SCM-001 passes with an "Empty repo" note rather than
@@ -1126,31 +1253,6 @@ Three FP-prevention guards keep noise out of the report:
     repo whose default branch is not literally ``main``).
     SCM-001 surfaces a "Repo metadata unavailable" finding so
     the gap is visible rather than silent.
-
-### SCM-specific checks
-
-- **SCM-001 / SCM-007 / SCM-009**, branch protection presence,
-  force-push denial, and deletion denial. Together they cover
-  the rewrite-history attack class — without them, every other
-  branch-protection knob the team configured can be erased
-  after the fact.
-- **SCM-002 / SCM-011 / SCM-012 / SCM-013 / SCM-014**, the review
-  side of branch protection. Required count, CODEOWNERS
-  routing, stale-review dismissal on force-push, conversation
-  resolution, last-push approval. SCM-014 is the one that blocks
-  the two-account collab review bypass.
-- **SCM-003 / SCM-004 / SCM-005 / SCM-015 / SCM-016**, the
-  ``security_and_analysis``-driven feature checks: code
-  scanning, secret scanning, Dependabot security updates, secret-
-  scanning push protection, private vulnerability reporting.
-  All five share the archived-repo skip behavior.
-- **SCM-006**, signed-commit enforcement on the default branch.
-  Pairs with GHA-006 in the **XPC-005** chain to flag end-to-end
-  provenance gaps (source unsigned + artifact unsigned = no
-  cryptographic chain of custody).
-- **SCM-010**, the meta-rule: branch protection enforces against
-  administrators. Without it, every other protection knob is
-  advisory rather than enforced.
 
 ### Cross-provider chains
 
@@ -1341,6 +1443,226 @@ left unresolved; deeply-recursive property graphs are rare in
 real-world POMs and out of scope for static analysis.
 """,
     ),
+    "pulumi": (
+        "Pulumi",
+        "pipeline_check.core.checks.pulumi.rules",
+        _REPO_ROOT / "docs" / "providers" / "pulumi.md",
+        """\
+# Pulumi provider
+
+Static text-only analysis of a Pulumi project on disk. Three
+document families are loaded:
+
+* `Pulumi.yaml` — project manifest (`name`, `runtime`, `backend.url`).
+* `Pulumi.<stack>.yaml` — per-stack config (`config:`, `secretsprovider`,
+  `encryptionsalt`).
+* Source files (`__main__.py`, `index.ts`, `main.go`, `Program.cs`, …)
+  in the runtime language. Audited via regex-based primitive scans
+  (hardcoded credentials, wildcard IAM policies, `StackReference`
+  shapes) rather than language-aware AST parsing.
+
+No Pulumi CLI required, no engine execution. Mirrors the Terraform
+HCL / CloudFormation / Helm chart-supply-chain providers.
+
+## Producer workflow
+
+```bash
+# --pulumi-path auto-detects ./Pulumi.yaml when present.
+pipeline_check --pipeline pulumi
+pipeline_check --pipeline pulumi --pulumi-path ./Pulumi.yaml
+pipeline_check --pipeline pulumi --pulumi-path ./infra/
+```
+
+## Supported file families
+
+| File | Parse shape |
+|------|-------------|
+| `Pulumi.yaml` | Project manifest (`name`, `runtime`, `backend.url`) |
+| `Pulumi.<stack>.yaml` | Per-stack config + `secretsprovider` + `encryptionsalt` |
+| `*.py` / `*.ts` / `*.js` / `*.go` / `*.cs` | Source-file regex scans |
+
+`node_modules/`, `.venv/`, `venv/`, `.pulumi/`, `bin/`, `obj/`,
+`target/`, `dist/`, `build/`, `__pycache__/`, and `.git/` are skipped.
+""",
+    ),
+    "gomod": (
+        "Go modules",
+        "pipeline_check.core.checks.gomod.rules",
+        _REPO_ROOT / "docs" / "providers" / "gomod.md",
+        """\
+# Go modules provider
+
+Parses `go.mod` (Go's module manifest) and probes for the sibling
+`go.sum` (integrity manifest) on disk. Text-only static analysis,
+no `go mod tidy`, no module-proxy access, no toolchain required.
+Mirrors the npm / PyPI / Maven / NuGet pack shape.
+
+## Producer workflow
+
+```bash
+# --gomod-path auto-detects ./go.mod when present.
+pipeline_check --pipeline gomod
+pipeline_check --pipeline gomod --gomod-path ./go.mod
+pipeline_check --pipeline gomod --gomod-path ./services/api/
+```
+
+## Supported file formats
+
+| File | Parse shape |
+|------|-------------|
+| `go.mod` | `module` / `go` / `toolchain` / `require` / `replace` / `exclude` directives |
+| `go.sum` | Presence probe only (the load-bearing signal for `GOMOD-001`) |
+
+`vendor/` and `.git/` directories are skipped.
+""",
+    ),
+    "cargo": (
+        "Cargo",
+        "pipeline_check.core.checks.cargo.rules",
+        _REPO_ROOT / "docs" / "providers" / "cargo.md",
+        """\
+# Cargo (Rust) provider
+
+Parses `Cargo.toml` (Cargo manifest) and probes for the sibling
+`Cargo.lock` on disk. Text-only static analysis via the TOML
+stdlib parser, no `cargo update`, no registry access, no
+toolchain required. Mirrors the npm / PyPI / Maven / NuGet / Go
+modules pack shape.
+
+## Producer workflow
+
+```bash
+# --cargo-path auto-detects ./Cargo.toml when present.
+pipeline_check --pipeline cargo
+pipeline_check --pipeline cargo --cargo-path ./Cargo.toml
+pipeline_check --pipeline cargo --cargo-path ./crates/my-crate/
+```
+
+## Dependency tables audited
+
+| Section | Notes |
+|---------|-------|
+| `[dependencies]` | Runtime dependencies |
+| `[dev-dependencies]` | Test / bench dependencies |
+| `[build-dependencies]` | Build-script dependencies |
+| `[target.<target>.dependencies]` | Target-specific entries |
+| `[workspace.dependencies]` | Workspace-root inheritance |
+
+`target/` and `.git/` directories are skipped.
+""",
+    ),
+    "composer": (
+        "Composer",
+        "pipeline_check.core.checks.composer.rules",
+        _REPO_ROOT / "docs" / "providers" / "composer.md",
+        """\
+# Composer (PHP) provider
+
+Parses `composer.json` (Composer manifest) and probes for the
+sibling `composer.lock` on disk. Text-only static analysis via
+the JSON stdlib parser, no `composer install`, no Packagist
+access, no PHP runtime required. Mirrors the npm / PyPI / Maven
+/ NuGet / Go modules / Cargo pack shape.
+
+## Producer workflow
+
+```bash
+# --composer-path auto-detects ./composer.json when present.
+pipeline_check --pipeline composer
+pipeline_check --pipeline composer --composer-path ./composer.json
+pipeline_check --pipeline composer --composer-path ./packages/api/
+```
+
+## Manifest sections audited
+
+| Section | Notes |
+|---------|-------|
+| `require` | Runtime dependencies |
+| `require-dev` | Test / build-time dependencies |
+| `repositories` | Extra package sources (Composer, VCS, etc.) |
+| `scripts` | Install / update lifecycle hooks |
+| `config.allow-plugins` | Plugin permission map |
+| `minimum-stability` | Pre-release floor |
+
+`vendor/`, `.git/`, and `node_modules/` directories are skipped.
+""",
+    ),
+    "rubygems": (
+        "RubyGems",
+        "pipeline_check.core.checks.rubygems.rules",
+        _REPO_ROOT / "docs" / "providers" / "rubygems.md",
+        """\
+# RubyGems (Bundler) provider
+
+Parses `Gemfile` (Bundler manifest, Ruby DSL) and probes for the
+sibling `Gemfile.lock` on disk. Text-only static analysis via a
+regex extractor over the canonical Bundler idioms, no
+`bundle install`, no rubygems.org access, no Ruby runtime
+required. Mirrors the npm / PyPI / Maven / NuGet / Go modules /
+Cargo / Composer pack shape.
+
+## Producer workflow
+
+```bash
+# --rubygems-path auto-detects ./Gemfile when present.
+pipeline_check --pipeline rubygems
+pipeline_check --pipeline rubygems --rubygems-path ./Gemfile
+pipeline_check --pipeline rubygems --rubygems-path ./services/api/
+```
+
+## Manifest entries audited
+
+| Entry | Notes |
+|-------|-------|
+| `source "..."` | Top-level and scoped `source "..." do ... end` |
+| `gem "name", "..."` | Version constraints, option-hash form |
+| `gem "x", git: ..., ref: ...` | Git source pin / mutable detection |
+| `gem "x", github: "owner/repo"` | GitHub shorthand source |
+| `gem "x", path: "..."` | Local path source |
+| `group :dev do ... end` | Group scoping for dev/test entries |
+
+`.git/`, `vendor/`, and `node_modules/` directories are skipped.
+
+The parser is regex-driven rather than a true Ruby parser, so
+genuinely dynamic Gemfiles (`Dir.glob` over `gem` calls, `eval`
+of a generated string) are treated as opaque - the rule pack
+reports what it can extract and otherwise passes through.
+""",
+    ),
+    "nuget": (
+        "NuGet",
+        "pipeline_check.core.checks.nuget.rules",
+        _REPO_ROOT / "docs" / "providers" / "nuget.md",
+        """\
+# NuGet provider
+
+Parses .NET NuGet project files and configuration on disk. Text-only
+static analysis, no `dotnet restore`, no NuGet API access (offline
+rules). Behind `--resolve-remote`, NUGET-008 queries
+`api.nuget.org` for publish-time metadata and NUGET-009 queries the
+OSV advisory database.
+
+## Producer workflow
+
+```bash
+# --nuget-path is auto-detected when Directory.Packages.props exists.
+pipeline_check --pipeline nuget
+pipeline_check --pipeline nuget --nuget-path ./src/
+```
+
+## Supported file formats
+
+| File | Parse shape |
+|------|-------------|
+| `*.csproj` | `<PackageReference Include="..." Version="..." />` entries |
+| `Directory.Packages.props` | Central package management (`<PackageVersion>` entries) |
+| `packages.config` | Legacy format (`<package id="..." version="..." />`) |
+| `NuGet.config` | Package sources and `packageSourceMapping` sections |
+| `packages.lock.json` | SDK-generated lock file (resolved versions) |
+
+`bin/`, `obj/`, and `.nuget/` directories are skipped.
+""",
+    ),
     "cloudformation": (
         "CloudFormation",
         "pipeline_check.core.checks.cloudformation.rules",
@@ -1406,7 +1728,7 @@ Rule helpers (importable from ``cloudformation/base.py``):
   intrinsic dicts entirely when walking for hard-coded secrets.
 
 This matches cfn-lint and cfn-nag conventions and keeps findings
-useful under the common case where templates are parameterised.
+useful under the common case where templates are parameterized.
 
 ## Resource-type coverage
 
@@ -1456,18 +1778,22 @@ useful under the common case where templates are parameterised.
         """\
 # Terraform provider
 
-Scans a parsed **`terraform show -json`** plan document, no live AWS
-credentials required. The provider reads the resolved, typed resource
-representation Terraform emits post-`plan`, so checks never parse raw HCL.
+Two input paths, same rule pack:
+
+- **Plan JSON** (canonical): fully resolved attributes from
+  `terraform show -json`. Every value is typed, no ambiguity.
+- **HCL source** (best-effort): direct `*.tf` parsing via
+  `python-hcl2`. Variable/local substitution is partial;
+  unresolvable references stay opaque and findings on those
+  resources get confidence-demoted.
 
 Every AWS-mirrored check ID (CB-*, CP-*, CD-*, ECR-*, IAM-*, PBAC-*,
 S3-*, CT-*, CWL-*, SM-*, CA-*, CCM-*, LMB-*, KMS-*, SSM-*, EB-*,
 SIGN-*, CW-*) maps one-to-one to its AWS-provider counterpart. The
-semantics are identical, only the data source differs (plan JSON
-attributes instead of boto3 list/describe). TF-* rules are
+semantics are identical, only the data source differs. TF-* rules are
 Terraform-only and have no AWS-runtime analogue.
 
-## Producer workflow
+## Plan JSON workflow (canonical)
 
 ```bash
 terraform init
@@ -1475,6 +1801,21 @@ terraform plan -out=tfplan
 terraform show -json tfplan > plan.json
 pipeline_check --pipeline terraform --tf-plan plan.json
 ```
+
+## HCL source workflow (no `terraform` binary required)
+
+```bash
+pip install 'pipeline-check[hcl]'
+pipeline_check --pipeline terraform --tf-source ./infra/
+```
+
+When `main.tf` is present and no `--tf-plan` is given, `--tf-source .`
+is auto-detected. Variables with a `default` and `locals` with literal
+values resolve; `var.X` / `local.Y` references without defaults stay
+as opaque `${...}` strings. Terraform functions (`jsonencode`,
+`lookup`, `coalesce`) are not evaluated. Local child modules
+(`source = "./"`) are walked recursively; remote registry modules are
+skipped.
 
 All other flags (`--output`, `--severity-threshold`, `--checks`,
 `--standard`, …) behave the same as with the AWS provider.
@@ -1543,6 +1884,10 @@ Scope filter: `aws_iam_role.assume_role_policy` includes
 `codebuild.amazonaws.com`, `codepipeline.amazonaws.com`, or
 `codedeploy.amazonaws.com` as a `Service` principal.
 
+`IAM-009` / `IAM-010` are the cross-cloud OIDC-federation analogs
+(Azure / GCP). They read their own resource types and are not gated by
+the AWS service-principal scope filter above.
+
 | Check   | Primary input |
 |---------|---------------|
 | IAM-001 | `managed_policy_arns` + `aws_iam_role_policy_attachment.policy_arn` |
@@ -1552,6 +1897,8 @@ Scope filter: `aws_iam_role.assume_role_policy` includes
 | IAM-005 | `aws_iam_role.assume_role_policy` (external principal w/o `sts:ExternalId`) |
 | IAM-006 | inline + attached policy JSON (sensitive actions on `Resource = "*"`) |
 | IAM-008 | `aws_iam_role.assume_role_policy` (OIDC `:aud` / `:sub` pin) |
+| IAM-009 | `azurerm_federated_identity_credential.{issuer,subject}` |
+| IAM-010 | `google_iam_workload_identity_pool_provider` (`oidc.issuer_uri` + `attribute_condition`) |
 
 ### S3 (artifact buckets discovered from pipelines)
 
@@ -1737,6 +2084,119 @@ analogue in other providers:
   literal credential-shaped value (AKIA-prefixed, or a key named
   `*_PASSWORD` / `*_TOKEN` / `*_SECRET` with a non-empty literal) is
   CRITICAL.
+""",
+    ),
+    "modelfile": (
+        "Modelfile",
+        "pipeline_check.core.checks.modelfile.rules",
+        _REPO_ROOT / "docs" / "providers" / "modelfile.md",
+        """\
+# Modelfile provider
+
+Parses model declarations on disk, text-only static analysis, no model
+pull, no Ollama daemon. Two formats: Ollama `Modelfile` recipes (the
+declarative file that pins a model into the local registry, so this
+provider is the "Dockerfile of models") and vendored Hugging Face
+`config.json` model configs. The MODEL-* rules reason over the `FROM`
+base model / `ADAPTER` references a Modelfile declares and the custom
+code a model config wires in. It is the static, declaration-side
+complement to the CI-script AI rules (GHA-120/121/122, GL-045..049) that
+catch model pulls in build scripts.
+
+## Producer workflow
+
+```bash
+# Defaults to scanning the working tree for a Modelfile / config.json.
+pipeline_check --pipeline modelfile
+
+# …or pass it explicitly.
+pipeline_check --pipeline modelfile --modelfile-path models/chat.Modelfile
+
+# Recursively scan a directory. The loader matches Modelfile,
+# *.Modelfile, Modelfile.<suffix>, and HF model config.json by default.
+pipeline_check --pipeline modelfile --modelfile-path models/
+```
+
+All other flags (`--output`, `--severity-threshold`, `--checks`,
+`--standard`, …) behave the same as with the other providers.
+
+### Modelfile-specific checks
+
+The MODEL-* pack covers the model supply chain a Modelfile declares:
+
+- **MODEL-001**, the `FROM` base model must pin an immutable tag or
+  `@sha256:` digest rather than a bare name or `:latest`. The
+  model-registry analogue of GHA-001 / DF-001.
+- **MODEL-002**, a `FROM hf.co/...` / `huggingface.co/...` base model
+  is pulled straight from a third-party hub, bypassing the curated
+  Ollama library (the source-trust axis).
+- **MODEL-003**, a `FROM ./model.gguf` local weights blob has no
+  registry provenance, and a `.bin` / `.pt` import is pickle-backed.
+- **MODEL-004**, an `ADAPTER` LoRA pulled from a remote source can
+  re-steer the model's behavior and deserves the same pin-and-verify
+  treatment as the base model.
+- **MODEL-005**, a vendored HF `config.json` whose `auto_map` wires the
+  transformers auto-classes to the model repo's own Python, which runs
+  under `trust_remote_code=True`. The model-side complement of GHA-120 /
+  GL-045 (which flag the `trust_remote_code` load in CI scripts).
+""",
+    ),
+    "azure_cloud": (
+        "Azure Cloud",
+        "pipeline_check.core.checks.azure_cloud.rules",
+        _REPO_ROOT / "docs" / "providers" / "azure_cloud.md",
+        """\
+# Azure Cloud provider
+
+Scans a live Azure subscription via the ``azure-mgmt-*`` management
+SDKs. Requires ``pip install pipeline-check[azure-cloud]`` and Azure
+CLI authentication (``az login``).
+
+## Producer workflow
+
+```bash
+pipeline_check --pipeline azure_cloud --subscription-id 00000000-0000-0000-0000-000000000000
+pipeline_check --pipeline azure_cloud --subscription-id $AZURE_SUBSCRIPTION_ID --azure-tenant-id $AZURE_TENANT_ID
+```
+
+## Covered services
+
+| Service | Prefix | Rules |
+|---------|--------|-------|
+| Entra ID (identity) | ENTRA- | Service principal roles, app credentials, password vs certificate |
+| Storage | AZST- | Public access, HTTPS enforcement, CMK encryption |
+| Key Vault | AKV- | Soft delete, purge protection, network ACLs |
+| Container Registry | ACR- | Admin user, public access, content trust |
+| Monitor | AZMON- | Diagnostic settings, log retention, alert rules |
+""",
+    ),
+    "gcp": (
+        "GCP",
+        "pipeline_check.core.checks.gcp.rules",
+        _REPO_ROOT / "docs" / "providers" / "gcp.md",
+        """\
+# GCP provider
+
+Scans a live GCP project via the ``google-cloud-*`` client libraries.
+Requires ``pip install pipeline-check[gcp]`` and Application Default
+Credentials (``gcloud auth application-default login``).
+
+## Producer workflow
+
+```bash
+pipeline_check --pipeline gcp --gcp-project my-project-id
+pipeline_check --pipeline gcp --gcp-project $GCP_PROJECT
+```
+
+## Covered services
+
+| Service | Prefix | Rules |
+|---------|--------|-------|
+| IAM | GCIAM- | Service account admin roles, user-managed keys, impersonation |
+| Cloud Storage | GCS- | Public buckets, uniform access, versioning |
+| Cloud KMS | GCKMS- | Key rotation, public access, HSM protection |
+| Artifact Registry | GAR- | Vulnerability scanning, public repos, cleanup policies |
+| Cloud Logging | GCLOG- | Audit log config, log sinks, retention |
 """,
     ),
 }
@@ -1964,7 +2424,17 @@ _FOOTER_CONFIG: dict[str, dict[str, str]] = {
         "signature": "check(ctx: ArgoContext) -> Finding",
         "arg_kind": "``ArgoContext``",
     },
+    "argocd":    {
+        "prefix": "ARGOCD", "prefix_lc": "argocd", "pkg": "argocd",
+        "signature": "check(ctx: ArgoCDContext) -> Finding",
+        "arg_kind": "``ArgoCDContext``",
+    },
     "dockerfile": {"prefix": "DF",  "prefix_lc": "df",  "pkg": "dockerfile"},
+    "modelfile": {
+        "prefix": "MODEL", "prefix_lc": "model", "pkg": "modelfile",
+        "signature": "check(ctx: ModelfileContext) -> list[Finding]",
+        "arg_kind": "``ModelfileContext``",
+    },
     "kubernetes": {"prefix": "K8S", "prefix_lc": "k8s", "pkg": "kubernetes"},
     "npm": {
         "prefix": "NPM", "prefix_lc": "npm", "pkg": "npm",
@@ -1995,6 +2465,33 @@ _FOOTER_CONFIG: dict[str, dict[str, str]] = {
         "prefix": "SCM", "prefix_lc": "scm", "pkg": "scm",
         "signature": "check(snapshot: SCMRepoSnapshot) -> Finding",
         "arg_kind": "``SCMRepoSnapshot``",
+    },
+    "gomod": {
+        "prefix": "GOMOD", "prefix_lc": "gomod", "pkg": "gomod",
+        "signature": "check(pom: GoModFile) -> Finding",
+        "arg_kind": "``GoModFile``",
+    },
+    "cargo": {
+        "prefix": "CARGO", "prefix_lc": "cargo", "pkg": "cargo",
+        "signature": "check(pom: CargoFile) -> Finding",
+        "arg_kind": "``CargoFile``",
+    },
+    "composer": {
+        "prefix": "COMPOSER", "prefix_lc": "composer",
+        "pkg": "composer",
+        "signature": "check(pom: ComposerFile) -> Finding",
+        "arg_kind": "``ComposerFile``",
+    },
+    "rubygems": {
+        "prefix": "GEM", "prefix_lc": "gem",
+        "pkg": "rubygems",
+        "signature": "check(pom: GemFile) -> Finding",
+        "arg_kind": "``GemFile``",
+    },
+    "pulumi": {
+        "prefix": "PULUMI", "prefix_lc": "pulumi", "pkg": "pulumi",
+        "signature": "check(ctx: PulumiContext) -> Finding",
+        "arg_kind": "``PulumiContext``",
     },
 }
 

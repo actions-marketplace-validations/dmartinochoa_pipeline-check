@@ -32,12 +32,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: "3.12"
           cache: "pip"
@@ -62,30 +62,30 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: "3.12"
 
       - name: Vulnerability scan with pip-audit
         run: |
-          python -m pip install --upgrade pip pip-audit
+          python -m pip install --require-hashes -r requirements-ci.txt
           pip-audit --requirement requirements.txt --strict
 
   typecheck:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: "3.12"
           cache: "pip"
@@ -112,44 +112,58 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        # Floor matches ``requires-python`` in ``pyproject.toml``
-        # (3.11). 3.10 was dropped because the hash-locked install
-        # didn't resolve on 3.10 (pytest 9 conditionally pulls
-        # ``tomli`` / ``exceptiongroup``, which the newer-interpreter
-        # ``pip-compile`` that produced ``requirements-dev.txt``
-        # didn't bake in), and shipping a wheel for an untested
-        # interpreter is a supply-chain footgun.
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.12"]
         include:
+          # Full version matrix only on master merges. PRs run 3.12
+          # only (with xdist parallelism) so feedback arrives fast.
+          # The master push still covers 3.11, 3.13, and 3.14 for compat.
+          - os: ubuntu-latest
+            python-version: "3.11"
+            master-only: true
+          - os: ubuntu-latest
+            python-version: "3.13"
+            master-only: true
+          - os: ubuntu-latest
+            python-version: "3.14"
+            master-only: true
           # Windows smoke check on the version most dev laptops run.
-          # Path-handling bugs in diff.py / autofix.py have a real
-          # history of surfacing only on Windows, so run the suite at
-          # least once per push there. macOS is omitted — it shares
-          # POSIX path semantics with Linux and the marginal coverage
-          # didn't justify the runner cost.
           - os: windows-latest
             python-version: "3.12"
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - if: ${{ !matrix.master-only || github.event_name == 'push' }}
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           persist-credentials: false
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+      - if: ${{ !matrix.master-only || github.event_name == 'push' }}
+        name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: ${{ matrix.python-version }}
           cache: "pip"
           cache-dependency-path: requirements-dev.txt
 
-      - name: Install dependencies
+      - if: ${{ !matrix.master-only || github.event_name == 'push' }}
+        name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install --require-hashes -r requirements-dev.txt
           pip install -e .
 
-      - name: Test with pytest
-        # --cov-fail-under gates the build on coverage regressions. Bump
-        # this floor (never lower it) as the suite grows.
+      - if: ${{ !matrix.master-only || github.event_name == 'push' }}
+        name: Test with pytest
+        # ``shell: bash`` (git-bash on the Windows runner too) so the two
+        # invocations below share ``set -eo pipefail`` semantics: a failure
+        # in the main run fails the step instead of being masked by the
+        # fleet run's exit code (PowerShell would only surface the last).
+        shell: bash
         run: |
-          pytest --cov=pipeline_check --cov-report=term-missing --cov-fail-under=90
+          # Main suite under xdist, with the fleet tests excluded. They
+          # monkeypatch module globals and ran in a separate serial job
+          # historically; keeping them out of the parallel run preserves
+          # that isolation. They run serially just below and append to the
+          # same coverage data, so ``fleet.py`` is measured (not omitted)
+          # and the 90% gate covers the combined total.
+          pytest -n auto --dist worksteal --ignore=tests/test_fleet.py --cov=pipeline_check --cov-report= -q
+          pytest tests/test_fleet.py --cov=pipeline_check --cov-append --cov-report=term-missing --cov-fail-under=90

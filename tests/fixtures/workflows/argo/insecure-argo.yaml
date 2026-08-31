@@ -15,7 +15,7 @@ spec:
     parameters:
       # ARGO-006: literal AWS access key in workflow argument.
       - name: aws_access_key
-        value: "AKIAIOSFODNN7EXAMPLE"  # checkov:skip=CKV_SECRET_2 test fixture
+        value: "AKIAZ3MHALF2TESTHIJK"  # checkov:skip=CKV_SECRET_2 test fixture
       - name: ref
         value: "main"
   # ARGO-004: hostPath volume.
@@ -56,6 +56,8 @@ spec:
         source: |
           set -e
           echo Building {{inputs.parameters.ref}}
+          echo "deploying with $AWS_SECRET_ACCESS_KEY"
+          eval "$BUILD_CMD"
           curl https://example.com/install.sh | bash
           npm install
           pip install --trusted-host pypi.internal package
@@ -76,6 +78,8 @@ metadata:
   namespace: argo
 spec:
   entrypoint: main
+  # ARGO-016: bound to a cluster-admin ServiceAccount (cluster takeover).
+  serviceAccountName: cluster-admin
   arguments:
     parameters:
       - name: pr-title
@@ -117,3 +121,21 @@ spec:
         image: alpine:3.18@sha256:0000000000000000000000000000000000000000000000000000000000000002
         source: |
           echo Tagged release {{inputs.parameters.title}}
+    # ARGO-017: a resource template applies a manifest built from an
+    # untrusted parameter. Argo splices the value into the manifest text
+    # before kubectl applies it under this workflow's cluster-admin SA,
+    # so the caller injects arbitrary K8s objects (here, into a ConfigMap
+    # body, but the same splice reaches a RoleBinding / privileged Pod).
+    - name: apply-config
+      inputs:
+        parameters:
+          - name: spec
+      resource:
+        action: apply
+        manifest: |
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: app-config
+          data:
+            payload: "{{inputs.parameters.spec}}"

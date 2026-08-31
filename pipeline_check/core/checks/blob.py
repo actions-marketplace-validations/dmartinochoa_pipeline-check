@@ -41,6 +41,25 @@ def walk_strings(node: Any) -> Iterator[str]:
 _BLOB_CACHE: dict[int, str] = {}
 
 
+_BLOB_RAW_CACHE: dict[int, str] = {}
+
+
+def blob_raw(doc: Any) -> str:
+    """Concatenate all string values in ``doc`` into one blob, preserving case.
+
+    Memoized on object identity, same contract as :func:`blob_lower`.
+    Use this when the scanner needs to distinguish characters whose
+    case carries semantic meaning (e.g. ``curl -k`` vs ``curl -K``).
+    """
+    key = id(doc)
+    cached = _BLOB_RAW_CACHE.get(key)
+    if cached is not None:
+        return cached
+    blob = "\n".join(walk_strings(doc))
+    _BLOB_RAW_CACHE[key] = blob
+    return blob
+
+
 def blob_lower(doc: Any) -> str:
     """Concatenate all string values in ``doc`` into one lowercase blob.
 
@@ -61,9 +80,15 @@ def blob_lower(doc: Any) -> str:
 
 def clear_blob_cache() -> None:
     _BLOB_CACHE.clear()
+    _BLOB_RAW_CACHE.clear()
     # ``looks_like_example`` keys its prefix-line index on ``id(blob)``
     # the same way ``blob_lower`` does, so callers that already invoke
     # ``clear_blob_cache`` between tests pick up the secondary cache
     # for free.
     from ._context import clear_context_cache
     clear_context_cache()
+    # GHA-062's IaC sidecar walk is keyed on the repo-root path string,
+    # not on ``id(doc)``, so it must be cleared explicitly to avoid
+    # stale results in long-lived processes.
+    from .github.rules.gha062_oidc_iac_subject import clear_iac_scan_cache
+    clear_iac_scan_cache()

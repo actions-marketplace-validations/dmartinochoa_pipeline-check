@@ -65,7 +65,58 @@ class TestADO002ScriptInjection:
         )
         assert not f.passed
 
-    def test_quoted_assignment_passes(self):
+    def test_task_inputs_script_fails(self):
+        # Task-based step (Bash@3) carries the script under inputs.script,
+        # not the script: shorthand. The untrusted macro is just as exposed.
+        f = _run(
+            """
+            steps:
+              - task: Bash@3
+                inputs:
+                  targetType: inline
+                  script: |
+                    echo "Building $(System.PullRequest.SourceBranch)"
+            """,
+            "ADO-002",
+        )
+        assert not f.passed
+
+    def test_freeform_template_parameter_in_script_fails(self):
+        # Compile-time template injection: a free-form string parameter
+        # spliced into a script step becomes pipeline structure.
+        f = _run(
+            """
+            parameters:
+              - name: userInput
+                type: string
+            steps:
+              - script: ${{ parameters.userInput }}
+            """,
+            "ADO-002",
+        )
+        assert not f.passed
+
+    def test_template_parameter_with_values_allowlist_passes(self):
+        # A ``values:`` enum constrains the parameter, so it is not
+        # free-form and template injection is not possible.
+        f = _run(
+            """
+            parameters:
+              - name: env
+                type: string
+                values: [dev, prod]
+            steps:
+              - script: ./deploy.sh ${{ parameters.env }}
+            """,
+            "ADO-002",
+        )
+        assert f.passed
+
+    def test_quoted_assignment_of_untrusted_macro_is_flagged(self):
+        # Unlike a shell capture, ADO text-substitutes ``$(Name)`` into the
+        # script before the shell parses it, so a double quote in the branch
+        # name closes the assignment string and the rest runs as shell. The
+        # quoting carve-out does NOT make an untrusted ADO macro safe.
         f = _run(
             """
             steps:
@@ -73,7 +124,7 @@ class TestADO002ScriptInjection:
             """,
             "ADO-002",
         )
-        assert f.passed
+        assert not f.passed
 
     def test_safe_variable_passes(self):
         f = _run(
@@ -139,7 +190,7 @@ class TestADO003LiteralSecrets:
         f = _run(
             """
             variables:
-              AWS_ACCESS_KEY_ID: AKIAIOSFODNN7EXAMPLE
+              AWS_ACCESS_KEY_ID: AKIAZ3MHALF2TESTHIJK
             steps:
               - script: make
             """,
@@ -153,7 +204,7 @@ class TestADO003LiteralSecrets:
             """
             variables:
               - name: AWS_ACCESS_KEY_ID
-                value: AKIAIOSFODNN7EXAMPLE
+                value: AKIAZ3MHALF2TESTHIJK
             steps:
               - script: make
             """,

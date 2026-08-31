@@ -7,10 +7,11 @@ from ...base import (
     PKG_INSECURE_RE,
     PKG_NO_LOCKFILE_RE,
     Finding,
+    Location,
     Severity,
 )
 from ...rule import Rule
-from ..base import ArgoContext, iter_containers, iter_templates, template_name
+from ..base import ArgoContext, doc_location, iter_containers, iter_templates, template_name
 
 RULE = Rule(
     id="ARGO-014",
@@ -35,8 +36,8 @@ RULE = Rule(
         "``PKG_INSECURE_RE`` and ``PKG_NO_LOCKFILE_RE`` from "
         "``checks/base.py``. Same rule pack already exists "
         "for GHA (``GHA-021`` / ``GHA-022``), GitLab "
-        "(``GL-021`` / ``GL-022``), Bitbucket / Azure DevOps "
-        "/ Jenkins / CircleCI / Cloud Build / Buildkite / "
+        "(``GL-021`` / ``GL-022``), Bitbucket Pipelines / Azure DevOps "
+        "/ Jenkins / CircleCI / Google Cloud Build / Buildkite / "
         "Tekton / Drone. Argo was a gap; this closes it.\n\n"
         "Walks ``script.source`` plus joined ``container.args`` "
         "/ ``container.command`` text per template. Steps and "
@@ -50,6 +51,38 @@ RULE = Rule(
         "image rebuild) sometimes legitimately bypass the "
         "lockfile. Suppress via ignore-file scoped to the "
         "specific template name.",
+    ),
+    exploit_example=(
+        "# Vulnerable: a script template installs dependencies with no\n"
+        "# lockfile or hash pinning.\n"
+        "apiVersion: argoproj.io/v1alpha1\n"
+        "kind: Workflow\n"
+        "metadata: { name: ci }\n"
+        "spec:\n"
+        "  entrypoint: test\n"
+        "  templates:\n"
+        "    - name: test\n"
+        "      script:\n"
+        "        image: node@sha256:abc123...\n"
+        "        command: [sh]\n"
+        "        source: |\n"
+        "          npm install\n"
+        "          npm test\n"
+        "\n"
+        "# Attack: `npm install` resolves the `^` / `~` ranges in\n"
+        "# package.json against the live registry at run time instead\n"
+        "# of the committed lockfile, so a freshly published malicious\n"
+        "# patch of a transitive dependency (the event-stream /\n"
+        "# Shai-Hulud shape) lands in the workflow pod and its\n"
+        "# postinstall runs with the workflow's credentials.\n"
+        "\n"
+        "# Safe: install the locked set with integrity checks.\n"
+        "      script:\n"
+        "        image: node@sha256:abc123...\n"
+        "        command: [sh]\n"
+        "        source: |\n"
+        "          npm ci\n"
+        "          npm test"
     ),
 )
 
@@ -70,6 +103,7 @@ def _container_text(container: dict[str, Any]) -> str:
 
 def check(ctx: ArgoContext) -> Finding:
     offenders: list[str] = []
+    locations: list[Location] = []
     for doc in ctx.docs:
         for idx, tmpl in enumerate(iter_templates(doc)):
             for container in iter_containers(tmpl):
@@ -86,6 +120,7 @@ def check(ctx: ArgoContext) -> Finding:
                         f"{template_name(tmpl, idx)}: [{kind}] "
                         f"{hit.group(0)[:50].strip()}"
                     )
+                    locations.append(doc_location(doc, container))
     if not ctx.docs:
         return Finding(
             check_id=RULE.id, title=RULE.title, severity=RULE.severity,
@@ -107,4 +142,5 @@ def check(ctx: ArgoContext) -> Finding:
         check_id=RULE.id, title=RULE.title, severity=RULE.severity,
         resource="argo", description=desc,
         recommendation=RULE.recommendation, passed=passed,
+        locations=locations,
     )

@@ -159,8 +159,14 @@ STANDARD = Standard(
         # privileged-runtime patterns. Anchors of 1.5.2 evidence; the
         # full GHA pack still maps via OWASP CICD-SEC-* on every page.
         "GHA-001": ["1.5.2"],                                 # action not pinned to SHA
+        "GHA-110": ["1.5.2"],  # CI env disables Go module verification
         "GHA-002": ["1.5.2"],                                 # pull_request_target + checkout PR head
         "GHA-003": ["1.5.2"],                                 # script injection via ${{ }}
+        "GHA-119": ["1.5.2"],                                 # untrusted context into an agentic AI CLI
+        "GHA-120": ["1.5.2"],                                 # trust_remote_code model load = code exec
+        "GHA-122": ["1.5.2"],                                 # unsafe pickle deser of fetched artifact = code exec
+        "GHA-117": ["1.5.2"],                                 # IaC apply on untrusted PR trigger
+        "GHA-118": ["1.5.2"],                                 # untrusted content into $GITHUB_ENV / $GITHUB_PATH
         "GHA-004": ["1.5.2"],                                 # GITHUB_TOKEN unrestricted
         "GHA-005": ["1.5.2", "1.5.1"],                        # long-lived AWS keys in workflow
         "GHA-019": ["1.5.2"],                                 # job-level permissions broader than needed
@@ -176,6 +182,7 @@ STANDARD = Standard(
         "GHA-032": ["1.5.2"],                                 # local script on untrusted trigger
         "GHA-033": ["1.5.2", "1.5.1"],                        # secret echoed in run:
         "GHA-034": ["1.5.2"],                                 # secrets: inherit
+        "GHA-116": ["1.5.2"],                                 # bulk secrets serialization
         "GHA-035": ["1.5.2"],                                 # github-script untrusted context
         "GHA-036": ["1.5.2"],                                 # runs-on untrusted context
         "GHA-037": ["1.5.2"],                                 # checkout persists GITHUB_TOKEN
@@ -201,6 +208,15 @@ STANDARD = Standard(
         "GHA-059": ["1.5.2"],                                 # npm install without audit signatures
         "GHA-060": ["1.5.2"],                                 # pip install without --require-hashes
         "GHA-061": ["1.5.2"],                                 # App token minted without permissions filter
+        "GHA-105": ["1.5.2"],                                 # self-hosted runner on PR trigger
+        "GHA-106": ["1.5.2"],                                 # AI agent with write-scoped token
+        "GHA-111":  ["1.5.2"],  # AI agent edits IaC applied in the same job
+        "GHA-112":  ["1.5.2"],  # self-hosted deploy with no environment gate
+        "GHA-113":  ["1.5.2"],  # OIDC trusted-publish w/o env gate
+        "GHA-114":  ["1.5.2"],  # publish workflow on an unrestricted push trigger
+        "GHA-062": ["1.5.2"],                                 # OIDC trust subject in sibling IaC is overly broad
+        "GHA-092": ["1.5.2"],                                 # TOCTOU PR head SHA force-push race
+        "GHA-093": ["1.5.2"],                                 # LOTP indicators
         # TAINT family: cross-step / cross-job untrusted-data flow
         # into privileged sinks is the canonical pipeline-instruction
         # security failure the 1.5.2 scanner is meant to find.
@@ -214,6 +230,7 @@ STANDARD = Standard(
         "TAINT-008": ["1.5.2"],
         # Dockerfile / IaC scanning, 1.5.3
         "DF-001":  ["1.5.3"],                                 # FROM image not digest-pinned
+        "DF-031":  ["1.5.3"],                                 # COPY --from external image not digest-pinned
         "DF-005":  ["1.5.3"],                                 # shell-eval pattern
         "DF-006":  ["1.5.3", "1.5.1"],                        # ENV credential literal
         "DF-008":  ["1.5.3"],                                 # docker --privileged

@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from ...base import Finding, Severity
+from ...base import Finding, Location, Severity
 from ...rule import Rule
-from ..base import TektonContext, TektonDoc
+from ..base import TektonContext, TektonDoc, doc_location
 
 RULE = Rule(
     id="TKN-013",
@@ -44,6 +44,36 @@ RULE = Rule(
         "privileged sidecar; if neither is viable, ignore TKN-013 "
         "in ``.pipeline-check-ignore.yml`` for the affected Task.",
     ),
+    exploit_example=(
+        "# Vulnerable: a sidecar runs alongside every step in the\n"
+        "# Task and shares the pod's volumes / network. A\n"
+        "# privileged sidecar can escape to the node the same way\n"
+        "# a privileged step does, with the added attack surface\n"
+        "# of being long-lived for the Task's whole duration.\n"
+        "apiVersion: tekton.dev/v1\n"
+        "kind: Task\n"
+        "spec:\n"
+        "  sidecars:\n"
+        "    - name: docker-daemon\n"
+        "      image: docker:24-dind\n"
+        "      securityContext:\n"
+        "        privileged: true\n"
+        "  steps:\n"
+        "    - name: build\n"
+        "      image: docker:24\n"
+        "      script: docker build -t app .\n"
+        "\n"
+        "# Safe: drop the privileged sidecar and use a rootless\n"
+        "# builder in the step. Kaniko / BuildKit rootless\n"
+        "# eliminates the need for the dind sidecar entirely.\n"
+        "apiVersion: tekton.dev/v1\n"
+        "kind: Task\n"
+        "spec:\n"
+        "  steps:\n"
+        "    - name: build\n"
+        "      image: gcr.io/kaniko-project/executor@sha256:abc123...\n"
+        "      args: [--context=., --destination=registry/app:tag]"
+    ),
 )
 
 
@@ -78,7 +108,11 @@ def _sidecar_offends(sc: Any) -> list[str]:
     if sc.get("runAsNonRoot") is False:
         issues.append("runAsNonRoot: false")
     if sc.get("runAsNonRoot") is None and not issues:
-        issues.append("runAsNonRoot not set")
+        # A non-zero explicit ``runAsUser`` already establishes non-root,
+        # so a missing ``runAsNonRoot`` isn't a root risk there.
+        run_as = sc.get("runAsUser")
+        if not (isinstance(run_as, int) and run_as > 0):
+            issues.append("runAsNonRoot not set")
     return issues
 
 
@@ -91,6 +125,7 @@ def _sidecar_name(sidecar: dict[str, Any], idx: int) -> str:
 
 def check(ctx: TektonContext) -> Finding:
     offenders: list[str] = []
+    locations: list[Location] = []
     examined = 0
     for doc in ctx.docs:
         if doc.kind not in ("Task", "ClusterTask"):
@@ -106,6 +141,7 @@ def check(ctx: TektonContext) -> Finding:
                     f"{doc.kind}/{doc.name} {_sidecar_name(sc, idx)}: "
                     f"{', '.join(issues)}"
                 )
+                locations.append(doc_location(doc, sc))
     if examined == 0:
         return Finding(
             check_id=RULE.id, title=RULE.title, severity=RULE.severity,
@@ -125,4 +161,5 @@ def check(ctx: TektonContext) -> Finding:
         check_id=RULE.id, title=RULE.title, severity=RULE.severity,
         resource="tekton", description=desc,
         recommendation=RULE.recommendation, passed=passed,
+        locations=locations,
     )

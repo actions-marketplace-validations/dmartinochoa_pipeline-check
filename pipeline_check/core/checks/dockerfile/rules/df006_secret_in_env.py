@@ -1,10 +1,38 @@
 """DF-006, ``ENV`` / ``ARG`` carries a credential-shaped literal value."""
 from __future__ import annotations
 
-from ..._primitives.secret_shapes import AWS_KEY_RE, SECRETISH_KEY_RE
+import re
+
+from ..._primitives.secret_shapes import (
+    aws_key_in,
+    is_placeholder_value,
+)
 from ...base import Finding, Location, Severity
 from ...rule import Rule
 from ..base import Dockerfile, env_pairs
+
+#: Credential words matched as whole segments of the key name (split on
+#: ``_`` / ``-`` and camelCase), NOT as substrings — so ``TOKEN`` matches
+#: ``ACCESS_TOKEN`` but not ``TOKENIZERS_PARALLELISM``.
+_SECRET_WORD_SEGMENTS = frozenset({
+    "password", "passwd", "secret", "token", "credential", "credentials",
+})
+#: Compound credential words checked against the separator-stripped key
+#: (``api_key`` → ``apikey``).
+_SECRET_WORD_JOINED = ("apikey", "privatekey", "accesskey", "secretkey")
+#: Suffixes that turn a credential-named key into a reference to the
+#: secret rather than the secret itself (a file path, a name, a TTL).
+_BENIGN_KEY_SUFFIXES = (
+    "_file", "_path", "_dir", "_name", "_id", "_url", "_uri", "_host",
+    "_port", "_ttl", "_timeout", "_expiry", "_expires", "_enabled",
+    "_parallelism", "_provider", "_type", "_mode", "_algorithm",
+)
+_SEGMENT_SPLIT_RE = re.compile(r"[_\-]|(?<=[a-z])(?=[A-Z])")
+_NUMERIC_RE = re.compile(r"[0-9]+(?:\.[0-9]+)?")
+_BENIGN_VALUES = frozenset({
+    "true", "false", "yes", "no", "on", "off", "none", "null",
+    "default", "auto", "enabled", "disabled",
+})
 
 RULE = Rule(
     id="DF-006",
@@ -27,6 +55,31 @@ RULE = Rule(
         "credential-named keys (``API_KEY``, ``DB_PASSWORD``, "
         "``SECRET_TOKEN``) when the value is a non-empty literal."
     ),
+    exploit_example=(
+        "# Vulnerable: ``API_KEY=sk_live_...`` lands in the image's\n"
+        "# layer history. ``docker history --no-trunc <image>`` (any\n"
+        "# user who can pull the image) prints the literal value\n"
+        "# even when a later layer overwrites or unsets it. Public\n"
+        "# images on Docker Hub are pulled and inspected en masse by\n"
+        "# secret scanners; private images leak the same way to\n"
+        "# anyone who exfils the registry credentials.\n"
+        "FROM node:20-alpine@sha256:abc123...\n"
+        "ENV API_KEY=sk_live_abc123def456ghi789\n"
+        "COPY . /app\n"
+        "RUN cd /app && npm ci\n"
+        "\n"
+        "# Safe: keep the secret out of the image entirely. Use\n"
+        "# BuildKit's ``--mount=type=secret`` for build-time access\n"
+        "# (the secret never lands in any layer), and runtime\n"
+        "# injection (``docker run -e API_KEY=$VAULT_API_KEY``) for\n"
+        "# the running container. The Dockerfile only references\n"
+        "# the secret by mount path or env-var name.\n"
+        "# syntax=docker/dockerfile:1.7\n"
+        "FROM node:20-alpine@sha256:abc123...\n"
+        "COPY . /app\n"
+        "RUN --mount=type=secret,id=api_key \\\n"
+        "    cd /app && API_KEY=$(cat /run/secrets/api_key) npm ci"
+    ),
 )
 
 
@@ -43,17 +96,60 @@ def _looks_literal(value: str) -> bool:
     return True
 
 
+def _credentialish_key(key: str) -> bool:
+    """Whether *key* names a credential itself (not a reference to one).
+
+    Matches credential words as whole underscore / camelCase segments so
+    ``ACCESS_TOKEN`` fires but ``TOKENIZERS_PARALLELISM`` does not, and
+    excludes suffixes (``_FILE`` / ``_PATH`` / ``_TTL`` ...) that name a
+    pointer to the secret rather than the secret.
+    """
+    lower = key.lower()
+    if lower.endswith(_BENIGN_KEY_SUFFIXES):
+        return False
+    segments = {s.lower() for s in _SEGMENT_SPLIT_RE.split(key) if s}
+    if segments & _SECRET_WORD_SEGMENTS:
+        return True
+    joined = lower.replace("_", "").replace("-", "")
+    return any(word in joined for word in _SECRET_WORD_JOINED)
+
+
+def _value_looks_secretish(value: str) -> bool:
+    """Whether *value* could plausibly be a real secret.
+
+    Filters out the benign literals a credential-named config key
+    routinely carries: a plain number (a TTL / port), a boolean or enum
+    (``false`` / ``auto``), or a filesystem path (a ``*_FILE`` target).
+    A real embedded secret is none of these.
+    """
+    v = value.strip().strip('"').strip("'")
+    if not v:
+        return False
+    if _NUMERIC_RE.fullmatch(v):
+        return False
+    if v.lower() in _BENIGN_VALUES:
+        return False
+    if v.startswith(("/", "./", "../", "~/")) or "/run/secrets" in v:
+        return False
+    return True
+
+
 def check(df: Dockerfile) -> Finding:
     offenders: list[str] = []
     locations: list[Location] = []
     for line_no, key, value in env_pairs(df):
         hit = False
         # Direct AWS-key shape match, flag regardless of key name.
-        if AWS_KEY_RE.search(value):
+        if aws_key_in(value):
             offenders.append(f"L{line_no}: {key} (AKIA-shaped value)")
             hit = True
-        # Secret-named key + literal value.
-        elif SECRETISH_KEY_RE.search(key) and _looks_literal(value):
+        # Secret-named key + a value that actually looks like a secret.
+        elif (
+            _credentialish_key(key)
+            and _looks_literal(value)
+            and not is_placeholder_value(value)
+            and _value_looks_secretish(value)
+        ):
             offenders.append(f"L{line_no}: {key} (literal credential-shaped name)")
             hit = True
         if hit:

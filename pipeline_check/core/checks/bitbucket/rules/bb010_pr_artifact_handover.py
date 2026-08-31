@@ -29,6 +29,45 @@ RULE = Rule(
         "`deployment:` step consumes it without verification, "
         "attacker-controlled output flows into the privileged stage."
     ),
+    exploit_example=(
+        "# Vulnerable: a deploy step consumes ``build`` artifacts\n"
+        "# produced by a PR-triggered build step. A fork PR's\n"
+        "# build step uploads anything as ``build``; the deploy\n"
+        "# step (which runs with the production credential set)\n"
+        "# executes the attacker's binary.\n"
+        "pipelines:\n"
+        "  pull-requests:\n"
+        "    \"**\":\n"
+        "      - step:\n"
+        "          name: build\n"
+        "          script: [\"./build.sh\"]\n"
+        "          artifacts: [\"dist/**\"]\n"
+        "      - step:\n"
+        "          name: deploy   # consumes the PR build's artifact\n"
+        "          deployment: staging\n"
+        "          script: [\"./deploy ./dist/release\"]\n"
+        "\n"
+        "# Safe: don't hand off PR artifacts to a deploy step.\n"
+        "# Deploy only on ``branches: { main: ... }`` triggers,\n"
+        "# where the artifact's producer was the trusted-context\n"
+        "# build of ``main`` itself.\n"
+        "pipelines:\n"
+        "  pull-requests:\n"
+        "    \"**\":\n"
+        "      - step:\n"
+        "          name: build\n"
+        "          script: [\"./build.sh\"]\n"
+        "  branches:\n"
+        "    main:\n"
+        "      - step:\n"
+        "          name: build\n"
+        "          script: [\"./build.sh\"]\n"
+        "          artifacts: [\"dist/**\"]\n"
+        "      - step:\n"
+        "          name: deploy\n"
+        "          deployment: production\n"
+        "          script: [\"./deploy ./dist/release\"]"
+    ),
 )
 
 
@@ -36,7 +75,12 @@ def check(path: str, doc: dict[str, Any]) -> Finding:
     produces = False
     deploys = False
     verified = False
-    for _, step in iter_steps(doc):
+    for loc, step in iter_steps(doc):
+        # Only a ``pull-requests:`` pipeline runs on untrusted (fork) input.
+        # A ``branches:`` / ``default`` build->deploy is the trusted release
+        # path, so pairing produce+deploy there is not this finding.
+        if not loc.startswith("pull-requests"):
+            continue
         arts = step.get("artifacts")
         if (isinstance(arts, list) and arts) or (isinstance(arts, dict) and arts):
             produces = True

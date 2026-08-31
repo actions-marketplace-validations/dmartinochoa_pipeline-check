@@ -9,7 +9,9 @@ CB-006  Source auth uses long-lived token (not CodeConnect) HIGH      CICD-SEC-6
 CB-007  CodeBuild webhook has no filter_group               MEDIUM    CICD-SEC-1
 
 CB-001 fails on **either** a secret-like variable name (PASSWORD, TOKEN, …)
-**or** a value that looks like a credential (AKIA…, ghp_…, xoxb-…, eyJ…).
+**or** a value matching any shape in the shared credential-shape catalog
+(``_patterns.SECRET_VALUE_RE`` over ``_BUILTIN_PATTERNS``, e.g. AKIA…,
+ghp_…, glpat-…, npm_…, dckr_pat_…, xoxb-…, eyJ… JWTs).
 """
 from __future__ import annotations
 
@@ -82,7 +84,9 @@ def _cb001_plaintext_secrets(values: dict[str, Any], address: str) -> Finding:
     suspicious_values: list[str] = []
     for env_block in values.get("environment", []) or []:
         for env_var in env_block.get("environment_variable", []) or []:
-            name = env_var.get("name", "")
+            # ``get("name", "")`` keeps an explicit ``None``; coerce so
+            # ``_SECRET_NAME_RE.search`` never sees a non-string.
+            name = env_var.get("name") or ""
             val = env_var.get("value", "") or ""
             var_type = env_var.get("type") or "PLAINTEXT"
             if var_type != "PLAINTEXT":
@@ -178,12 +182,28 @@ def _cb003_logging_enabled(values: dict[str, Any], address: str) -> Finding:
 
 def _cb004_timeout(values: dict[str, Any], address: str) -> Finding:
     timeout = values.get("build_timeout")
-    passed = timeout is not None and timeout < _MAX_SENSIBLE_TIMEOUT
-    desc = (
-        f"Build timeout is set to {timeout} minutes."
-        if passed else
-        f"Build timeout is {timeout or 'default'} minutes (AWS maximum)."
-    )
+    # build_timeout is a number, but in HCL/plan mode it can arrive as an
+    # unresolved reference string; coerce only a clean integer literal and
+    # otherwise treat the value as unknown rather than comparing str < int.
+    timeout_num: int | None = None
+    if isinstance(timeout, bool):
+        timeout_num = None
+    elif isinstance(timeout, int):
+        timeout_num = timeout
+    elif isinstance(timeout, float):
+        timeout_num = int(timeout)
+    elif isinstance(timeout, str) and timeout.strip().lstrip("+-").isdigit():
+        timeout_num = int(timeout.strip())
+    passed = timeout_num is not None and timeout_num < _MAX_SENSIBLE_TIMEOUT
+    if passed:
+        desc = f"Build timeout is set to {timeout} minutes."
+    elif timeout in (None, ""):
+        desc = "No build timeout is set; CodeBuild defaults to 60 minutes."
+    else:
+        desc = (
+            f"Build timeout is {timeout} minutes, at or above the "
+            f"{_MAX_SENSIBLE_TIMEOUT}-minute maximum."
+        )
     return Finding(
         check_id="CB-004",
         title="No build timeout configured",

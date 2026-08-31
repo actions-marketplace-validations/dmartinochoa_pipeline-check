@@ -31,7 +31,7 @@ All other flags (`--output`, `--severity-threshold`, `--checks`,
 
 ## What it covers
 
-16 checks · 2 have an autofix patch (``--fix``).
+20 checks · 2 have an autofix patch (``--fix``).
 
 | Check | Title | Severity | Fix |
 |-------|-------|----------|-----|
@@ -50,6 +50,10 @@ All other flags (`--output`, `--severity-threshold`, `--checks`,
 | [ARGO-013](#argo-013) | Argo workflow does not opt out of SA token automount | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
 | [ARGO-014](#argo-014) | Argo template script runs unpinned package install | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
 | [ARGO-015](#argo-015) | Input artifact pulls from an insecure (non-HTTPS) URL | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [ARGO-016](#argo-016) | Workflow bound to a cluster-admin / over-privileged ServiceAccount | <span class="pg-sev pg-sev--critical">CRITICAL</span> |  |
+| [ARGO-017](#argo-017) | Argo resource template applies a manifest built from an untrusted parameter | <span class="pg-sev pg-sev--critical">CRITICAL</span> |  |
+| [ARGO-018](#argo-018) | Secret-named variable echoed / printed in a template script | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [ARGO-019](#argo-019) | Dangerous shell idiom (eval, sh -c variable, backtick exec) | <span class="pg-sev pg-sev--high">HIGH</span> |  |
 | [TAINT-007](#taint-007) | Untrusted input flows across templates via Argo ``outputs.parameters`` | <span class="pg-sev pg-sev--high">HIGH</span> |  |
 
 ---
@@ -62,7 +66,7 @@ All other flags (`--output`, `--severity-threshold`, `--checks`,
 <span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--esf">ESF-S-PIN-DEPS</span> <span class="pg-tag pg-tag--esf">ESF-S-VERIFY-DEPS</span> <span class="pg-tag pg-tag--cwe">CWE-829</span>
 </div>
 
-Walks ``spec.templates[].container``, ``spec.templates[].script``, and ``spec.templates[].containerSet.containers[]``. The image must contain ``@sha256:`` followed by a 64-char hex digest.
+Walks ``spec.templates[].container``, ``spec.templates[].script``, ``spec.templates[].containerSet.containers[]``, ``spec.templates[].initContainers[]``, and ``spec.templates[].sidecars[]``. The image must contain ``@sha256:`` followed by a 64-char hex digest.
 
 <div class="pg-rule__rec" markdown>
 
@@ -82,7 +86,7 @@ Pin every container / script template image to a content-addressable digest (``a
 <span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-5</span> <span class="pg-tag pg-tag--esf">ESF-D-RUNTIME-HARDENING</span> <span class="pg-tag pg-tag--cwe">CWE-269</span> <span class="pg-tag pg-tag--cwe">CWE-250</span>
 </div>
 
-Detection fires on ``securityContext.privileged: true``, ``runAsUser: 0``, ``runAsNonRoot: false``, ``allowPrivilegeEscalation: true``, or no ``securityContext`` block at all. Also walks ``spec.podSpecPatch`` (raw YAML) for an explicit ``privileged: true`` token.
+Detection fires on ``securityContext.privileged: true``, ``runAsUser: 0``, ``runAsNonRoot: false``, ``allowPrivilegeEscalation: true``, or no ``securityContext`` block at all. Walks ``spec.templates[].container``, ``spec.templates[].script``, ``spec.templates[].containerSet.containers[]``, ``spec.templates[].initContainers[]``, and ``spec.templates[].sidecars[]``. Also walks ``spec.podSpecPatch`` (raw YAML) for an explicit ``privileged: true`` token.
 
 <div class="pg-rule__rec" markdown>
 
@@ -166,7 +170,7 @@ Don't interpolate ``{{inputs.parameters.<name>}}`` directly into ``script.source
 <span class="pg-sev pg-sev--critical">CRITICAL</span> <span class="pg-fix pg-fix--rule" title="`--fix` will patch this rule">🔧 autofix</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-6</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-7</span> <span class="pg-tag pg-tag--esf">ESF-D-SECRETS</span> <span class="pg-tag pg-tag--cwe">CWE-798</span>
 </div>
 
-Strong matches: AWS access keys, GitHub PATs, JWTs. Weak match: env var name suggests a secret (``*_TOKEN``, ``*_KEY``, ``*PASSWORD``, ``*SECRET``) and the value is a non-empty literal rather than an interpolation.
+Strong matches: AWS access keys, GitHub PATs, JWTs. Weak match: env var name suggests a secret (``*_TOKEN``, ``*_KEY``, ``*PASSWORD``, ``*SECRET``) and the value is a non-empty literal rather than an interpolation. Known false positives for the weak-match path: cache or partition keys (``CACHE_KEY``, ``REDIS_KEY``, ``DYNAMO_PARTITION_KEY``); path variables whose name contains ``_KEY_PATH`` or ``_KEY_FILE`` (``SSH_PRIVATE_KEY_PATH``); names where ``KEY`` is followed by a non-secret suffix such as ``_PREFIX``, ``_INDEX``, or ``_NAME``. These are excluded by the rule logic and will not fire.
 
 <div class="pg-rule__rec" markdown>
 
@@ -246,7 +250,7 @@ Add a cosign step to the Workflow. The most common shape is a final ``sign`` tem
 <span class="pg-sev pg-sev--medium">MEDIUM</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-9</span> <span class="pg-tag pg-tag--esf">ESF-S-SBOM</span> <span class="pg-tag pg-tag--cwe">CWE-1357</span>
 </div>
 
-An SBOM (CycloneDX or SPDX) records every component baked into the build. Without one, post-incident triage can't answer ``did this CVE ship?`` for a given artifact. Detection uses the shared SBOM-token catalog: syft, cyclonedx, cdxgen, spdx-tools, microsoft/sbom-tool. Fires only on artifact-producing Workflows.
+An SBOM (CycloneDX or SPDX) records every component baked into the build. Without one, post-incident triage can't answer ``did this CVE ship?`` for a given artifact. Detection uses the shared SBOM-token catalog: syft, cyclonedx, cdxgen, anchore/sbom-action, spdx-sbom-generator, microsoft/sbom-tool. Fires only on artifact-producing Workflows.
 
 <div class="pg-rule__rec" markdown>
 
@@ -266,7 +270,7 @@ Add an SBOM-generation template. ``syft <artifact> -o cyclonedx-json > /tmp/sbom
 <span class="pg-sev pg-sev--medium">MEDIUM</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-9</span> <span class="pg-tag pg-tag--esf">ESF-S-PROVENANCE</span> <span class="pg-tag pg-tag--esf">ESF-D-SIGN-ARTIFACTS</span> <span class="pg-tag pg-tag--cwe">CWE-345</span>
 </div>
 
-Provenance generation is distinct from signing. A signed artifact proves *who* published it; a provenance attestation proves *where / how* it was built. Detection uses the shared provenance-token catalog (``slsa-framework``, ``cosign attest``, ``in-toto``, ``witness run``, ``attest-build-provenance``).
+Provenance generation is distinct from signing. A signed artifact proves *who* published it; a provenance attestation proves *where / how* it was built. Detection uses the shared provenance-token catalog (``slsa-framework``, ``cosign attest``, ``in-toto-attestation``, ``witness run``, ``attest-build-provenance``).
 
 <div class="pg-rule__rec" markdown>
 
@@ -286,7 +290,7 @@ Add a ``cosign attest --predicate slsa.json --type slsaprovenance <ref>`` step a
 <span class="pg-sev pg-sev--medium">MEDIUM</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-9</span> <span class="pg-tag pg-tag--esf">ESF-S-VULN-MGMT</span> <span class="pg-tag pg-tag--cwe">CWE-1104</span>
 </div>
 
-Vulnerability scanning sits at a different layer from signing and SBOM. It answers *does this artifact ship a known CVE?* rather than *can we verify what it is?*. Detection uses the shared vuln-scan-token catalog: trivy, grype, snyk, npm-audit, pip-audit, osv-scanner, govulncheck, anchore, codeql-action, semgrep, bandit, checkov, tfsec. Walks every Argo document and passes if any document includes a scanner reference.
+Vulnerability scanning sits at a different layer from signing and SBOM. It answers *does this artifact ship a known CVE?* rather than *can we verify what it is?*. Detection uses the shared vuln-scan-token catalog: trivy, grype, snyk, npm-audit, pip-audit, osv-scanner, govulncheck, codeql-action, semgrep, bandit, checkov, tfsec. Walks every Argo document and passes if any document includes a scanner reference.
 
 <div class="pg-rule__rec" markdown>
 
@@ -330,7 +334,7 @@ Set ``spec.automountServiceAccountToken: false`` on the Workflow / WorkflowTempl
 <span class="pg-sev pg-sev--medium">MEDIUM</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--esf">ESF-S-PIN-DEPS</span> <span class="pg-tag pg-tag--esf">ESF-S-VERIFY-DEPS</span> <span class="pg-tag pg-tag--cwe">CWE-829</span> <span class="pg-tag pg-tag--cwe">CWE-1357</span>
 </div>
 
-Detection reuses the cross-provider primitives ``PKG_INSECURE_RE`` and ``PKG_NO_LOCKFILE_RE`` from ``checks/base.py``. Same rule pack already exists for GHA (``GHA-021`` / ``GHA-022``), GitLab (``GL-021`` / ``GL-022``), Bitbucket / Azure DevOps / Jenkins / CircleCI / Cloud Build / Buildkite / Tekton / Drone. Argo was a gap; this closes it.
+Detection reuses the cross-provider primitives ``PKG_INSECURE_RE`` and ``PKG_NO_LOCKFILE_RE`` from ``checks/base.py``. Same rule pack already exists for GHA (``GHA-021`` / ``GHA-022``), GitLab (``GL-021`` / ``GL-022``), Bitbucket Pipelines / Azure DevOps / Jenkins / CircleCI / Google Cloud Build / Buildkite / Tekton / Drone. Argo was a gap; this closes it.
 
 Walks ``script.source`` plus joined ``container.args`` / ``container.command`` text per template. Steps and tasks across DAG / steps templates are equally in scope because they all reduce to a container with a shell payload.
 
@@ -378,6 +382,90 @@ Pull every input artifact over HTTPS. Replace ``http://`` with ``https://`` in a
 
 </div>
 
+<div class="pg-rule pg-rule--critical" markdown>
+
+## ARGO-016: Workflow bound to a cluster-admin / over-privileged ServiceAccount { #argo-016 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--critical">CRITICAL</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-2</span> <span class="pg-tag pg-tag--esf">ESF-D-IAM</span> <span class="pg-tag pg-tag--cwe">CWE-269</span> <span class="pg-tag pg-tag--cwe">CWE-250</span>
+</div>
+
+Fires when a Workflow / CronWorkflow sets ``spec.serviceAccountName`` (or a template's own ``serviceAccountName`` override) to a name that signals a cluster-wide admin binding (``cluster-admin``, or a name containing ``cluster-admin``, ``admin``, ``root``, ``superuser``). The actual privilege lives in the RBAC ``ClusterRoleBinding``, which isn't visible in the Workflow, so this is a name-based heuristic (MEDIUM confidence) for the common copy-paste shape; the broader case (an innocuously-named SA bound to cluster-admin) needs the RBAC manifest. Distinct from ARGO-003, which flags the *default* SA.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Don't run a Workflow as a cluster-admin / superuser ServiceAccount. Create a dedicated SA scoped to the workflow's namespace and bind it (via a namespaced ``Role`` / ``RoleBinding``) to only the verbs and resources the workflow needs. A workflow running as ``cluster-admin`` lets any step, or any code injected into a step, use the automounted token to act cluster-wide: read every secret, schedule privileged pods on any node, and grant itself more roles.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--critical" markdown>
+
+## ARGO-017: Argo resource template applies a manifest built from an untrusted parameter { #argo-017 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--critical">CRITICAL</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-4</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-2</span> <span class="pg-tag pg-tag--esf">ESF-D-INJECTION</span> <span class="pg-tag pg-tag--cwe">CWE-94</span> <span class="pg-tag pg-tag--cwe">CWE-77</span>
+</div>
+
+Fires when a `resource` template with `action: create` / `apply` / `patch` / `replace` has an inline `manifest:` string containing a `{{...parameters...}}` or `{{item...}}` token. The manifest is K8s-object injection, not shell injection, so it fires regardless of quoting (ARGO-005's quoting carve-out does not apply) and `iter_containers` never visits `resource` templates, so no other rule sees this sink. A caller who can set the parameter (a webhook / Sensor, or anyone with Submit on the template) creates attacker-chosen objects, e.g. a privileged Pod or a cluster-admin binding, under the workflow's SA.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Don't interpolate `{{inputs.parameters.X}}` / `{{workflow.parameters.X}}` / `{{item}}` into a `resource` template's `manifest:` when `action:` is `create` / `apply` / `patch` / `replace`. Argo substitutes the value into the manifest text before `kubectl` applies it, so a parameter carrying YAML injects arbitrary fields or whole objects, applied by the workflow's ServiceAccount. Build the object from a fixed template and pass only scalar leaf values through `kubectl` field args, restrict who can set the parameter, and scope the ServiceAccount's RBAC to the exact objects the workflow needs.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## ARGO-018: Secret-named variable echoed / printed in a template script { #argo-018 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-6</span> <span class="pg-tag pg-tag--esf">ESF-D-SECRETS</span> <span class="pg-tag pg-tag--cwe">CWE-532</span> <span class="pg-tag pg-tag--cwe">CWE-200</span>
+</div>
+
+Scans every template ``script.source`` and ``container.args`` for a secret-named variable handed to ``echo`` / ``printf`` / ``cat`` / ``tee``, for an ``env`` / ``printenv`` dump, and for ``set -x`` with a secret-named variable in scope (the shared ``log_leak`` detector, with GHA-033 / GL-036 / BB-032 / ADO-031 / CC-032 / JF-042 / HARNESS-013 / BK-017 / DR-018). Variable names matching common secret patterns (PASSWORD / TOKEN / SECRET / API_KEY / CREDENTIAL) trigger the rule. The Argo analog of GL-036 / CC-032.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Don't print secret values in template scripts. A secret mounted from a Kubernetes ``Secret`` (via ``valueFrom.secretKeyRef`` or an artifact) is plaintext in the pod, and ``echo`` / ``set -x`` / ``env`` / ``printenv`` write it straight to the workflow-pod log, which anyone with read access to the cluster or its log sink can see. Log a boolean instead (``[ -n "$TOKEN" ] && echo set || echo unset``), and avoid ``set -x`` while a credential variable is in scope.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## ARGO-019: Dangerous shell idiom (eval, sh -c variable, backtick exec) { #argo-019 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-4</span> <span class="pg-tag pg-tag--esf">ESF-D-INJECTION</span> <span class="pg-tag pg-tag--cwe">CWE-95</span>
+</div>
+
+Complements ARGO-005 (untrusted ``inputs.parameters.*`` interpolated into a template script / args). This rule fires on intrinsically risky idioms, ``eval``, ``sh -c "$X"``, backtick exec, regardless of whether the input source is currently trusted, because the idiom hands a value full shell-grammar reach. Uses the shared ``_primitives.shell_eval`` detector over each template ``script.source`` and ``container.args``. The Argo analog of GHA-028 / GL-026 / BB-026 / ADO-027 / CC-027 / BK-016 / DR-017.
+
+**Known false-positive modes**
+
+- ``eval "$(ssh-agent -s)"`` and similar ``eval "$(<literal-tool>)"`` bootstrap idioms are intentionally NOT flagged, the substituted command is literal, only its output is eval'd.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Replace ``eval "$VAR"`` / ``sh -c "$VAR"`` / backtick exec with direct command invocation. Validate or allow-list any value that must feed a dynamic command at the boundary.
+
+</div>
+
+</div>
+
 <div class="pg-rule pg-rule--high" markdown>
 
 ## TAINT-007: Untrusted input flows across templates via Argo ``outputs.parameters`` { #taint-007 }
@@ -392,13 +480,13 @@ v1 limitations: ``workflowTemplateRef:`` cross-document references aren't resolv
 
 **Known false-positive modes**
 
-- If the producer template runs a sanitiser between the tainted ``{{inputs.parameters.X}}`` interpolation and the output-path write, the consumer is no longer exploitable but TAINT-007 still fires. Suppress via ignore-file scoped to the consumer template name when this is the deliberate shape; the sanitiser is then load-bearing.
+- If the producer template runs a sanitizer between the tainted ``{{inputs.parameters.X}}`` interpolation and the output-path write, the consumer is no longer exploitable but TAINT-007 still fires. Suppress via ignore-file scoped to the consumer template name when this is the deliberate shape; the sanitizer is then load-bearing.
 
 <div class="pg-rule__rec" markdown>
 
 **Recommended action**
 
-Sanitise the value at the producer template before it lands in an output parameter. The canonical safe pattern is to surface ``{{inputs.parameters.<X>}}`` into a quoted shell variable, run a sanitiser (``tr -dc 'a-zA-Z0-9 '`` for a freeform title), and only then redirect the cleaned value to the output path. The consumer template should still reference ``{{inputs.parameters.<name>}}`` quoted (``"{{inputs.parameters.title}}"``) and never inline into a command without re-quoting. Removing the cross-template forwarding is the strongest fix; if the value genuinely needs to flow downstream, validate the sanitiser is doing what you think before relying on it.
+Sanitize the value at the producer template before it lands in an output parameter. The canonical safe pattern is to surface ``{{inputs.parameters.<X>}}`` into a quoted shell variable, run a sanitizer (``tr -dc 'a-zA-Z0-9 '`` for a freeform title), and only then redirect the cleaned value to the output path. The consumer template should still reference ``{{inputs.parameters.<name>}}`` quoted (``"{{inputs.parameters.title}}"``) and never inline into a command without re-quoting. Removing the cross-template forwarding is the strongest fix; if the value genuinely needs to flow downstream, validate the sanitizer is doing what you think before relying on it.
 
 </div>
 

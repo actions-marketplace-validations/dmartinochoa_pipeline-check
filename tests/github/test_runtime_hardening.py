@@ -25,7 +25,7 @@ class TestGHA008LiteralSecrets:
             runs-on: ubuntu-latest
             timeout-minutes: 30
             env:
-              AWS_ACCESS_KEY_ID: AKIAIOSFODNN7EXAMPLE
+              AWS_ACCESS_KEY_ID: AKIAZ3MHALF2TESTHIJK
             steps: [{run: 'aws s3 ls'}]
         """
         f = run_check(wf, "GHA-008")
@@ -167,6 +167,24 @@ class TestGHA016CurlPipe:
             timeout-minutes: 30
             steps:
               - run: wget -O - https://example.com/install.sh | sh
+        """
+        f = run_check(wf, "GHA-016")
+        assert not f.passed
+
+    def test_fails_on_process_substitution(self):
+        # ``bash <(curl ...)`` runs the fetched content via a /dev/fd
+        # handle, no pipe character, so the direct-pipe matcher never
+        # sees it. Regression guard: this evasion of the curl-pipe shape
+        # must still fire.
+        wf = """
+        name: ci
+        on: push
+        jobs:
+          build:
+            runs-on: ubuntu-latest
+            timeout-minutes: 30
+            steps:
+              - run: bash <(curl -fsSL https://example.com/install.sh)
         """
         f = run_check(wf, "GHA-016")
         assert not f.passed
@@ -1107,3 +1125,21 @@ class TestGHA038AllowUnsecureCommands:
         """
         f = run_check(wf, "GHA-038")
         assert f.passed
+
+
+def test_gha019_token_as_arg_with_stdout_redirect_passes():
+    # Regression (2026-07 audit, GHA-019): passing the token inline as a
+    # header and redirecting the command's OUTPUT to a file does not
+    # persist the token.
+    wf = """
+    on: push
+    jobs:
+      x:
+        runs-on: ubuntu-latest
+        steps:
+          - run: |
+              gh api /repos/o/r --header "Authorization: Bearer $GITHUB_TOKEN" > result.json
+          - run: |
+              curl -s -H "Authorization: token ${{ secrets.API_TOKEN }}" https://api.example.com/x > out.json
+    """
+    assert run_check(wf, "GHA-019").passed

@@ -37,7 +37,7 @@ class TestGL013AwsLongLived:
           stage: deploy
           image: amazon/aws-cli:2.15.0
           script:
-            - export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
+            - export AWS_ACCESS_KEY_ID=AKIAZ3MHALF2TESTHIJK
             - aws s3 ls
           timeout: 30 minutes
         """
@@ -132,6 +132,23 @@ class TestGL019VulnScanning:
           script:
             - docker build -t registry.example.com/app:v1 .
             - trivy image --severity HIGH,CRITICAL registry.example.com/app:v1
+            - docker push registry.example.com/app:v1
+          timeout: 30 minutes
+        """
+        f = run_check(cfg, "GL-019")
+        assert f.passed
+
+    def test_passes_with_gitlab_security_templates(self):
+        # Regression (2026-07 audit, GL-019): GitLab's built-in Security
+        # templates are the canonical way to wire scanning.
+        cfg = """
+        include:
+          - template: Security/Dependency-Scanning.gitlab-ci.yml
+          - template: Security/Container-Scanning.gitlab-ci.yml
+        build_job:
+          image: docker:24-cli
+          script:
+            - docker build -t registry.example.com/app:v1 .
             - docker push registry.example.com/app:v1
           timeout: 30 minutes
         """

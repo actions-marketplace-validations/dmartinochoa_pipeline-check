@@ -41,6 +41,7 @@ from ..._yaml_strict import safe_load_strict
 from ..base import Finding, Severity
 from ..rule import Rule
 from .evaluator import CompiledRule, PredicateError, compile_rule_body
+from .rego_loader import LoadedRegoRules, RegoRuleMetadata
 
 # Providers that custom rules can target. AWS / Terraform / CFN /
 # Dockerfile have shapes that don't fit the dict-tree DSL and are
@@ -84,10 +85,21 @@ class LoadedCustomRules:
     by_provider: dict[str, list[CompiledCustomRule]] = field(
         default_factory=dict,
     )
+    #: Rego rules grouped by provider. Parallel to ``by_provider``.
+    rego_by_provider: dict[str, list[RegoRuleMetadata]] = field(
+        default_factory=dict,
+    )
     #: Flat list of every loaded rule's metadata. Used by ``--explain``.
     rules: list[Rule] = field(default_factory=list)
     #: Source files actually loaded.
     sources: list[str] = field(default_factory=list)
+
+    def merge_rego(self, rego: LoadedRegoRules) -> None:
+        """Merge loaded Rego rules into this aggregate."""
+        for provider, metas in rego.by_provider.items():
+            self.rego_by_provider.setdefault(provider, []).extend(metas)
+        self.rules.extend(rego.rules)
+        self.sources.extend(rego.sources)
 
 
 def load_custom_rules(
@@ -130,6 +142,15 @@ def load_custom_rules(
             except yaml.YAMLError as exc:
                 raise CustomRuleError(
                     f"{file_path}: YAML parse error: {exc}"
+                ) from exc
+            except (RecursionError, MemoryError) as exc:
+                # Deeply-nested / alias-expanding input raises a builtin,
+                # not a yaml.YAMLError. Surface it as the loader's own
+                # file-pointing error so a malformed custom-rule file
+                # fails fast instead of aborting with a raw traceback.
+                raise CustomRuleError(
+                    f"{file_path}: document too deeply nested or large "
+                    "to parse safely"
                 ) from exc
             for rule, provider, body in _compile_file(file_path, data):
                 if rule.id in builtin:
@@ -404,6 +425,9 @@ __all__ = [
     "CompiledCustomRule",
     "CustomRuleError",
     "LoadedCustomRules",
+    "LoadedRegoRules",
+    "RegoRuleMetadata",
     "load_custom_rules",
+    "make_kubernetes_check",
     "make_yaml_provider_check",
 ]

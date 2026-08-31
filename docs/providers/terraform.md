@@ -1,17 +1,21 @@
 # Terraform provider
 
-Scans a parsed **`terraform show -json`** plan document, no live AWS
-credentials required. The provider reads the resolved, typed resource
-representation Terraform emits post-`plan`, so checks never parse raw HCL.
+Two input paths, same rule pack:
+
+- **Plan JSON** (canonical): fully resolved attributes from
+  `terraform show -json`. Every value is typed, no ambiguity.
+- **HCL source** (best-effort): direct `*.tf` parsing via
+  `python-hcl2`. Variable/local substitution is partial;
+  unresolvable references stay opaque and findings on those
+  resources get confidence-demoted.
 
 Every AWS-mirrored check ID (CB-*, CP-*, CD-*, ECR-*, IAM-*, PBAC-*,
 S3-*, CT-*, CWL-*, SM-*, CA-*, CCM-*, LMB-*, KMS-*, SSM-*, EB-*,
 SIGN-*, CW-*) maps one-to-one to its AWS-provider counterpart. The
-semantics are identical, only the data source differs (plan JSON
-attributes instead of boto3 list/describe). TF-* rules are
+semantics are identical, only the data source differs. TF-* rules are
 Terraform-only and have no AWS-runtime analogue.
 
-## Producer workflow
+## Plan JSON workflow (canonical)
 
 ```bash
 terraform init
@@ -19,6 +23,21 @@ terraform plan -out=tfplan
 terraform show -json tfplan > plan.json
 pipeline_check --pipeline terraform --tf-plan plan.json
 ```
+
+## HCL source workflow (no `terraform` binary required)
+
+```bash
+pip install 'pipeline-check[hcl]'
+pipeline_check --pipeline terraform --tf-source ./infra/
+```
+
+When `main.tf` is present and no `--tf-plan` is given, `--tf-source .`
+is auto-detected. Variables with a `default` and `locals` with literal
+values resolve; `var.X` / `local.Y` references without defaults stay
+as opaque `${...}` strings. Terraform functions (`jsonencode`,
+`lookup`, `coalesce`) are not evaluated. Local child modules
+(`source = "./"`) are walked recursively; remote registry modules are
+skipped.
 
 All other flags (`--output`, `--severity-threshold`, `--checks`,
 `--standard`, …) behave the same as with the AWS provider.
@@ -87,6 +106,10 @@ Scope filter: `aws_iam_role.assume_role_policy` includes
 `codebuild.amazonaws.com`, `codepipeline.amazonaws.com`, or
 `codedeploy.amazonaws.com` as a `Service` principal.
 
+`IAM-009` / `IAM-010` are the cross-cloud OIDC-federation analogs
+(Azure / GCP). They read their own resource types and are not gated by
+the AWS service-principal scope filter above.
+
 | Check   | Primary input |
 |---------|---------------|
 | IAM-001 | `managed_policy_arns` + `aws_iam_role_policy_attachment.policy_arn` |
@@ -96,6 +119,8 @@ Scope filter: `aws_iam_role.assume_role_policy` includes
 | IAM-005 | `aws_iam_role.assume_role_policy` (external principal w/o `sts:ExternalId`) |
 | IAM-006 | inline + attached policy JSON (sensitive actions on `Resource = "*"`) |
 | IAM-008 | `aws_iam_role.assume_role_policy` (OIDC `:aud` / `:sub` pin) |
+| IAM-009 | `azurerm_federated_identity_credential.{issuer,subject}` |
+| IAM-010 | `google_iam_workload_identity_pool_provider` (`oidc.issuer_uri` + `attribute_condition`) |
 
 ### S3 (artifact buckets discovered from pipelines)
 
@@ -140,7 +165,7 @@ to-be-created resource and Terraform defers it to apply.
 
 ## What it covers
 
-71 checks · 0 have an autofix patch (``--fix``).
+73 checks · 0 have an autofix patch (``--fix``).
 
 | Check | Title | Severity | Fix |
 |-------|-------|----------|-----|
@@ -192,6 +217,8 @@ to-be-created resource and Terraform defers it to apply.
 | [IAM-005](#iam-005) | CI/CD role trust policy missing sts:ExternalId | <span class="pg-sev pg-sev--high">HIGH</span> |  |
 | [IAM-006](#iam-006) | Sensitive actions granted with wildcard Resource | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
 | [IAM-008](#iam-008) | OIDC-federated role trust policy missing audience or subject pin | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [IAM-009](#iam-009) | Azure federated identity credential trusts a broad GitHub subject | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [IAM-010](#iam-010) | GCP workload identity provider has no repository attribute condition | <span class="pg-sev pg-sev--high">HIGH</span> |  |
 | [KMS-001](#kms-001) | Customer-managed symmetric KMS key has rotation disabled | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
 | [KMS-002](#kms-002) | KMS key policy grants kms:* to an IAM principal | <span class="pg-sev pg-sev--high">HIGH</span> |  |
 | [LMB-001](#lmb-001) | Lambda function has no code-signing config | <span class="pg-sev pg-sev--high">HIGH</span> |  |
@@ -306,7 +333,7 @@ Enumerate specific actions (``codeartifact:GetPackageVersion``, ``codeartifact:D
 <span class="pg-sev pg-sev--critical">CRITICAL</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-6</span> <span class="pg-tag pg-tag--cwe">CWE-798</span>
 </div>
 
-Walks every ``aws_codebuild_project.environment[0].environment_variable[*]``. Flags any entry whose ``type`` is ``PLAINTEXT`` (or absent, which Terraform defaults to PLAINTEXT) when (a) the ``name`` matches a secret-like pattern (``PASSWORD``, ``TOKEN``, ``API_KEY``, …) or (b) the ``value`` matches a known credential shape (AKIA/ASIA access keys, GitHub tokens, Slack ``xox*`` tokens, JWTs). Plaintext values land in the AWS console, CloudTrail, and build logs.
+Walks every ``aws_codebuild_project.environment[0].environment_variable[*]``. Flags any entry whose ``type`` is ``PLAINTEXT`` (or absent, which Terraform defaults to PLAINTEXT) when (a) the ``name`` matches a secret-like pattern (``PASSWORD``, ``TOKEN``, ``API_KEY``, …) or (b) the ``value`` matches one of pipeline-check's known credential shapes (cloud access keys, VCS / registry / CI / cloud-service tokens, Slack ``xox*`` tokens, JWTs — the same shared detector catalog GHA-008 uses). Plaintext values land in the AWS console, CloudTrail, and build logs.
 
 <div class="pg-rule__rec" markdown>
 
@@ -486,7 +513,7 @@ Pin ``environment[0].image`` by ``@sha256:<digest>`` rather than a mutable tag. 
 <span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-4</span> <span class="pg-tag pg-tag--cwe">CWE-863</span>
 </div>
 
-Reads ``aws_codebuild_webhook.filter_group[*].filter[*]``. For each group that covers a ``PULL_REQUEST_*`` event, fires when no sibling ``ACTOR_ACCOUNT_ID`` filter constrains the PR author.
+Reads ``aws_codebuild_webhook.filter_group[*].filter[*]``. For each group that covers a pre-merge pull-request event (``PULL_REQUEST_CREATED``, ``PULL_REQUEST_UPDATED``, or ``PULL_REQUEST_REOPENED`` — the ones a fork author triggers), fires when no sibling ``ACTOR_ACCOUNT_ID`` filter constrains the PR author. ``PULL_REQUEST_MERGED`` runs post-merge on the base branch, so it isn't treated as a fork-controlled event.
 
 <div class="pg-rule__rec" markdown>
 
@@ -606,7 +633,7 @@ Enable ``auto_rollback_configuration`` with at least the ``DEPLOYMENT_FAILURE`` 
 <span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-1</span> <span class="pg-tag pg-tag--cwe">CWE-754</span>
 </div>
 
-Reads ``aws_codedeploy_deployment_group.deployment_config_name``. Fires when the value is ``CodeDeployDefault.AllAtOnce``, ``LambdaAllAtOnce``, or ``ECSAllAtOnce`` — these route every request to the new revision simultaneously, leaving no canary validation window.
+Reads ``aws_codedeploy_deployment_group.deployment_config_name``. Fires when the value is a managed all-at-once config (``CodeDeployDefault.AllAtOnce``, ``LambdaAllAtOnce``, ``ECSAllAtOnce``) or a custom ``aws_codedeploy_deployment_config`` in the same plan that is semantically all-at-once (``minimum_healthy_hosts`` value 0, or a ``traffic_routing_config`` of type ``AllAtOnce``). These route every request to the new revision simultaneously, leaving no canary validation window.
 
 <div class="pg-rule__rec" markdown>
 
@@ -906,7 +933,7 @@ Declare an ``aws_cloudwatch_event_rule`` whose ``event_pattern`` matches ``aws.c
 <span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-8</span> <span class="pg-tag pg-tag--cwe">CWE-441</span>
 </div>
 
-Reads ``aws_cloudwatch_event_target.arn``. A literal ``*`` in the ARN is the offending shape, even when EventBridge allows it at the API level, it makes the target opaque to any reviewer trying to trace event flow.
+Reads ``aws_cloudwatch_event_target.arn``. A literal ``*`` in the ARN is the offending shape, even when EventBridge allows it at the API level, it makes the target opaque to any reviewer trying to trace event flow. A CloudWatch Logs target ARN, whose documented form ends in ``:log-group:/name:*`` (the mandatory log-stream selector), is not treated as a wildcard target.
 
 <div class="pg-rule__rec" markdown>
 
@@ -1166,13 +1193,53 @@ Scope ``Resource`` to specific ARNs (bucket ARNs, key ARNs, secret ARNs, role AR
 <span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-2</span> <span class="pg-tag pg-tag--cwe">CWE-287</span>
 </div>
 
-Inspects every ``aws_iam_role.assume_role_policy`` that carries an OIDC trust statement (provider URL like ``token.actions.githubusercontent.com``). Fires when ``Condition`` omits the audience or subject claim — without both, any repo under the IdP can assume the role.
+Inspects every ``aws_iam_role.assume_role_policy`` that carries an OIDC trust statement (provider URL like ``token.actions.githubusercontent.com``). Fires when ``Condition`` omits the audience or subject claim, or when a GitHub ``repo:`` subject wildcards the repo or ref segment (``repo:org/*``, ``repo:org/repo:*``) or trusts the ``pull_request`` context. Without a specific repo + ref pin, an untrusted workflow (including a fork PR) can assume the role.
 
 <div class="pg-rule__rec" markdown>
 
 **Recommended action**
 
 Add ``Condition.StringEquals`` (or ``StringLike``) entries pinning both ``<host>:aud`` and ``<host>:sub`` to specific values. For GitHub Actions: pin ``aud`` to ``sts.amazonaws.com`` and ``sub`` to ``repo:<org>/<repo>:ref:refs/heads/main`` (or the env / branch combination the role expects).
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## IAM-009: Azure federated identity credential trusts a broad GitHub subject { #iam-009 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-2</span> <span class="pg-tag pg-tag--cwe">CWE-287</span> <span class="pg-tag pg-tag--cwe">CWE-1390</span>
+</div>
+
+Fires on an ``azurerm_federated_identity_credential`` whose ``issuer`` is the GitHub Actions OIDC issuer and whose ``subject`` wildcards the org/repo segment, wildcards the ref segment, or uses the ``pull_request`` context. Azure's Workload Identity Federation is the Azure analogue of the AWS OIDC trust IAM-008 audits; no other rule reads ``azurerm_federated_identity_credential``. A subject pinned to a specific repo and ref/environment passes.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Pin ``azurerm_federated_identity_credential.subject`` to one repository AND a specific ref or environment, e.g. ``repo:myorg/myrepo:ref:refs/heads/main`` or ``repo:myorg/myrepo:environment:production``. An org wildcard (``repo:myorg/*``), a ref wildcard (``repo:myorg/myrepo:*``), or the ``pull_request`` context lets an untrusted workflow run (including a fork pull request) exchange its GitHub token for your Azure identity. Use one federated credential per repo+environment rather than a wildcarded subject.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## IAM-010: GCP workload identity provider has no repository attribute condition { #iam-010 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-2</span> <span class="pg-tag pg-tag--cwe">CWE-287</span> <span class="pg-tag pg-tag--cwe">CWE-1390</span>
+</div>
+
+Fires on a ``google_iam_workload_identity_pool_provider`` with an ``oidc`` block that either has no ``attribute_condition`` at all (any token from the issuer federates), or - for the GitHub / GitLab CI issuers - has a condition that never references the repository (``repository`` / ``repo:`` / ``sub``), so it does not constrain which repo can assume the identity. GHA-062 audits the same surface from a GitHub workflow's sibling files; this reads the Terraform resource directly.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Set ``attribute_condition`` on every ``google_iam_workload_identity_pool_provider`` with an ``oidc`` block, and make it constrain the source repository, e.g. ``assertion.repository_owner == 'myorg'`` or ``assertion.repository == 'myorg/myrepo'``. Without a condition that pins the repo, any identity the issuer mints (any GitHub repo on the planet, for the GitHub issuer) can exchange its token for a Google access token scoped to whatever the pool grants. Restrict ``allowed_audiences`` as well.
 
 </div>
 
@@ -1286,7 +1353,7 @@ Move secrets to Secrets Manager or SSM Parameter Store and read them at function
 <span class="pg-sev pg-sev--critical">CRITICAL</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-8</span> <span class="pg-tag pg-tag--cwe">CWE-732</span>
 </div>
 
-Inspects every ``aws_lambda_permission`` resource. Fires when ``principal`` is ``"*"`` or any other wildcard form. A wildcard invoker exposes the function — and whatever role it executes with — to the whole internet.
+Inspects every ``aws_lambda_permission`` resource. Fires when ``principal`` is exactly ``"*"`` and the permission carries no ``source_account`` / ``source_arn`` scoping condition. (The Lambda API rejects wildcard ARN principals like ``arn:aws:iam::*:root``, so only the bare ``"*"`` reaches this rule.) A wildcard invoker exposes the function — and whatever role it executes with — to the whole internet.
 
 <div class="pg-rule__rec" markdown>
 
@@ -1606,7 +1673,7 @@ Replace static keys with role-based access: an ``aws_iam_role`` plus an OIDC ``a
 <span class="pg-sev pg-sev--critical">CRITICAL</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-6</span> <span class="pg-tag pg-tag--cwe">CWE-312</span>
 </div>
 
-Walks every value of the stateful data-store resources (``aws_db_instance``, ``aws_rds_cluster``, ``aws_redshift_cluster``, ``aws_elasticache_replication_group``, ``aws_docdb_cluster``, ``aws_neptune_cluster``, ``aws_opensearch_domain``, ``aws_memorydb_cluster``). Fires when a string leaf matches a credential shape (AKIA/ASIA, ``ghp_``, JWT, …) OR when a secret-named attribute (``*password``, ``*token``, …) carries a non-placeholder literal.
+Walks every value of the stateful data-store resources (``aws_db_instance``, ``aws_rds_cluster``, ``aws_redshift_cluster``, ``aws_elasticache_replication_group``, ``aws_docdb_cluster``, ``aws_neptune_cluster``, ``aws_opensearch_domain``, ``aws_memorydb_cluster``, ``aws_secretsmanager_secret_version`` whose ``secret_string`` is a common paste site for literal tokens). Fires when a string leaf matches a credential shape (AKIA/ASIA, ``ghp_``, JWT, …) OR when a secret-named attribute (``*password``, ``*token``, …) carries a non-placeholder literal.
 
 <div class="pg-rule__rec" markdown>
 

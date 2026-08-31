@@ -330,6 +330,13 @@ CASES: list[CheckCase] = [
     CheckCase("CC-029", "CICD-SEC-3"),
     CheckCase("CC-030", "CICD-SEC-6"),
     CheckCase("CC-031", "CICD-SEC-2"),
+    CheckCase("CC-032", "CICD-SEC-6", ("ESF-D-SECRETS",)),
+    CheckCase("CC-033", "CICD-SEC-3", ("ESF-S-VERIFY-DEPS",)),
+    CheckCase("CC-034", "CICD-SEC-4", ("ESF-D-INJECTION",)),
+    CheckCase("CC-035", "CICD-SEC-3", ("ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS")),
+    CheckCase("CC-036", "CICD-SEC-4", ("ESF-D-INJECTION",)),
+    CheckCase("CC-037", "CICD-SEC-4", ("ESF-D-INJECTION",)),
+    CheckCase("CC-038", "CICD-SEC-1", ("ESF-C-APPROVAL",)),
     # ── GitHub Actions backfill (GHA-028..055) ───────────────────────
     # GHA-041 / 042 / 043 / 047 are network-dependent (need
     # ``--resolve-remote`` to populate ``ctx.action_metadata``); the
@@ -365,6 +372,43 @@ CASES: list[CheckCase] = [
     CheckCase("GHA-059", "CICD-SEC-3", ("ESF-S-VERIFY-DEPS",)),
     CheckCase("GHA-060", "CICD-SEC-3", ("ESF-S-VERIFY-DEPS",)),
     CheckCase("GHA-061", "CICD-SEC-5", ("ESF-C-LEAST-PRIV", "ESF-D-TOKEN-HYGIENE")),
+    CheckCase("GHA-063", "CICD-SEC-1", ("ESF-D-INJECTION",)),
+    CheckCase("GHA-064", "CICD-SEC-1", ("ESF-D-INJECTION",)),
+    CheckCase("GHA-065", "CICD-SEC-4", ("ESF-D-INJECTION",)),
+    CheckCase("GHA-066", "CICD-SEC-6", ("ESF-D-SECRETS",)),
+    CheckCase("GHA-067", "CICD-SEC-6", ("ESF-D-SECRETS",)),
+    CheckCase("GHA-068", "CICD-SEC-7", ("ESF-D-BUILD-ENV",)),
+    CheckCase("GHA-069", "CICD-SEC-5", ("ESF-C-LEAST-PRIV",)),
+    CheckCase("GHA-070", "CICD-SEC-3", ("ESF-S-VERIFY-DEPS",)),
+    CheckCase("GHA-071", "CICD-SEC-4", ("ESF-D-INJECTION",)),
+    CheckCase("GHA-072", "CICD-SEC-6", ("ESF-D-SECRETS", "ESF-C-LEAST-PRIV")),
+    CheckCase("GHA-073", "CICD-SEC-6", ("ESF-D-SECRETS",)),
+    CheckCase("GHA-086", "CICD-SEC-1", ("ESF-C-APPROVAL", "ESF-C-ENV-SEP")),
+    CheckCase("GHA-087", "CICD-SEC-10", ("ESF-D-SECRETS",)),
+    CheckCase("GHA-088", "CICD-SEC-3", ("ESF-S-VERIFY-DEPS",)),
+    CheckCase("GHA-092", "CICD-SEC-1", ("ESF-D-CODE-REVIEW",)),
+    CheckCase("GHA-093", "CICD-SEC-10", ("ESF-D-SECRETS", "ESF-D-INJECTION")),
+    CheckCase("GHA-103", "CICD-SEC-1", ("ESF-D-CODE-REVIEW", "ESF-D-INJECTION")),
+    CheckCase("GHA-104", "CICD-SEC-4", ("ESF-D-CODE-REVIEW",)),
+    CheckCase("GHA-105", "CICD-SEC-4", ("ESF-D-BUILD-ENV", "ESF-D-PRIV-BUILD")),
+    CheckCase("GHA-106", "CICD-SEC-5", ("ESF-C-LEAST-PRIV", "ESF-D-TOKEN-HYGIENE")),
+    CheckCase("GHA-107", "CICD-SEC-7", ("ESF-D-BUILD-ENV",)),
+    CheckCase("GHA-108", "CICD-SEC-7", ("ESF-D-BUILD-ENV",)),
+    CheckCase("GHA-109", "CICD-SEC-7", ("ESF-D-BUILD-ENV",)),
+    CheckCase("GHA-110", "CICD-SEC-3", ("ESF-S-VERIFY-DEPS",)),
+    CheckCase("GHA-111", "CICD-SEC-5", ("ESF-C-LEAST-PRIV", "ESF-D-PRIV-BUILD")),
+    CheckCase("GHA-112", "CICD-SEC-1", ("ESF-C-APPROVAL", "ESF-D-PRIV-BUILD")),
+    CheckCase("GHA-113", "CICD-SEC-2", ("ESF-D-TOKEN-HYGIENE", "ESF-C-APPROVAL")),
+    CheckCase("GHA-114", "CICD-SEC-1", ("ESF-C-APPROVAL", "ESF-D-TOKEN-HYGIENE")),
+    CheckCase("GHA-115", "CICD-SEC-5", ("ESF-C-LEAST-PRIV",)),
+    CheckCase("GHA-116", "CICD-SEC-6", ("ESF-D-SECRETS",)),
+    CheckCase("GHA-117", "CICD-SEC-4", ("ESF-D-INJECTION",)),
+    CheckCase("GHA-118", "CICD-SEC-4", ("ESF-D-INJECTION",)),
+    CheckCase("GHA-119", "CICD-SEC-4", ("ESF-D-INJECTION",)),
+    CheckCase("GHA-120", "CICD-SEC-4", ("ESF-D-INJECTION",)),
+    CheckCase("GHA-121", "CICD-SEC-3", ("ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS")),
+    CheckCase("GHA-122", "CICD-SEC-4", ("ESF-D-INJECTION",)),
+    CheckCase("GHA-123", "CICD-SEC-1", ("ESF-C-APPROVAL",)),
     # ── GitLab CI backfill (GL-026..033) ─────────────────────────────
     CheckCase("GL-026", "CICD-SEC-4", ("ESF-D-INJECTION",)),
     CheckCase("GL-027", "CICD-SEC-3", ("ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS")),
@@ -376,6 +420,21 @@ CASES: list[CheckCase] = [
     CheckCase("GL-033", "CICD-SEC-4"),
     CheckCase("GL-034", "CICD-SEC-3", ("ESF-S-VERIFY-DEPS",)),
     CheckCase("GL-035", "CICD-SEC-3", ("ESF-S-VERIFY-DEPS",)),
+    CheckCase("GL-036", "CICD-SEC-6", ("ESF-D-SECRETS",)),
+    CheckCase("GL-038", "CICD-SEC-6", ("ESF-D-SECRETS",)),
+    CheckCase("GL-039", "CICD-SEC-7", ("ESF-D-BUILD-ENV",)),
+    CheckCase("GL-040", "CICD-SEC-2", ("ESF-D-TOKEN-HYGIENE",)),
+    CheckCase("GL-041", "CICD-SEC-4", ("ESF-D-INJECTION",)),
+    CheckCase("GL-042", "CICD-SEC-3", ("ESF-S-PIN-DEPS", "ESF-S-TRUSTED-REG")),
+    CheckCase("GL-043", "CICD-SEC-7", ("ESF-S-VULN-MGMT",)),
+    CheckCase("GL-044", "CICD-SEC-1", ("ESF-C-APPROVAL", "ESF-C-ENV-SEP")),
+    CheckCase("GL-045", "CICD-SEC-4", ("ESF-D-INJECTION",)),
+    CheckCase("GL-046", "CICD-SEC-3", ("ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS")),
+    CheckCase("GL-047", "CICD-SEC-4", ("ESF-D-INJECTION",)),
+    CheckCase("GL-048", "CICD-SEC-4", ("ESF-D-INJECTION",)),
+    CheckCase("GL-049", "CICD-SEC-1", ("ESF-C-APPROVAL",)),
+    CheckCase("GL-050", "CICD-SEC-2"),
+    CheckCase("GL-037", "CICD-SEC-3", ("ESF-S-VERIFY-DEPS",)),
     # ── Bitbucket Pipelines backfill (BB-026..029) ───────────────────
     CheckCase("BB-026", "CICD-SEC-4", ("ESF-D-INJECTION",)),
     CheckCase("BB-027", "CICD-SEC-3", ("ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS")),
@@ -383,11 +442,27 @@ CASES: list[CheckCase] = [
     CheckCase("BB-029", "CICD-SEC-3"),
     CheckCase("BB-030", "CICD-SEC-3", ("ESF-S-VERIFY-DEPS",)),
     CheckCase("BB-031", "CICD-SEC-3", ("ESF-S-VERIFY-DEPS",)),
+    CheckCase("BB-032", "CICD-SEC-6", ("ESF-D-SECRETS",)),
+    CheckCase("BB-033", "CICD-SEC-4", ("ESF-D-INJECTION",)),
+    CheckCase("BB-034", "CICD-SEC-1", ("ESF-C-APPROVAL", "ESF-C-ENV-SEP")),
+    CheckCase("BB-035", "CICD-SEC-4", ("ESF-D-INJECTION",)),
+    CheckCase("BB-036", "CICD-SEC-4", ("ESF-D-INJECTION",)),
+    CheckCase("BB-037", "CICD-SEC-4", ("ESF-D-INJECTION",)),
+    CheckCase("BB-038", "CICD-SEC-3", ("ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS")),
+    CheckCase("BB-039", "CICD-SEC-1", ("ESF-C-APPROVAL",)),
     # ── Azure DevOps backfill (ADO-027..030) ─────────────────────────
     CheckCase("ADO-027", "CICD-SEC-4", ("ESF-D-INJECTION",)),
     CheckCase("ADO-028", "CICD-SEC-3", ("ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS")),
     CheckCase("ADO-029", "CICD-SEC-2"),
     CheckCase("ADO-030", "CICD-SEC-7"),
+    CheckCase("ADO-031", "CICD-SEC-6", ("ESF-D-SECRETS",)),
+    CheckCase("ADO-032", "CICD-SEC-6", ("ESF-D-SECRETS",)),
+    CheckCase("ADO-033", "CICD-SEC-4", ("ESF-D-INJECTION",)),
+    CheckCase("ADO-034", "CICD-SEC-4", ("ESF-D-INJECTION",)),
+    CheckCase("ADO-035", "CICD-SEC-4", ("ESF-D-INJECTION",)),
+    CheckCase("ADO-036", "CICD-SEC-4", ("ESF-D-INJECTION",)),
+    CheckCase("ADO-037", "CICD-SEC-3", ("ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS")),
+    CheckCase("ADO-038", "CICD-SEC-1", ("ESF-C-APPROVAL",)),
     # ── Jenkins backfill (JF-030..035) ───────────────────────────────
     CheckCase("JF-030", "CICD-SEC-4", ("ESF-D-INJECTION",)),
     CheckCase("JF-031", "CICD-SEC-3", ("ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS")),
@@ -395,6 +470,13 @@ CASES: list[CheckCase] = [
     CheckCase("JF-033", "CICD-SEC-6"),
     CheckCase("JF-034", "CICD-SEC-6"),
     CheckCase("JF-035", "CICD-SEC-3"),
+    CheckCase("JF-036", "CICD-SEC-4", ("ESF-D-INJECTION",)),
+    CheckCase("JF-037", "CICD-SEC-4", ("ESF-D-INJECTION",)),
+    CheckCase("JF-038", "CICD-SEC-1", ("ESF-C-APPROVAL",)),
+    CheckCase("JF-039", "CICD-SEC-4", ("ESF-D-INJECTION",)),
+    CheckCase("JF-040", "CICD-SEC-3", ("ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS")),
+    CheckCase("JF-041", "CICD-SEC-4", ("ESF-D-INJECTION",)),
+    CheckCase("JF-042", "CICD-SEC-6", ("ESF-D-SECRETS",)),
     # Category 3 — reusable-workflow / template pinning
     CheckCase("GHA-025", "CICD-SEC-3", ("ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS")),
     CheckCase("ADO-025", "CICD-SEC-3", ("ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS")),
@@ -457,7 +539,12 @@ KNOWN_UNCOVERED: frozenset[str] = frozenset({
     # because ``ctx.action_metadata`` is empty (only populated by
     # ``--resolve-remote``). Covered by ``test_workflow_fixtures.py``
     # which seeds the metadata synthetically.
-    "GHA-041", "GHA-042", "GHA-043", "GHA-047",
+    "GHA-041", "GHA-042", "GHA-043", "GHA-047", "GHA-089", "GHA-090", "GHA-091",
+    "GHA-094", "GHA-095", "GHA-096", "GHA-097", "GHA-098", "GHA-099",
+    # GHA-100 (cosign without identity/issuer) and GHA-102 (recursive
+    # submodule checkout on PR) need multi-step or network context the
+    # per-check harness can't model. Covered by tests/github/.
+    "GHA-100", "GHA-102",
     # Cross-cutting taint engine — covered by tests/test_gha_taint.py
     # with inline workflow docs rather than the per-check fixture
     # pattern; the workflow shapes the rule cares about (multi-step
@@ -468,11 +555,18 @@ KNOWN_UNCOVERED: frozenset[str] = frozenset({
     "TAINT-003",
     "TAINT-004",
     "TAINT-008",
+    "TAINT-009",
     # TAINT-005..007 live under buildkite.rules / tekton.rules /
     # argo.rules; the meta-test only tracks providers in
     # ``_PROVIDER_BY_PREFIX`` (GHA / GL / BB / ADO / JF / CC) so
     # they never enter ``expected_ids`` and don't need a
     # KNOWN_UNCOVERED entry.
+    # GHA-062 walks the workflow's repo for sidecar IaC files
+    # (``trust-policy.json`` / ``*.tf``) that the per-check
+    # safe/unsafe-pair harness can't model (the rule needs disk
+    # state alongside the YAML, not just YAML). Covered by
+    # tests/github/test_gha062.py with per-case tmpdir trees.
+    "GHA-062",
 })
 
 

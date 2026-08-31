@@ -1,9 +1,9 @@
 """ARGO-013, automountServiceAccountToken not explicitly false."""
 from __future__ import annotations
 
-from ...base import Finding, Severity
+from ...base import Finding, Location, Severity
 from ...rule import Rule
-from ..base import ArgoContext, iter_templates, template_name, workflow_spec
+from ..base import ArgoContext, doc_location, iter_templates, template_name, workflow_spec
 
 RULE = Rule(
     id="ARGO-013",
@@ -41,11 +41,47 @@ RULE = Rule(
         "rule then fires only on the broad spec-level absence, "
         "which is the actual gap.",
     ),
+    exploit_example=(
+        "# Vulnerable: a Workflow that never opts out of SA-token\n"
+        "# automount, so every step's pod gets the token mounted.\n"
+        "apiVersion: argoproj.io/v1alpha1\n"
+        "kind: Workflow\n"
+        "metadata: { name: ci }\n"
+        "spec:\n"
+        "  entrypoint: build\n"
+        "  serviceAccountName: ci-workflow-sa\n"
+        "  templates:\n"
+        "    - name: build\n"
+        "      container:\n"
+        "        image: ci-tools@sha256:abc123...\n"
+        "        command: [./build.sh]\n"
+        "\n"
+        "# Attack: automountServiceAccountToken defaults to true, so\n"
+        "# the SA token is mounted at\n"
+        "# /var/run/secrets/kubernetes.io/serviceaccount/ in the build\n"
+        "# pod even though build.sh never calls the Kubernetes API. An\n"
+        "# attacker who lands a shell in the step (a poisoned\n"
+        "# dependency, an injected command) reads the token and acts as\n"
+        "# ci-workflow-sa against the API, widening a build-step RCE\n"
+        "# into cluster access.\n"
+        "\n"
+        "# Safe: drop the token from pods that don't call the API.\n"
+        "spec:\n"
+        "  entrypoint: build\n"
+        "  serviceAccountName: ci-workflow-sa\n"
+        "  automountServiceAccountToken: false\n"
+        "  templates:\n"
+        "    - name: build\n"
+        "      container:\n"
+        "        image: ci-tools@sha256:abc123...\n"
+        "        command: [./build.sh]"
+    ),
 )
 
 
 def check(ctx: ArgoContext) -> Finding:
     offenders: list[str] = []
+    locations: list[Location] = []
     for doc in ctx.docs:
         spec = workflow_spec(doc)
         spec_value = spec.get("automountServiceAccountToken")
@@ -65,6 +101,7 @@ def check(ctx: ArgoContext) -> Finding:
             offenders.append(
                 f"{doc.kind}/{doc.name} {template_name(tmpl, idx)}"
             )
+            locations.append(doc_location(doc, tmpl))
     if not ctx.docs:
         return Finding(
             check_id=RULE.id, title=RULE.title, severity=RULE.severity,
@@ -88,4 +125,5 @@ def check(ctx: ArgoContext) -> Finding:
         check_id=RULE.id, title=RULE.title, severity=RULE.severity,
         resource="argo", description=desc,
         recommendation=RULE.recommendation, passed=passed,
+        locations=locations,
     )

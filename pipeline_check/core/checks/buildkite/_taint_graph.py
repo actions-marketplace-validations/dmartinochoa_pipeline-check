@@ -1,6 +1,6 @@
 """Per-pipeline taint graph for the Buildkite dataflow rules.
 
-The Buildkite analogue of the GHA / GitLab engines. Generalises
+The Buildkite analogue of the GHA / GitLab engines. Generalizes
 ``BK-003``'s single-step interpolation detection to a pipeline-
 wide reachability problem that follows the canonical Buildkite
 cross-step channel: ``buildkite-agent meta-data set / get``.
@@ -50,6 +50,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..base import TaintFlow
 from .base import iter_command_steps, step_commands, step_label
 from .rules.bk003_untrusted_interpolation import _TAINTED_VARS
 
@@ -79,6 +80,21 @@ class TaintPath:
         chain.extend(self.hops)
         chain.append(f"sink@{self.sink_location}({self.sink_consumer})")
         return " -> ".join(chain)
+
+    def to_flow(self) -> TaintFlow:
+        """Structured ``source_job -> sink_job`` edge for the chain engine.
+
+        Both ``source.location`` and ``sink_location`` are step labels
+        (the same ``key`` > ``label`` > ``steps[N]`` identifier BK-003 /
+        BK-007 anchor on), so the edge connects directly to those legs'
+        anchors with no normalization. The meta-data channel is per-build
+        rather than ordered, so the edge is producer-step -> consumer-step.
+        """
+        return TaintFlow(
+            source_job=self.source.location,
+            sink_job=self.sink_location,
+            rendered=self.render(),
+        )
 
 
 # ── Meta-data set / get detectors ─────────────────────────────────
@@ -147,21 +163,26 @@ class _GraphState:
     consumers fire once per producer-consumer pair.
     """
 
-    # ``key -> [(producer_label, sources)]``
-    leaks: dict[str, list[tuple[str, list[TaintSource]]]] = field(
+    # ``key -> [(producer_idx, producer_label, sources)]``. The index
+    # (not the display label, which can repeat across steps) identifies
+    # the producing step so a shared label can't collapse two steps.
+    leaks: dict[str, list[tuple[int, str, list[TaintSource]]]] = field(
         default_factory=dict,
     )
 
     def record_leak(
         self,
         key: str,
+        producer_idx: int,
         producer: str,
         sources: list[TaintSource],
     ) -> None:
         bucket = self.leaks.setdefault(key, [])
-        bucket.append((producer, list(sources)))
+        bucket.append((producer_idx, producer, list(sources)))
 
-    def producers_of(self, key: str) -> list[tuple[str, list[TaintSource]]]:
+    def producers_of(
+        self, key: str,
+    ) -> list[tuple[int, str, list[TaintSource]]]:
         return list(self.leaks.get(key, []))
 
 
@@ -204,7 +225,7 @@ def analyze_pipeline(doc: dict[str, Any]) -> list[TaintPath]:
                         location=f"{label}",
                     ))
                 if sources:
-                    state.record_leak(key, label, sources)
+                    state.record_leak(key, idx, label, sources)
 
     # ── Pass 2: consumers. ────────────────────────────────────
     for idx, step in iter_command_steps(doc):
@@ -214,11 +235,13 @@ def analyze_pipeline(doc: dict[str, Any]) -> list[TaintPath]:
                 producers = state.producers_of(key)
                 if not producers:
                     continue
-                for producer_label, sources in producers:
-                    if producer_label == consumer_label:
-                        # Same step writes-then-reads its own key.
-                        # That's BK-003 territory (direct interpolation
-                        # within the step), skip cross-step emission.
+                for producer_idx, producer_label, sources in producers:
+                    if producer_idx == idx:
+                        # Same step writes-then-reads its own key (compare
+                        # by step index, not the display label which can
+                        # repeat). That's BK-003 territory (direct
+                        # interpolation within the step), skip cross-step
+                        # emission.
                         continue
                     for src in sources:
                         paths.append(TaintPath(

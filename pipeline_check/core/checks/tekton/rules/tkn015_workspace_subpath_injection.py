@@ -4,9 +4,9 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from ...base import Finding, Severity
+from ...base import Finding, Location, Severity
 from ...rule import Rule
-from ..base import TektonContext, step_name, task_steps
+from ..base import TektonContext, doc_location, step_name, task_steps
 
 RULE = Rule(
     id="TKN-015",
@@ -24,7 +24,7 @@ RULE = Rule(
         "shared volume. Tekton resolves ``$(params.x)`` substitution "
         "in workspace bindings before the volume mount happens, so "
         "``../../../etc`` lands as a real path. If you genuinely "
-        "need a runtime-chosen sub-path, sanitise the parameter "
+        "need a runtime-chosen sub-path, sanitize the parameter "
         "with a step-level pre-check (``case`` against an allow-"
         "list, reject anything containing ``..``) and pass the "
         "validated value through a result rather than the raw "
@@ -52,13 +52,55 @@ RULE = Rule(
         "see that pre-check; suppress on the specific step name "
         "when this is the deliberate shape.",
     ),
+    exploit_example=(
+        "# Vulnerable: ``$(params.target)`` is substituted into\n"
+        "# the workspace ``subPath`` literally. A PipelineRun with\n"
+        "# ``target: ../../../etc/secrets`` (or similar traversal)\n"
+        "# escapes the intended workspace directory and reads /\n"
+        "# writes outside it.\n"
+        "apiVersion: tekton.dev/v1\n"
+        "kind: Task\n"
+        "spec:\n"
+        "  params:\n"
+        "    - name: target\n"
+        "  workspaces:\n"
+        "    - name: shared\n"
+        "      subPath: $(params.target)\n"
+        "  steps:\n"
+        "    - name: write\n"
+        "      image: alpine@sha256:abc123...\n"
+        "      script: |\n"
+        "        echo data > /workspace/shared/out\n"
+        "\n"
+        "# Safe: pin the subPath to a static literal or validate\n"
+        "# the param shape upstream (in the Pipeline) against an\n"
+        "# allowlist of expected names. Tekton has no built-in\n"
+        "# path-canonicalisation for subPath, so the gate is on\n"
+        "# the producer of the param.\n"
+        "apiVersion: tekton.dev/v1\n"
+        "kind: Task\n"
+        "spec:\n"
+        "  workspaces:\n"
+        "    - name: shared\n"
+        "      subPath: artifacts\n"
+        "  steps:\n"
+        "    - name: write\n"
+        "      image: alpine@sha256:abc123...\n"
+        "      script: |\n"
+        "        echo data > /workspace/shared/out"
+    ),
 )
 
 
-# ``$(params.<name>)`` is the canonical Tekton substitution form;
-# the legacy single-paren ``$params.name`` is no longer accepted by
-# Tekton 0.30+, so we match only the documented shape.
-_PARAM_RE = re.compile(r"\$\(params\.([A-Za-z_][A-Za-z0-9_-]*)\)")
+# The two documented Tekton substitution forms: the dot form
+# ``$(params.name)`` and the bracket form ``$(params['name'])`` /
+# ``$(params["name"])`` (used for param names containing dots). The
+# legacy single-paren ``$params.name`` is no longer accepted by
+# Tekton 0.30+ and is intentionally not matched.
+_PARAM_RE = re.compile(
+    r"\$\(params(?:\.([A-Za-z_][A-Za-z0-9_-]*)"
+    r"|\[['\"]([^'\"]+)['\"]\])\)"
+)
 
 
 def _step_workspaces(step: dict[str, Any]) -> list[dict[str, Any]]:
@@ -71,23 +113,45 @@ def _step_workspaces(step: dict[str, Any]) -> list[dict[str, Any]]:
 
 def check(ctx: TektonContext) -> Finding:
     offenders: list[str] = []
+    locations: list[Location] = []
     examined = 0
     for doc in ctx.docs:
         if doc.kind not in ("Task", "ClusterTask"):
             continue
         examined += 1
+        spec = doc.data.get("spec") or {}
+        if isinstance(spec, dict):
+            task_ws = spec.get("workspaces")
+            if isinstance(task_ws, list):
+                for ws in task_ws:
+                    if not isinstance(ws, dict):
+                        continue
+                    sub = ws.get("subPath")
+                    if not isinstance(sub, str):
+                        continue
+                    refs = sorted(
+                        {(m.group(1) or m.group(2)) for m in _PARAM_RE.finditer(sub)},
+                    )
+                    if refs:
+                        offenders.append(
+                            f"{doc.kind}/{doc.name} "
+                            f"workspace.{ws.get('name', '?')}.subPath: "
+                            f"params.{', params.'.join(refs[:3])}"
+                        )
+                        locations.append(doc_location(doc, ws))
         for idx, step in enumerate(task_steps(doc)):
             for ws in _step_workspaces(step):
                 sub = ws.get("subPath")
                 if not isinstance(sub, str):
                     continue
-                refs = sorted({m.group(1) for m in _PARAM_RE.finditer(sub)})
+                refs = sorted({(m.group(1) or m.group(2)) for m in _PARAM_RE.finditer(sub)})
                 if refs:
                     offenders.append(
                         f"{doc.kind}/{doc.name} {step_name(step, idx)} "
                         f"workspace.{ws.get('name', '?')}.subPath: "
                         f"params.{', params.'.join(refs[:3])}"
                     )
+                    locations.append(doc_location(doc, ws))
     if examined == 0:
         return Finding(
             check_id=RULE.id, title=RULE.title, severity=RULE.severity,
@@ -108,4 +172,5 @@ def check(ctx: TektonContext) -> Finding:
         check_id=RULE.id, title=RULE.title, severity=RULE.severity,
         resource="tekton", description=desc,
         recommendation=RULE.recommendation, passed=passed,
+        locations=locations,
     )

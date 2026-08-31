@@ -39,7 +39,7 @@ RULE = Rule(
         "privileged context.",
         "[Keeping your GitHub Actions and workflows secure: "
         "Untrusted input](https://securitylab.github.com/resources/github-actions-untrusted-input/) "
-        "(GitHub Security Lab, 2020): catalogued real-world Actions "
+        "(GitHub Security Lab, 2020): cataloged real-world Actions "
         "carrying the same primitive. The fix pattern (split the "
         "workflow into a privileged labeler + an unprivileged "
         "builder) is now standard guidance.",
@@ -71,7 +71,7 @@ RULE = Rule(
         "# CI runs the malicious target with the base repo's secrets\n"
         "# (every ${{ secrets.* }} the workflow has access to) and a\n"
         "# write-scope GITHUB_TOKEN. The PR doesn't even need to be\n"
-        "# merged or reviewed — the privileged execution happens at\n"
+        "# merged or reviewed. The privileged execution happens at\n"
         "# PR-open time.\n"
         "\n"
         "# Safe: split the workflow. The labeler runs with secrets\n"
@@ -121,7 +121,8 @@ def check(path: str, doc: dict[str, Any]) -> Finding:
                 "actions/checkout@"
             ):
                 continue
-            ref = ((step.get("with") or {}).get("ref") or "")
+            with_block = step.get("with")
+            ref = with_block.get("ref") if isinstance(with_block, dict) else None
             if isinstance(ref, str) and PR_HEAD_REF_RE.search(ref):
                 offending.append(f"{job_id}[{idx}]")
                 locations.append(step_location(path, step))

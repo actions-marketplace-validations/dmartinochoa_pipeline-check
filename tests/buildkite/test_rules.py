@@ -1,6 +1,8 @@
 """Per-rule tests for every BK-* check."""
 from __future__ import annotations
 
+from pipeline_check.core.checks.base import Severity
+
 from .conftest import run_check
 
 # ── BK-001 plugin pinning ──────────────────────────────────────────────
@@ -68,7 +70,7 @@ class TestBK002LiteralSecrets:
     def test_fails_with_aws_access_key_pattern(self):
         cfg = """
         env:
-          AWS_ACCESS_KEY_ID: "AKIAIOSFODNN7EXAMPLE"
+          AWS_ACCESS_KEY_ID: "AKIAZ3MHALF2TESTHIJK"
         steps:
           - command: build
         """
@@ -94,6 +96,18 @@ class TestBK002LiteralSecrets:
         """
         f = run_check(cfg, "BK-002")
         assert f.passed
+
+    def test_fails_with_modern_token_under_innocuous_name(self):
+        # A GitLab PAT under a non-credential env name: only the shared
+        # vendor-token catalog catches it, not the name heuristic.
+        cfg = """
+        env:
+          REGISTRY_AUTH: "glpat-abcdefghij1234567890"
+        steps:
+          - command: build
+        """
+        f = run_check(cfg, "BK-002")
+        assert not f.passed
 
 
 # ── BK-003 untrusted interpolation ─────────────────────────────────────
@@ -695,3 +709,93 @@ class TestBK015AgentsTargeting:
         """
         f = run_check(cfg, "BK-015")
         assert f.passed
+
+
+# ── BK-016 dangerous shell idiom ───────────────────────────────────────
+
+
+class TestBK016ShellEval:
+    def test_fails_on_eval_of_variable(self):
+        cfg = """
+        steps:
+          - command:
+              - eval "$BUILD_CMD"
+        """
+        f = run_check(cfg, "BK-016")
+        assert not f.passed
+        assert "idiom" in f.description.lower()
+
+    def test_fails_on_sh_c_unquoted_variable(self):
+        cfg = """
+        steps:
+          - command: sh -c $RAW_HOOK
+        """
+        f = run_check(cfg, "BK-016")
+        assert not f.passed
+
+    def test_passes_on_direct_command(self):
+        cfg = """
+        steps:
+          - command:
+              - ./scripts/dispatch.sh "$BUILD_CMD"
+        """
+        f = run_check(cfg, "BK-016")
+        assert f.passed
+
+    def test_passes_on_ssh_agent_bootstrap_idiom(self):
+        # ``eval "$(ssh-agent -s)"`` substitutes a literal command;
+        # only its output is eval'd, so it is intentionally not flagged.
+        cfg = """
+        steps:
+          - command: eval "$(ssh-agent -s)"
+        """
+        f = run_check(cfg, "BK-016")
+        assert f.passed
+
+
+class TestBK017LogLeak:
+    def test_fails_on_echo_secret_named_var(self):
+        cfg = """
+        steps:
+          - command: echo "token is $DEPLOY_TOKEN"
+        """
+        f = run_check(cfg, "BK-017")
+        assert not f.passed
+        assert f.severity is Severity.HIGH
+
+    def test_fails_on_printenv_dump(self):
+        cfg = """
+        steps:
+          - command: printenv
+        """
+        f = run_check(cfg, "BK-017")
+        assert not f.passed
+
+    def test_passes_on_safe_existence_check(self):
+        cfg = """
+        steps:
+          - command: '[ -n "$TOKEN" ] && echo set || echo unset'
+        """
+        f = run_check(cfg, "BK-017")
+        assert f.passed
+
+    def test_passes_on_plain_build(self):
+        cfg = """
+        steps:
+          - command: make build
+        """
+        f = run_check(cfg, "BK-017")
+        assert f.passed
+
+    def test_fails_on_set_x_then_secret_in_later_command_item(self):
+        # Buildkite concatenates a ``commands:`` list into one script, so
+        # ``set -x`` in one item traces a secret var used in a later item
+        # (Part-C FN: items were scanned in isolation).
+        cfg = """
+        steps:
+          - commands:
+              - set -x
+              - 'curl -H "Authorization: Bearer $DEPLOY_TOKEN" https://x'
+        """
+        f = run_check(cfg, "BK-017")
+        assert not f.passed

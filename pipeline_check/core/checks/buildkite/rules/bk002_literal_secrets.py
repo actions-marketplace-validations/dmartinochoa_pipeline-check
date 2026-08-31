@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from ..._secrets import find_secret_values
 from ...base import Finding, Severity
 from ...rule import Rule
 from ..base import iter_command_steps, step_label
@@ -45,18 +46,34 @@ RULE = Rule(
         "this is intentional, real-world copies of those example "
         "literals usually mean a docs paste was never substituted.",
     ),
+    exploit_example=(
+        "# Vulnerable: the AWS access key literal lives in\n"
+        "# ``pipeline.yml``. The file is committed to git, visible\n"
+        "# to anyone with repo read access, and printed in build\n"
+        "# logs whenever a step echoes its environment.\n"
+        "env:\n"
+        "  AWS_ACCESS_KEY_ID: AKIAIOSFODNN7EXAMPLE\n"
+        "  AWS_SECRET_ACCESS_KEY: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n"
+        "\n"
+        "steps:\n"
+        "  - command: aws s3 cp build/ s3://bucket/\n"
+        "\n"
+        "# Safe: fetch the credential from Secrets Manager at\n"
+        "# step-runtime via the ``aws-ssm`` plugin. The pipeline\n"
+        "# file references the secret by parameter name; the actual\n"
+        "# value lives in AWS Secrets Manager and rotates there\n"
+        "# without a pipeline change.\n"
+        "steps:\n"
+        "  - command: aws s3 cp build/ s3://bucket/\n"
+        "    plugins:\n"
+        "      - seek-oss/aws-sm#v2.3.0:\n"
+        "          env:\n"
+        "            AWS_ACCESS_KEY_ID: /ci/aws/access_key_id\n"
+        "            AWS_SECRET_ACCESS_KEY: /ci/aws/secret_access_key"
+    ),
 )
 
 # Strong patterns, high confidence that the literal is a credential.
-_STRONG_PATTERNS = (
-    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),                      # AWS access key
-    re.compile(r"\bASIA[0-9A-Z]{16}\b"),                      # AWS STS key
-    re.compile(r"\bghp_[A-Za-z0-9]{36,}\b"),                  # GitHub PAT
-    re.compile(r"\bgho_[A-Za-z0-9]{36,}\b"),                  # GitHub OAuth
-    re.compile(r"\bsk-[A-Za-z0-9]{20,}\b"),                   # OpenAI / generic
-    re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\."),  # JWT
-)
-
 # Env var names that imply a secret. Matched against the key.
 _SECRET_KEY_RE = re.compile(
     r"(?:^|_)(TOKEN|KEY|SECRET|PASSWORD|PASSWD|API_KEY|"
@@ -75,9 +92,10 @@ def _value_is_literal_secret(key: str, value: str) -> bool:
         return False
     if _INTERPOLATED_RE.fullmatch(v):
         return False
-    for pat in _STRONG_PATTERNS:
-        if pat.search(v):
-            return True
+    # Strong value-shape match against the shared vendor-token catalog
+    # (49 detectors) rather than a hand-maintained subset.
+    if find_secret_values([v]):
+        return True
     if _SECRET_KEY_RE.search(key):
         # Empty placeholders and obvious non-secrets are out.
         if v.lower() in {"true", "false", "none", "null", "0", "1"}:

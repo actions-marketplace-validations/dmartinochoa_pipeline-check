@@ -1,6 +1,7 @@
 """GHA-053. ``if:`` predicate evaluates attacker-controllable context."""
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from ...base import Finding, Severity
@@ -71,6 +72,42 @@ RULE = Rule(
         "the specific job/step when the trigger channel itself "
         "enforces the trust boundary.",
     ),
+    exploit_example=(
+        "# Vulnerable: ``if: ${{ contains(github.event.issue.title,\n"
+        "# 'deploy') }}`` evaluates an attacker-controllable string\n"
+        "# in the expression language. The expression engine\n"
+        "# parses certain inputs (``${{ ... }}`` nested) before\n"
+        "# the contains() check, so a crafted title can corrupt\n"
+        "# the predicate's evaluation.\n"
+        "on:\n"
+        "  issue_comment:\n"
+        "    types: [created]\n"
+        "jobs:\n"
+        "  ondemand-deploy:\n"
+        "    if: ${{ contains(github.event.comment.body, '/deploy') }}\n"
+        "    runs-on: ubuntu-latest\n"
+        "    permissions: { contents: write }\n"
+        "    steps:\n"
+        "      - run: ./deploy.sh\n"
+        "\n"
+        "# Safe: route the untrusted value through an intermediate\n"
+        "# step that pulls the value into an env var, then evaluate\n"
+        "# the predicate against a guaranteed-safe shape (issue\n"
+        "# author is a maintainer, label exists, etc.) computed\n"
+        "# from authenticated sources.\n"
+        "on:\n"
+        "  issue_comment:\n"
+        "    types: [created]\n"
+        "jobs:\n"
+        "  ondemand-deploy:\n"
+        "    if: |\n"
+        "      github.event.comment.author_association == 'OWNER' &&\n"
+        "      startsWith(github.event.comment.body, '/deploy')\n"
+        "    runs-on: ubuntu-latest\n"
+        "    permissions: { contents: write }\n"
+        "    steps:\n"
+        "      - run: ./deploy.sh"
+    ),
 )
 
 
@@ -90,13 +127,32 @@ _UNTRUSTED_CONTEXTS: tuple[str, ...] = (
     # anything, including ``${{ secrets.X }}``); same risk shape as
     # ``github.event.pull_request.head.ref``, more common in the wild.
     "github.head_ref",
+    # PR metadata that any contributor with ``triage`` (or that any
+    # first-time contributor under certain repo configurations) can
+    # set. Gating an ``if:`` on ``contains(github.event.pull_request.
+    # labels.*.name, 'safe-to-test')`` was the canonical 2024
+    # supply-chain foot-gun. The milestone fields and the
+    # requested-reviewers list have the same shape: visible in YAML,
+    # settable by a low-privilege actor. Substring-match against
+    # the parent path catches every spelling of the nested access.
+    "github.event.pull_request.labels",
+    "github.event.pull_request.milestone.title",
+    "github.event.pull_request.milestone.description",
+    "github.event.pull_request.requested_reviewers",
+    "github.event.pull_request.assignees",
 )
+
+
+_UNTRUSTED_BOUNDARY_RE = {
+    token: re.compile(re.escape(token) + r"(?![A-Za-z0-9_])")
+    for token in _UNTRUSTED_CONTEXTS
+}
 
 
 def _matches_untrusted(value: Any) -> list[str]:
     if not isinstance(value, str):
         return []
-    return [token for token in _UNTRUSTED_CONTEXTS if token in value]
+    return [token for token, pat in _UNTRUSTED_BOUNDARY_RE.items() if pat.search(value)]
 
 
 def check(path: str, doc: dict[str, Any]) -> Finding:

@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from ...base import Finding, Severity
+from ...base import Finding, Location, Severity
 from ...rule import Rule
-from ..base import TektonContext
+from ..base import TektonContext, doc_location
 
 RULE = Rule(
     id="TKN-007",
@@ -27,13 +27,52 @@ RULE = Rule(
         "An explicit ``serviceAccountName: default`` setting is "
         "treated the same as omission."
     ),
+    exploit_example=(
+        "# Vulnerable: a PipelineRun with no serviceAccountName.\n"
+        "apiVersion: tekton.dev/v1\n"
+        "kind: PipelineRun\n"
+        "metadata:\n"
+        "  name: release\n"
+        "spec:\n"
+        "  pipelineRef:\n"
+        "    name: build-and-deploy\n"
+        "\n"
+        "# Attack: with no serviceAccountName the run's pods get the\n"
+        "# namespace's `default` ServiceAccount and its mounted API\n"
+        "# token. Any step (including injected or third-party task code)\n"
+        "# uses that token to call the Kubernetes API with whatever RBAC\n"
+        "# is bound to `default`, which in many clusters drifts to far\n"
+        "# more than a build needs. A compromised step escalates to\n"
+        "# cluster resources.\n"
+        "\n"
+        "# Safe: bind a least-privilege SA created for this pipeline.\n"
+        "spec:\n"
+        "  serviceAccountName: release-ci\n"
+        "  pipelineRef:\n"
+        "    name: build-and-deploy"
+    ),
 )
 
 
-def _missing_or_default(spec: dict[str, Any]) -> bool:
+def _effective_sa(spec: dict[str, Any]) -> Any:
+    """The ServiceAccount the run actually uses.
+
+    ``spec.serviceAccountName`` is the deprecated v1beta1 form; the
+    current ``tekton.dev/v1`` PipelineRun sets it under
+    ``spec.taskRunTemplate.serviceAccountName``. Prefer the top-level
+    value when present, else fall back to the taskRunTemplate form.
+    """
     sa = spec.get("serviceAccountName")
-    if sa is None:
-        return True
+    if isinstance(sa, str) and sa.strip():
+        return sa
+    trt = spec.get("taskRunTemplate")
+    if isinstance(trt, dict):
+        return trt.get("serviceAccountName")
+    return sa
+
+
+def _missing_or_default(spec: dict[str, Any]) -> bool:
+    sa = _effective_sa(spec)
     if not isinstance(sa, str):
         return True
     return sa.strip().lower() in {"", "default"}
@@ -41,6 +80,7 @@ def _missing_or_default(spec: dict[str, Any]) -> bool:
 
 def check(ctx: TektonContext) -> Finding:
     offenders: list[str] = []
+    locations: list[Location] = []
     examined = 0
     for doc in ctx.docs:
         if doc.kind not in ("TaskRun", "PipelineRun"):
@@ -51,6 +91,7 @@ def check(ctx: TektonContext) -> Finding:
             spec = {}
         if _missing_or_default(spec):
             offenders.append(f"{doc.kind}/{doc.name}")
+            locations.append(doc_location(doc))
     if examined == 0:
         return Finding(
             check_id=RULE.id, title=RULE.title, severity=RULE.severity,
@@ -71,4 +112,5 @@ def check(ctx: TektonContext) -> Finding:
         check_id=RULE.id, title=RULE.title, severity=RULE.severity,
         resource="tekton", description=desc,
         recommendation=RULE.recommendation, passed=passed,
+        locations=locations,
     )

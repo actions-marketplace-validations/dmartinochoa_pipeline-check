@@ -48,7 +48,7 @@ jobs:
     environment: container-registry
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -57,7 +57,7 @@ jobs:
         # Used only to read the package version out of pyproject.toml
         # via ``tomllib``. The image itself is built inside the
         # Dockerfile's own python:3.12-slim base.
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: "3.12"
 
@@ -70,13 +70,13 @@ jobs:
       - name: Set up QEMU
         # Emulator binaries that let buildx cross-compile the arm64
         # variant on the amd64 GitHub runner.
-        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a  # v4.0.0
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8  # v4.2.0
 
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4.0.0
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # v4.2.0
 
       - name: Log in to GHCR
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121  # v4.1.0
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0  # v4.4.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -87,14 +87,14 @@ jobs:
         # DOCKERHUB_TOKEN. The token must be a Docker Hub access
         # token (Account Settings -> Security), not the account
         # password.
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121  # v4.1.0
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0  # v4.4.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Compute promotion tags + labels
         id: meta
-        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf  # v6.0.0
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302  # v6.2.0
         with:
           images: |
             ghcr.io/dmartinochoa/pipeline-check
@@ -131,13 +131,20 @@ jobs:
         # the only place a multi-arch manifest can live for Scout to
         # scan is the registry, hence the quarantine tag.
         id: build
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v7.1.0
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7.3.0
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ghcr.io/dmartinochoa/pipeline-check:scan-${{ github.sha }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Force the Dockerfile's ``apt-get upgrade`` layer to re-run
+          # each build. Without a per-build value here, BuildKit replays
+          # a cached layer (identical instruction text + pinned base
+          # digest) and the security upgrade never executes, leaving
+          # fixable base-package CVEs in the published image.
+          build-args: |
+            APT_CACHE_BUST=${{ github.sha }}
           # SLSA build provenance and an SBOM attached to the image
           # manifest. Keeps parity with release.yml's CycloneDX SBOM
           # for the wheel. Both attestations are bound to the digest,
@@ -150,21 +157,29 @@ jobs:
 
       - name: Scan image with Docker Scout
         # Vulnerability scan against the quarantine digest. ``exit-
-        # code: true`` + ``only-severities: critical,high`` fails the
-        # workflow on any new critical or high CVE BEFORE the promote
-        # step runs, so a vulnerable image never escapes the
-        # quarantine tag. Mirrors release.yml's ``pip-audit
-        # --strict`` posture for the wheel. SARIF output is uploaded
-        # in the next step so findings land on the repo's Security
-        # tab even when this step fails the job. Scout authenticates
-        # via the Docker Hub login already performed above; no
-        # separate secret is needed.
+        # code: true`` + ``only-severities: critical,high`` +
+        # ``only-fixed: true`` fails the workflow on any critical or
+        # high CVE THAT HAS A FIX AVAILABLE, BEFORE the promote step
+        # runs, so a remediable vulnerable image never escapes the
+        # quarantine tag. ``only-fixed`` is the deliberate scope: the
+        # gate should block on what we can act on (bump the base /
+        # pin a patched package) and not strand a release on
+        # unfixed-upstream CVEs in base packages we don't use (e.g.
+        # Debian's perl-base, which python:slim drags in). It
+        # re-blocks automatically the moment upstream ships a fix.
+        # Mirrors release.yml's ``pip-audit`` posture for the wheel.
+        # SARIF output is uploaded in the next step (it still records
+        # every finding, fixed or not, on the Security tab) so a
+        # failed build's findings don't vanish with the job. Scout
+        # authenticates via the Docker Hub login already performed
+        # above; no separate secret is needed.
         id: scout
-        uses: docker/scout-action@bacf462e8d090c09660de30a6ccc718035f961e3  # v1.20.4
+        uses: docker/scout-action@2688993af7bafd6ba8c6a74ec652442be91dd82b  # v1.23.1
         with:
           command: cves
           image: ghcr.io/dmartinochoa/pipeline-check@${{ steps.build.outputs.digest }}
           only-severities: critical,high
+          only-fixed: true
           exit-code: true
           sarif-file: scout-cves.sarif
           summary: true
@@ -174,7 +189,7 @@ jobs:
         # failed build still surfaces its findings on the Security tab
         # rather than vanishing with the job.
         if: always() && hashFiles('scout-cves.sarif') != ''
-        uses: github/codeql-action/upload-sarif@9e0d7b8d25671d64c341c19c0152d693099fb5ba  # v4.35.5
+        uses: github/codeql-action/upload-sarif@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a  # v4.36.3
         with:
           sarif_file: scout-cves.sarif
           category: docker-scout
@@ -198,8 +213,28 @@ jobs:
           TAGS: ${{ steps.meta.outputs.tags }}
         run: |
           set -euo pipefail
+          # Docker Hub intermittently returns a transient 403 under
+          # load. We hit one on the *last* tag of the multi-tag promote
+          # (``:latest``) while ``:${version}`` had pushed to the same
+          # repo seconds earlier with the same token, leaving Docker Hub
+          # ``:latest`` stranded on the prior release. Retry each tag
+          # with linear backoff so one flaky push no longer half-
+          # promotes the manifest. An exhausted retry still fails the
+          # step (we never silently skip a tag).
+          promote() {
+            local tag="$1" attempt
+            for attempt in 1 2 3; do
+              if docker buildx imagetools create --tag "$tag" "$SRC"; then
+                return 0
+              fi
+              echo "promote of $tag failed (attempt $attempt/3); retrying in $((attempt * 5))s" >&2
+              sleep $((attempt * 5))
+            done
+            echo "ERROR: failed to promote $tag after 3 attempts" >&2
+            return 1
+          }
           while IFS= read -r tag; do
             [ -z "$tag" ] && continue
             echo "promoting $SRC -> $tag"
-            docker buildx imagetools create --tag "$tag" "$SRC"
+            promote "$tag"
           done <<< "$TAGS"

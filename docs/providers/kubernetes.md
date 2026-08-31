@@ -56,7 +56,7 @@ Four rules target non-workload kinds:
 
 ## What it covers
 
-43 checks · 13 have an autofix patch (``--fix``).
+44 checks · 13 have an autofix patch (``--fix``).
 
 | Check | Title | Severity | Fix |
 |-------|-------|----------|-----|
@@ -79,7 +79,7 @@ Four rules target non-workload kinds:
 | [K8S-017](#k8s-017) | Container env value carries a credential-shaped literal | <span class="pg-sev pg-sev--critical">CRITICAL</span> |  |
 | [K8S-018](#k8s-018) | Secret stringData/data carries a credential-shaped literal | <span class="pg-sev pg-sev--critical">CRITICAL</span> |  |
 | [K8S-019](#k8s-019) | Workload deployed in the 'default' namespace | <span class="pg-sev pg-sev--low">LOW</span> |  |
-| [K8S-020](#k8s-020) | ClusterRoleBinding grants cluster-admin or system:masters | <span class="pg-sev pg-sev--critical">CRITICAL</span> | <span class="pg-fix" title="`--fix` will patch this rule">🔧 fix</span> |
+| [K8S-020](#k8s-020) | ClusterRoleBinding grants cluster-admin, admin, or system:masters | <span class="pg-sev pg-sev--critical">CRITICAL</span> | <span class="pg-fix" title="`--fix` will patch this rule">🔧 fix</span> |
 | [K8S-021](#k8s-021) | Role or ClusterRole grants wildcard verbs+resources | <span class="pg-sev pg-sev--high">HIGH</span> |  |
 | [K8S-022](#k8s-022) | Service exposes SSH (port 22) | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
 | [K8S-023](#k8s-023) | Namespace missing Pod Security Admission enforcement label | <span class="pg-sev pg-sev--high">HIGH</span> |  |
@@ -103,6 +103,7 @@ Four rules target non-workload kinds:
 | [K8S-041](#k8s-041) | Service.externalIPs allows traffic interception (CVE-2020-8554) | <span class="pg-sev pg-sev--high">HIGH</span> |  |
 | [K8S-042](#k8s-042) | RoleBinding grants access to system:anonymous / system:unauthenticated | <span class="pg-sev pg-sev--critical">CRITICAL</span> |  |
 | [K8S-043](#k8s-043) | Ingress rule has wildcard or missing host (catch-all) | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
+| [K8S-044](#k8s-044) | Admission webhook fails open or mutates cluster-wide unscoped | <span class="pg-sev pg-sev--high">HIGH</span> |  |
 
 ---
 
@@ -154,7 +155,7 @@ Set ``spec.hostNetwork: false`` (the default) on every workload. ``hostNetwork: 
 <span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-fix pg-fix--rule" title="`--fix` will patch this rule">🔧 autofix</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-7</span> <span class="pg-tag pg-tag--esf">ESF-D-LEAST-PRIV</span> <span class="pg-tag pg-tag--esf">ESF-D-ISOLATION</span> <span class="pg-tag pg-tag--cwe">CWE-668</span>
 </div>
 
-There is no application use case for hostPID. Only specialised node agents (process exporters, debuggers) legitimately need it, and those are typically deployed via a system DaemonSet with an explicit security review.
+There is no application use case for hostPID. Only specialized node agents (process exporters, debuggers) legitimately need it, and those are typically deployed via a system DaemonSet with an explicit security review.
 
 <div class="pg-rule__rec" markdown>
 
@@ -234,7 +235,7 @@ Set ``securityContext.allowPrivilegeEscalation: false`` on every container. The 
 <span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-fix pg-fix--rule" title="`--fix` will patch this rule">🔧 autofix</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-7</span> <span class="pg-tag pg-tag--esf">ESF-D-LEAST-PRIV</span> <span class="pg-tag pg-tag--cwe">CWE-250</span>
 </div>
 
-A container is considered safe when EITHER its own securityContext OR the pod-level securityContext sets ``runAsNonRoot: true`` and a non-zero ``runAsUser``. An explicit ``runAsUser: 0`` always fails, even if ``runAsNonRoot`` is unset.
+A container is considered safe when EITHER its own securityContext OR the pod-level securityContext sets ``runAsNonRoot: true`` (and ``runAsUser``, when set, is non-zero). The kubelet enforces ``runAsNonRoot`` at container start, so an explicit non-zero ``runAsUser`` isn't required. An explicit ``runAsUser: 0`` always fails, even if ``runAsNonRoot`` is unset.
 
 <div class="pg-rule__rec" markdown>
 
@@ -412,7 +413,7 @@ Init containers and ephemeral containers are also checked: a leaking init contai
 
 **Recommended action**
 
-Set ``resources.limits.memory`` on every container. Without a memory limit, a leaking or compromised container can consume the node's RAM until the kernel OOM-kills neighbouring pods, taking down workloads that share the node. Pair the limit with a ``requests.memory`` to inform the scheduler.
+Set ``resources.limits.memory`` on every container. Without a memory limit, a leaking or compromised container can consume the node's RAM until the kernel OOM-kills neighboring pods, taking down workloads that share the node. Pair the limit with a ``requests.memory`` to inform the scheduler.
 
 </div>
 
@@ -432,7 +433,7 @@ Lower severity than K8S-015 because CPU throttling is self-healing (workloads sl
 
 **Recommended action**
 
-Set ``resources.limits.cpu`` on every container. CPU throttling is the kernel's defense against a neighbour consuming all node cycles, without a limit, a compromised container can stall everything else on the node, including the kubelet. Pair the limit with a ``requests.cpu`` for scheduling.
+Set ``resources.limits.cpu`` on every container. CPU throttling is the kernel's defense against a neighbor consuming all node cycles, without a limit, a compromised container can stall everything else on the node, including the kubelet. Pair the limit with a ``requests.cpu`` for scheduling.
 
 </div>
 
@@ -500,7 +501,7 @@ Set ``metadata.namespace`` to a dedicated namespace per workload (or per environ
 
 <div class="pg-rule pg-rule--critical" markdown>
 
-## K8S-020: ClusterRoleBinding grants cluster-admin or system:masters { #k8s-020 }
+## K8S-020: ClusterRoleBinding grants cluster-admin, admin, or system:masters { #k8s-020 }
 
 <div class="pg-rule__tags">
 <span class="pg-sev pg-sev--critical">CRITICAL</span> <span class="pg-fix pg-fix--rule" title="`--fix` will patch this rule">🔧 autofix</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-2</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-5</span> <span class="pg-tag pg-tag--esf">ESF-D-LEAST-PRIV</span> <span class="pg-tag pg-tag--cwe">CWE-732</span>
@@ -1027,6 +1028,30 @@ An Ingress rule with no ``host:`` matches every Host header the controller recei
 **Recommended action**
 
 Pin every Ingress rule to an explicit hostname. ``host: api.example.com`` (not ``host: '*'``, ``host: '*.example.com'``, and not an omitted ``host:``). A catch-all host binding means any request to the ingress controller's external address, regardless of HTTP Host header, can route to this backend; an attacker with control over an arbitrary hostname pointing at the same controller (a parked domain, a typo'd CNAME, a cluster-internal name on a shared controller) reaches paths that should have been host-scoped.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## K8S-044: Admission webhook fails open or mutates cluster-wide unscoped { #k8s-044 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-7</span> <span class="pg-tag pg-tag--esf">ESF-D-PRIV-BUILD</span> <span class="pg-tag pg-tag--cwe">CWE-693</span> <span class="pg-tag pg-tag--cwe">CWE-862</span>
+</div>
+
+Fires on a ``MutatingWebhookConfiguration`` / ``ValidatingWebhookConfiguration`` whose webhook either (a) sets ``failurePolicy: Ignore`` while its ``rules`` match a broad target (``pods`` / ``*`` resources or ``*`` apiGroups), so DoSing or deleting the backend silently disables the admission control cluster-wide (the ``v1`` default is ``Fail``; ``Ignore`` is an explicit opt-out), or (b) is a *mutating* webhook with no ``namespaceSelector`` and no ``objectSelector`` and broad ``rules``, so whoever controls the backend can rewrite every pod spec in the cluster. RBAC rules (K8S-020 / 021) reason about who can call the API; admission webhooks intercept every call regardless of RBAC, and no other rule reads ``admissionregistration.k8s.io`` objects.
+
+**Known false-positive modes**
+
+- A non-security, best-effort webhook (a label / annotation decorator) may legitimately run ``failurePolicy: Ignore`` to favor availability; the rule still flags it when its rules are broad. A cluster-wide mutating injector (a service mesh) is sometimes intentional; scope it with a selector or suppress with a rationale once the backend's trust is established.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Set ``failurePolicy: Fail`` on any admission webhook that enforces a security control (a policy engine like OPA Gatekeeper / Kyverno, a sidecar injector), so an attacker can't disable it cluster-wide by knocking the backend offline. Scope a ``MutatingWebhookConfiguration`` with a ``namespaceSelector`` and/or ``objectSelector`` (and the narrowest ``rules``) so it cannot rewrite every pod in the cluster: an unscoped mutating webhook over ``pods`` is a tenant-escape primitive (inject a sidecar, add ``hostPID``, mount the host). Restrict who can create ``admissionregistration.k8s.io`` objects via RBAC.
 
 </div>
 

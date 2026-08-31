@@ -16,7 +16,7 @@ pipeline_check --pipeline gitlab --gitlab-path ci/
 
 ## What it covers
 
-37 checks · 12 have an autofix patch (``--fix``).
+52 checks · 12 have an autofix patch (``--fix``).
 
 | Check | Title | Severity | Fix |
 |-------|-------|----------|-----|
@@ -55,6 +55,21 @@ pipeline_check --pipeline gitlab --gitlab-path ci/
 | [GL-033](#gl-033) | Global before_script / after_script propagates taint to every job | <span class="pg-sev pg-sev--high">HIGH</span> |  |
 | [GL-034](#gl-034) | npm install without registry-signature verification step | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
 | [GL-035](#gl-035) | pip install without `--require-hashes` verification | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
+| [GL-036](#gl-036) | Secret-named variable echoed / printed in a script block | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [GL-037](#gl-037) | Pipeline disables Go module checksum / sum-db verification | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [GL-038](#gl-038) | CI_DEBUG_TRACE / debug logging dumps secrets to the job log | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [GL-039](#gl-039) | Docker-in-Docker service exposes an unauthenticated daemon | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [GL-040](#gl-040) | CI_JOB_TOKEN used for cross-project / remote access | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [GL-041](#gl-041) | IaC apply on an untrusted merge-request trigger | <span class="pg-sev pg-sev--critical">CRITICAL</span> |  |
+| [GL-042](#gl-042) | include: component pulls a CI/CD component without a pinned version | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [GL-043](#gl-043) | GitLab native security scanner explicitly disabled | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
+| [GL-044](#gl-044) | Automatic production deployment on a merge-request pipeline | <span class="pg-sev pg-sev--critical">CRITICAL</span> |  |
+| [GL-045](#gl-045) | ML model loaded with trust_remote_code (code execution) | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [GL-046](#gl-046) | AI model pulled without a pinned revision | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
+| [GL-047](#gl-047) | Unsafe deserialization of a fetched artifact (pickle RCE) | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [GL-048](#gl-048) | Untrusted MR/commit context reaches an agentic AI CLI (prompt injection) | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [GL-049](#gl-049) | Agentic CLI output lands without human review | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [GL-050](#gl-050) | Package-publish job relies on a long-lived registry token | <span class="pg-sev pg-sev--high">HIGH</span> |  |
 | [TAINT-004](#taint-004) | Untrusted input flows across jobs via dotenv artifact | <span class="pg-sev pg-sev--high">HIGH</span> |  |
 | [TAINT-008](#taint-008) | Untrusted input flows via GitLab ``extends:`` template inheritance | <span class="pg-sev pg-sev--high">HIGH</span> |  |
 
@@ -148,7 +163,7 @@ Add `when: manual` (optionally with `rules:` for protected branches) or bind the
 <span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--esf">ESF-S-PIN-DEPS</span> <span class="pg-tag pg-tag--esf">ESF-S-TRUSTED-REG</span> <span class="pg-tag pg-tag--cwe">CWE-829</span>
 </div>
 
-Cross-project and remote includes can be silently re-pointed. Branch-name refs (`main`/`master`/`develop`/`head`) are treated as unpinned; tag and SHA refs are considered safe.
+Cross-project and remote includes can be silently re-pointed. Branch-name refs (`main`/`master`/`develop`/`head`/`trunk`) are treated as unpinned; tag and SHA refs are considered safe.
 
 <div class="pg-rule__rec" markdown>
 
@@ -212,7 +227,7 @@ Complements GL-003 (which looks at `variables:` block keys). GL-008 scans every 
 
 **Known false-positive modes**
 
-- Test fixtures and documentation blobs sometimes embed credential-shaped strings (JWT samples, AKIAI... examples). The AWS canonical example ``AKIAIOSFODNN7EXAMPLE`` is deliberately NOT suppressed, if it appears in a real pipeline it almost always means a copy-paste from docs was never substituted. Defaults to LOW confidence.
+- Test fixtures and documentation blobs sometimes embed credential-shaped strings (JWT samples, vendor example keys). Well-known vendor example tokens (``AKIAIOSFODNN7EXAMPLE``, Stripe ``sk_test_`` docs keys) are suppressed via the ``VENDOR_EXAMPLE_TOKENS`` allowlist. Defaults to LOW confidence.
 
 <div class="pg-rule__rec" markdown>
 
@@ -522,6 +537,8 @@ Remove dependency-update commands from CI. Use lockfile-pinned install commands 
 
 Detects patterns that disable TLS certificate verification: `git config http.sslVerify false`, `NODE_TLS_REJECT_UNAUTHORIZED=0`, `npm config set strict-ssl false`, `curl -k`, `wget --no-check-certificate`, `PYTHONHTTPSVERIFY=0`, and `GOINSECURE=`. Disabling TLS verification allows MITM injection of malicious packages, repositories, or build tools.
 
+Also inspects every `variables:` mapping (global, `workflow:`, and per-job) structurally: GitLab's idiomatic way to set an env var puts the name in the key (`NODE_TLS_REJECT_UNAUTHORIZED: "0"`), which a value-only text scan misses.
+
 <div class="pg-rule__rec" markdown>
 
 **Recommended action**
@@ -669,7 +686,7 @@ Add ``allow_failure: false`` to every deploy-like ``when: manual`` job. GitLab d
 <span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--esf">ESF-S-PIN-DEPS</span> <span class="pg-tag pg-tag--esf">ESF-S-TRUSTED-REG</span> <span class="pg-tag pg-tag--cwe">CWE-829</span>
 </div>
 
-GL-005 only audits top-level ``include:``. Parent-child and multi-project pipelines that load YAML via the job-level ``trigger: include:`` slot slip through. Branch refs (``main``/``master``/``develop``/``head``) count as unpinned.
+GL-005 only audits top-level ``include:``. Parent-child and multi-project pipelines that load YAML via the job-level ``trigger: include:`` slot slip through. Branch refs (``main``/``master``/``develop``/``head``/``trunk``) count as unpinned.
 
 <div class="pg-rule__rec" markdown>
 
@@ -719,7 +736,7 @@ GL-014 catches self-managed runners that aren't ephemeral; this rule catches the
 
 **Recommended action**
 
-Hard-code ``tags:`` to a specific runner tag list. If runner selection has to be parameterised, validate the candidate value against an explicit allowlist in a job ``rules:`` block before the job runs, and never accept a ``$CI_COMMIT_*`` / ``$CI_MERGE_REQUEST_*`` field as a tag value directly.
+Hard-code ``tags:`` to a specific runner tag list. If runner selection has to be parameterized, validate the candidate value against an explicit allowlist in a job ``rules:`` block before the job runs, and never accept a ``$CI_COMMIT_*`` / ``$CI_MERGE_REQUEST_*`` field as a tag value directly.
 
 </div>
 
@@ -826,6 +843,364 @@ Pin every dependency with a SHA-256 hash and install with ``pip install -r requi
 
 <div class="pg-rule pg-rule--high" markdown>
 
+## GL-036: Secret-named variable echoed / printed in a script block { #gl-036 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-6</span> <span class="pg-tag pg-tag--esf">ESF-D-SECRETS</span> <span class="pg-tag pg-tag--cwe">CWE-532</span> <span class="pg-tag pg-tag--cwe">CWE-200</span>
+</div>
+
+Detects three shapes in ``script:``, ``before_script:``, and ``after_script:`` blocks:
+
+1. ``echo`` / ``printf`` / ``cat`` / ``tee`` of a variable whose name matches common secret patterns (PASSWORD, TOKEN, API_KEY, SECRET, CREDENTIAL, etc.).
+2. ``printenv`` / ``env`` commands that dump the entire environment (which includes CI/CD variables that may hold secrets).
+3. ``set -x`` (shell trace) enabled alongside any reference to a secret-named variable.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Don't print secret values in CI scripts. GitLab's log masking only covers variables explicitly marked as masked in the UI, and only when the full value appears as a contiguous string. Base64-encoded, URL-encoded, or partial substrings bypass the mask. Log a boolean instead (``[ -n "$X" ] && echo set || echo unset``). Avoid ``set -x`` when secret-bound variables are in scope.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## GL-037: Pipeline disables Go module checksum / sum-db verification { #gl-037 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-5</span> <span class="pg-tag pg-tag--esf">ESF-S-VERIFY-DEPS</span> <span class="pg-tag pg-tag--cwe">CWE-353</span> <span class="pg-tag pg-tag--cwe">CWE-494</span>
+</div>
+
+Walks the global and per-job ``variables:`` maps and every ``script:`` / ``before_script:`` / ``after_script:`` body (for inline ``export GOSUMDB=off`` assignments) and flags the Go integrity-disabling settings via the shared ``_primitives/go_insecure_env`` detector: ``GOFLAGS`` with ``-insecure``, ``GOSUMDB=off``, truthy ``GONOSUMCHECK``, any ``GOINSECURE``, and a broad ``GOPRIVATE`` / ``GONOSUMDB`` glob.
+
+Scoped ``GOPRIVATE`` and ``GOPROXY=off`` / ``direct`` (still checksum-verified) are not flagged. The CI-variable face of the verification-bypass surface GOMOD-001 warns about; the GitLab sibling of GHA-110 / CC-033.
+
+**Known false-positive modes**
+
+- A pipeline that builds only against an internal module proxy on a trusted network may set a scoped ``GOINSECURE`` for one internal host deliberately. Suppress per pipeline with a rationale; a TLS-terminating internal proxy that preserves checksum verification is the safer path.
+
+**Seen in the wild**
+
+- Verification-bypass class: a runner told to skip the Go checksum database / sum file can be served a substituted module without ``go mod verify`` catching it, the same gap GOMOD-001 flags from the ``go.sum`` side.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Remove the Go toolchain variables that turn off module integrity verification so ``go build`` keeps checking every downloaded module against ``go.sum`` and the checksum transparency database. Drop ``GOFLAGS=-insecure`` (plain HTTP fetch, TLS off), ``GOSUMDB=off`` / legacy ``GONOSUMCHECK`` (checksum DB / sum check off), and any ``GOINSECURE``; scope ``GOPRIVATE`` / ``GONOSUMDB`` to the exact internal namespace (``corp.example.com/team/*``) rather than a broad ``*`` or whole public host. This is the CI-variable twin of GOMOD-001, a committed ``go.sum`` is moot if the runner ignores it. For private modules, prefer a trusted internal ``GOPROXY`` that still enforces checksums over disabling verification.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## GL-038: CI_DEBUG_TRACE / debug logging dumps secrets to the job log { #gl-038 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-6</span> <span class="pg-tag pg-tag--esf">ESF-D-SECRETS</span> <span class="pg-tag pg-tag--cwe">CWE-532</span> <span class="pg-tag pg-tag--cwe">CWE-200</span>
+</div>
+
+Fires when ``CI_DEBUG_TRACE`` or ``CI_DEBUG_SERVICES`` is set to a truthy value (``"true"``, ``1``, ...) in the global ``variables:`` block or any job's ``variables:`` block. Both the bare scalar form (``CI_DEBUG_TRACE: "true"``) and the typed form (``CI_DEBUG_TRACE: {value: "true"}``) are matched. It inverts a logging / visibility control into a secret-exfiltration channel: the job trace itself leaks every secret in scope, masking and all.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Remove ``CI_DEBUG_TRACE`` / ``CI_DEBUG_SERVICES`` (or set them to ``false``) anywhere they ship in the repo. Debug trace expands the entire environment, including masked CI/CD variables and protected secrets, into the job log, where anyone with Reporter access (or the trace API) can read it. GitLab's log masking does not cover the debug dump. If you need a one-off debug run, enable it transiently from the pipeline UI on a job with no secrets in scope rather than committing it to ``.gitlab-ci.yml``.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## GL-039: Docker-in-Docker service exposes an unauthenticated daemon { #gl-039 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-7</span> <span class="pg-tag pg-tag--esf">ESF-D-BUILD-ENV</span> <span class="pg-tag pg-tag--cwe">CWE-306</span> <span class="pg-tag pg-tag--cwe">CWE-319</span>
+</div>
+
+Fires when a job (or the global config) runs a ``docker:*-dind`` service AND disables daemon authentication, either via ``DOCKER_TLS_CERTDIR: ""`` (reverts to the plaintext 2375 socket) or by exposing / pointing at ``tcp://...:2375`` in the service ``command:`` or ``DOCKER_HOST``. Global ``services:`` / ``variables:`` are merged into each job before the check. The unauthenticated daemon is the container-escape vector behind the untagged shared-runner + privileged-dind anti-pattern.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Keep TLS on the dind daemon: drop ``DOCKER_TLS_CERTDIR: ""`` (let it default to ``/certs``) and talk to the daemon over the TLS port 2376, not the plaintext 2375. Never expose the daemon with ``--host=tcp://0.0.0.0:2375``. On a shared / untagged runner an unauthenticated daemon socket is reachable by every other tenant's job, which means container escape and cross-tenant compromise; pin the job to a dedicated, ephemeral runner via ``tags:`` as well.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## GL-040: CI_JOB_TOKEN used for cross-project / remote access { #gl-040 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-2</span> <span class="pg-tag pg-tag--esf">ESF-D-TOKEN-HYGIENE</span> <span class="pg-tag pg-tag--cwe">CWE-668</span> <span class="pg-tag pg-tag--cwe">CWE-284</span>
+</div>
+
+Fires on the two documented cross-project job-token idioms in a ``script:`` / ``before_script:`` / ``after_script:`` block: a ``gitlab-ci-token:$CI_JOB_TOKEN@<host>`` clone URL, or a ``JOB-TOKEN: $CI_JOB_TOKEN`` request header. Defaults to MEDIUM confidence because a same-project pull uses the same idiom; the finding flags the access surface so the target's inbound allowlist gets reviewed, it can't see the server-side allowlist from the pipeline YAML.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+A job authenticates to a GitLab endpoint with the ambient ``CI_JOB_TOKEN`` (a ``gitlab-ci-token:$CI_JOB_TOKEN@`` clone URL or a ``JOB-TOKEN: $CI_JOB_TOKEN`` API header). The job token is minted automatically for every pipeline, so if the TARGET project's inbound job-token allowlist is disabled (the pre-hardening default), any project that can run a pipeline can reach it (GitLab #243703 / CVE-2024-8641). Restrict the target's ``CI/CD > Token Access`` inbound allowlist to the specific projects that need it, or use a scoped deploy token / project access token with least privilege instead of the ambient job token.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--critical" markdown>
+
+## GL-041: IaC apply on an untrusted merge-request trigger { #gl-041 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--critical">CRITICAL</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-4</span> <span class="pg-tag pg-tag--esf">ESF-D-INJECTION</span> <span class="pg-tag pg-tag--cwe">CWE-94</span> <span class="pg-tag pg-tag--cwe">CWE-78</span>
+</div>
+
+Fires when a job runs an unattended IaC apply (`terraform`/`terragrunt apply` or `destroy`, `aws cloudformation deploy`/`create-stack`/`update-stack`/`execute-change-set`, `cdk deploy`, `pulumi up`, `sam deploy`) AND the job is reachable on a merge-request pipeline (its own `rules:` admit `merge_request_event`, its legacy `only:` includes `merge_requests`, or it inherits a `workflow:` that admits MR pipelines). Applying an MR author's IaC is the plan/apply-on-untrusted-input RCE class. GL-004 already flags this as an ungated deploy; GL-041 names the apply-RCE shape and raises it to CRITICAL when the trigger is merge-request reach.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Never run `terraform apply` (or `cloudformation deploy` / `cdk deploy` / `pulumi up` / `sam deploy`) in a job reachable from a merge-request pipeline. Apply executes the MR branch's IaC, so an `external` data source, a `local-exec` provisioner, or a hijacked provider runs arbitrary code on the runner with whatever cloud credentials (often an OIDC role via `id_tokens:`) the apply uses. On merge requests run a read-only `plan` and post it for review; gate the apply on a protected branch (`if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH`) with `when: manual` or an `environment:` so it runs against merged, reviewed code.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## GL-042: include: component pulls a CI/CD component without a pinned version { #gl-042 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--esf">ESF-S-PIN-DEPS</span> <span class="pg-tag pg-tag--esf">ESF-S-TRUSTED-REG</span> <span class="pg-tag pg-tag--cwe">CWE-829</span>
+</div>
+
+GitLab CI/CD components are third-party pipeline code merged into the consumer's pipeline before any job runs. The version in `include: component: <host>/<path>@<version>` resolves like a dependency ref: `~latest` (the latest release), a branch, and a floating major / minor are all mutable; a full `X.Y.Z` tag or a 40-char commit SHA are pinned. Fires when the `@<version>` is missing, `~latest`, branch-shaped, or a partial version. The same supply-chain class as GL-005 (remote / project includes) and GL-030 (trigger includes), through the newer component surface those two rules don't inspect.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Pin every `include: component:` to an immutable version: a 40-character commit SHA, or a full release tag (`X.Y.Z`) on a component project that enforces tag protection. A mutable version (`~latest`, a branch like `main`, or a floating major / minor like `1` / `1.2`) lets whoever controls the component project re-point that reference and ship arbitrary pipeline code into every consumer's next pipeline, running with the consumer's `CI_JOB_TOKEN` and CI/CD variables. Bump pins in reviewable MRs (Renovate's GitLab CI/CD component updater supports this).
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--medium" markdown>
+
+## GL-043: GitLab native security scanner explicitly disabled { #gl-043 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--medium">MEDIUM</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-7</span> <span class="pg-tag pg-tag--esf">ESF-S-VULN-MGMT</span> <span class="pg-tag pg-tag--cwe">CWE-693</span>
+</div>
+
+Fires when a `*_DISABLED` variable for a GitLab-managed scanner (SAST, Secret Detection, Dependency Scanning, Container Scanning, DAST) is set to any value other than an explicit falsy literal (`"false"` / `"0"` / `"no"` / empty) at the top level or on a job. Legacy GitLab templates disable the scanner on any non-empty value, so the rule over-approximates to that rather than only matching `"true"` / `"1"`. Both the plain scalar and the typed `{value:, description:}` variable form are read. Disabling a scanner pipeline-wide silently drops the finding stream the rest of your supply-chain controls assume exists.
+
+**Known false-positive modes**
+
+- A pipeline that runs the scanner through a dedicated security pipeline (e.g. a scheduled `secret_detection` job) and disables the auto-included template here to avoid a duplicate run. Suppress with a rationale that names the other pipeline.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Remove the `*_DISABLED: "true"` CI/CD variable so GitLab's managed scanner runs again, or scope the opt-out narrowly with `rules:` instead of disabling it pipeline-wide. Each of `SAST_DISABLED`, `SECRET_DETECTION_DISABLED`, `DEPENDENCY_SCANNING_DISABLED`, `CONTAINER_SCANNING_DISABLED`, and `DAST_DISABLED` turns off a security control that would otherwise gate the pipeline. If a scanner is noisy, tune it (`SAST_EXCLUDED_PATHS`, ruleset overrides) rather than switching it off, and keep the opt-out in code review via the pipeline file rather than a hidden project variable.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--critical" markdown>
+
+## GL-044: Automatic production deployment on a merge-request pipeline { #gl-044 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--critical">CRITICAL</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-1</span> <span class="pg-tag pg-tag--esf">ESF-C-APPROVAL</span> <span class="pg-tag pg-tag--esf">ESF-C-ENV-SEP</span> <span class="pg-tag pg-tag--cwe">CWE-284</span>
+</div>
+
+Fires when a job reachable on a merge-request pipeline (its `rules:` admit `merge_request_event`, its legacy `only:` includes `merge_requests`, or it inherits a `workflow:` that admits MR pipelines) binds a production-tier `environment:` (a name matching `production` / `prod`) AND is not gated by `when: manual`. GL-004 treats any `environment:` as sufficient gating, so it misses an automatic production deploy on an MR; GL-044 names that shape and raises it to CRITICAL. Review-app, `test`, and `staging` environments don't fire (only the production tier), manual-approval jobs are out of scope (GitLab's accepted gate), and an `environment:` `action:` of `stop` / `prepare` / `verify` / `access` (no deploy) is excluded.
+
+**Known false-positive modes**
+
+- A repo that deploys per-MR preview apps to an environment it happens to have named `production`. Rename it to a review / preview tier, or suppress with a rationale. A production environment under a custom name (not `production` / `prod`) can't be recognized from the YAML and won't fire.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Don't run a job bound to a production `environment:` automatically on a merge-request pipeline. A merge-request pipeline runs the MR branch's code, so this ships unreviewed (and on fork MRs, untrusted) changes to production on every MR with the production environment's scoped credentials, before review or merge. Deploy to an ephemeral review-app environment on MRs; gate the production `environment:` job behind `when: manual` and a protected-branch rule (`if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH`) so it runs against merged, reviewed code.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## GL-045: ML model loaded with trust_remote_code (code execution) { #gl-045 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-4</span> <span class="pg-tag pg-tag--esf">ESF-D-INJECTION</span> <span class="pg-tag pg-tag--cwe">CWE-494</span> <span class="pg-tag pg-tag--cwe">CWE-829</span>
+</div>
+
+Fires on ``trust_remote_code=True`` / ``--trust-remote-code`` in a job's ``script`` / ``before_script`` / ``after_script``. The transformers / huggingface_hub loader executes the model repo's own Python at load time, so an untrusted or unpinned model is arbitrary code execution in CI with the job's ``CI_JOB_TOKEN`` and secrets.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Load models with ``trust_remote_code=False`` (the library default). If a model genuinely needs custom code, vet it and pin an exact revision (a commit SHA, not a tag or branch), run the load in a job scoped to no production secrets, and prefer safetensors weights over pickle.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--medium" markdown>
+
+## GL-046: AI model pulled without a pinned revision { #gl-046 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--medium">MEDIUM</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--esf">ESF-S-PIN-DEPS</span> <span class="pg-tag pg-tag--esf">ESF-S-VERIFY-DEPS</span> <span class="pg-tag pg-tag--cwe">CWE-494</span> <span class="pg-tag pg-tag--cwe">CWE-829</span>
+</div>
+
+Fires on a job ``script`` / ``before_script`` / ``after_script`` that fetches a model by a mutable registry reference and supplies no revision pin. Detected fetch forms: ``from_pretrained("org/model")``, ``hf_hub_download`` / ``snapshot_download`` with a ``org/model`` repo id, and ``huggingface-cli download org/model`` / ``hf download org/model``.
+
+Does NOT fire when a revision is pinned in the same command (``revision='<sha>'`` / ``--revision <sha>``), when the reference is a local path (``./model``, ``/models/x``) or a variable / ``${{ }}`` interpolation (the value can't be judged statically), or on a bare single-segment canonical hub name (``bert-base-uncased``) that has no ``org/`` namespace, since those are first-party and the org-scoped third-party models are the higher-risk surface.
+
+**Known false-positive modes**
+
+- A team that re-pulls its own group's model on every pipeline may treat the latest revision as intentional. The right fix is still to pin the revision (it makes an upstream compromise visible); if a rolling pull is genuinely wanted, suppress on the specific job with a rationale naming the model and who controls it.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Pin the model to an immutable revision. Pass an exact commit ``revision=`` to ``from_pretrained`` / ``hf_hub_download`` / ``snapshot_download`` (a 40-char commit SHA, not a branch or a tag, both of which the owner can move), or ``--revision <sha>`` to ``huggingface-cli download``. A pinned revision is what makes a swapped-weights or swapped-loader-code attack show up as a diff in your repo instead of silently landing on the next build. Pair with ``trust_remote_code=False`` (GL-045) and prefer safetensors weights over pickle.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## GL-047: Unsafe deserialization of a fetched artifact (pickle RCE) { #gl-047 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-4</span> <span class="pg-tag pg-tag--esf">ESF-D-INJECTION</span> <span class="pg-tag pg-tag--cwe">CWE-502</span> <span class="pg-tag pg-tag--cwe">CWE-494</span> <span class="pg-tag pg-tag--cwe">CWE-829</span>
+</div>
+
+Fires per job (across ``script`` / ``before_script`` / ``after_script``) in two shapes. **(A) Explicit unsafe opt-in**, always: ``weights_only=False`` on a load, or ``allow_pickle=True`` on ``numpy.load`` / ``np.load``. **(B) Fetch + unpickle**, only when both appear in the same job: a remote fetch (``curl`` / ``wget`` / ``hf_hub_download`` / ``snapshot_download`` / ``huggingface-cli download`` / ``hf download`` / ``requests.get`` / ``urlretrieve`` / ``urlopen``) alongside a pickle-backed loader (``torch.load`` / ``pickle.load`` / ``pickle.loads`` / ``joblib.load``).
+
+Does NOT fire when the job takes the safe path (``weights_only=True``, or safetensors via ``safe_open`` / ``load_file``), nor on a bare ``torch.load`` / ``pickle.load`` with no remote fetch in the same job (a load of a locally produced, trusted artifact).
+
+**Known false-positive modes**
+
+- A job that downloads a non-pickle file for one purpose and separately unpickles a trusted local file for another would match shape B by co-location. Split the two concerns into separate jobs, or suppress on the specific job with a rationale naming the artifact's verified source.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Don't deserialize a downloaded artifact through pickle. Load weights with safetensors, or pass ``weights_only=True`` to ``torch.load`` (the PyTorch 2.6+ default) so only tensors, not arbitrary Python, are unpickled. Drop ``allow_pickle=True`` from ``numpy.load``. If a pickle / joblib artifact is unavoidable, pin and verify its source (a pinned model revision, a checksum, or a signature) and load it in a job scoped to no production secrets, not one carrying the ``CI_JOB_TOKEN`` and pipeline credentials.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## GL-048: Untrusted MR/commit context reaches an agentic AI CLI (prompt injection) { #gl-048 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-4</span> <span class="pg-tag pg-tag--esf">ESF-D-INJECTION</span> <span class="pg-tag pg-tag--cwe">CWE-94</span> <span class="pg-tag pg-tag--cwe">CWE-77</span>
+</div>
+
+The AI analog of GL-002 (script injection). Fires when a job ``script`` line invokes an agentic CLI (claude / gemini / cursor-agent / aider / openhands / goose / ``q chat``) AND attacker-controllable GitLab context reaches that line, either a predefined untrusted variable interpolated directly (``$CI_MERGE_REQUEST_TITLE``) or a ``variables:`` entry whose value carries one. Unlike a shell, an LLM ingests a quoted / variable-routed value as prompt text, so the GL-002 mitigation (route through a quoted variable) does not apply, which is why this is a separate rule.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Do not place attacker-controllable context (MR / commit / branch-name metadata) in an agentic CLI's prompt. A quoted ``variables:`` entry does NOT sanitize a prompt the way it does a shell command, the model still reads the value. If the agent must see MR content, run it with no write-scoped ``CI_JOB_TOKEN`` and no tool / shell access on a job gated to no production secrets, and treat its output as untrusted.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## GL-049: Agentic CLI output lands without human review { #gl-049 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-1</span> <span class="pg-tag pg-tag--esf">ESF-C-APPROVAL</span> <span class="pg-tag pg-tag--cwe">CWE-94</span> <span class="pg-tag pg-tag--cwe">CWE-693</span>
+</div>
+
+Fires when one job both invokes an agentic CLI (``claude`` / ``gemini`` / ``cursor-agent`` / ``aider`` / ``openhands`` / ``goose`` / ``q chat``) and, in the same job, lands the result with no review gate. The landing command is one of: a ``glab mr merge`` with an auto / non-interactive flag (``--auto-merge`` / ``--yes`` / ``-y`` / ``--when-pipeline-succeeds``), a ``git push`` carrying the ``merge_request.merge_when_pipeline_succeeds`` push option, or a plain ``git push`` (the GitLab idiom for committing straight to a branch).
+
+Does NOT fire when the agent only opens a merge request for review (``glab mr create`` with no merge), nor on a push / auto-merge job that does not run an agent (ordinary formatting / generated-file bots). The agent-plus-auto-land coupling is the signal. A ``git push --dry-run`` is ignored.
+
+**Known false-positive modes**
+
+- A job that runs an agent for a read-only task (triage, labeling) but also pushes an unrelated generated file would match by co-location. Split the agent and the push into separate jobs, or suppress on the job with a rationale noting the agent does not write the pushed paths.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Don't let an agentic CLI's output reach a branch or a merge without a human review gate. Have the agent open a normal merge request (``glab mr create`` with no auto-merge) so a person reviews the diff before it lands; drop ``glab mr merge --auto-merge`` / ``--yes`` and the ``merge_request.merge_when_pipeline_succeeds`` push option from the agent's job, and don't pair the agent with a ``git push`` straight to a protected branch. If the agent's prompt can be influenced by untrusted input (an MR title / description, a fetched page), treat the committed result as attacker-controlled.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## GL-050: Package-publish job relies on a long-lived registry token { #gl-050 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-2</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-6</span> <span class="pg-tag pg-tag--esf">ESF-D-SECRETS</span> <span class="pg-tag pg-tag--esf">ESF-S-VERIFY-DEPS</span> <span class="pg-tag pg-tag--cwe">CWE-798</span> <span class="pg-tag pg-tag--cwe">CWE-1357</span>
+</div>
+
+Fires when a job's `script:` (or `before_script:` / `after_script:`) runs a package-publish verb AND the job, its `variables:`, or the pipeline's top-level `variables:` reference a long-lived external-registry token. Publish verbs covered: `npm` / `pnpm` / `yarn publish`, `twine upload`, `poetry publish`, `uv publish`, `gem push`, `cargo publish`. Long-lived secrets: `NPM_TOKEN`, `NODE_AUTH_TOKEN`, `NPM_AUTH_TOKEN`, `PYPI_TOKEN`, `TWINE_PASSWORD`, `POETRY_PYPI_TOKEN`, `RUBYGEMS_API_KEY`, `GEM_HOST_API_KEY`, `CARGO_REGISTRY_TOKEN`.
+
+GitLab's built-in `${CI_JOB_TOKEN}` is deliberately excluded: it is the per-job, automatically-expiring token used to publish to the project's own GitLab Package Registry (the native path), not a long-lived external credential. A publish job that uses OIDC (`id_tokens:`) and references no long-lived token does not match. The GitHub Actions analog is GHA-050; the cloud-credentials side is GL-013 (long-lived AWS keys) / GL-031 (OIDC trust).
+
+**Known false-positive modes**
+
+- A private / internal registry that genuinely can't do OIDC (self-hosted Artifactory / Nexus without an OIDC broker) requires a static token. Gate that publish job behind a protected environment with required approvers and suppress this rule with a rationale naming the registry.
+- First-publish bootstrap of a new package (npm and PyPI both require an initial manual publish before trusted publishing can be wired). The rule fires; suppress on the specific job until the trusted-publisher record is in place.
+
+**Seen in the wild**
+
+- Shai-Hulud npm worm (2025-2026): the worm scraped `NPM_TOKEN` from the runner env / `~/.npmrc` and used it to `npm publish` patched versions of other packages the maintainer's account owned. OIDC trusted publishing turns that step into a no-op: the token doesn't survive the job.
+- npm 'Our plan for a more secure npm supply chain' (2025-09-22): npm will disallow token-based publishing by default and expand OIDC trusted publishing, with GitLab named as a supported provider.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Publish to public registries with GitLab OIDC trusted publishing instead of a long-lived registry token. Concretely:
+
+- **npm**: configure an `id_tokens:` block with `aud: https://registry.npmjs.org` on the publish job and run `npm publish` (npm CLI >= 11.5.1 exchanges the OIDC token for a short-lived upload token); drop the `${NPM_TOKEN}` / `${NODE_AUTH_TOKEN}` `.npmrc` line. npm's September 2025 plan disallows token-based publishing by default and lists GitLab as a supported OIDC provider.
+- **PyPI**: use PyPI trusted publishing (the GitLab OIDC provider) rather than a `${TWINE_PASSWORD}` / `${PYPI_TOKEN}`.
+- Publishing to the **GitLab Package Registry** of the same project already uses the built-in, per-job `${CI_JOB_TOKEN}` (which this rule does not flag); reserve long-lived tokens for registries that genuinely can't do OIDC, and protect those jobs with a protected environment / branch rule.
+
+A long-lived `NPM_TOKEN` in a publish job is the fuel a Shai-Hulud-shaped worm needs: once scraped from the job env or a `.npmrc` it can publish more compromised packages on the project's behalf. An OIDC token expires in minutes and is scoped to the job that requested it. The GitHub Actions analog is GHA-050.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
 ## TAINT-004: Untrusted input flows across jobs via dotenv artifact { #taint-004 }
 
 <div class="pg-rule__tags">
@@ -838,13 +1213,13 @@ v1 limitations: ``extends:`` job-template inheritance and cross-pipeline ``inclu
 
 **Known false-positive modes**
 
-- If the producer job runs a sanitiser between the tainted source interpolation and the dotenv write (``echo "$CI_COMMIT_TITLE" | tr -dc 'a-zA-Z0-9 ' > taint.env``), the consumer is no longer exploitable but TAINT-004 still fires. Suppress via ignore-file scoped to the consumer job's pipeline file when this is the deliberate shape; the sanitiser is then load-bearing and any future regression in it would re-expose the consumer.
+- If the producer job runs a sanitizer between the tainted source interpolation and the dotenv write (``echo "$CI_COMMIT_TITLE" | tr -dc 'a-zA-Z0-9 ' > taint.env``), the consumer is no longer exploitable but TAINT-004 still fires. Suppress via ignore-file scoped to the consumer job's pipeline file when this is the deliberate shape; the sanitizer is then load-bearing and any future regression in it would re-expose the consumer.
 
 <div class="pg-rule__rec" markdown>
 
 **Recommended action**
 
-Sanitise the value at the producer job before it lands in the dotenv file. The canonical safe pattern is to copy the ``$CI_COMMIT_*`` / ``$CI_MERGE_REQUEST_*`` source into an intermediate shell variable, run a sanitiser (``tr -dc 'a-zA-Z0-9 '`` is enough for a freeform title), and only then write the cleaned value to dotenv. The consuming job should still treat the auto-imported variable as tainted, reference it quoted (``"$TITLE"``) and never inline into a command without re-quoting. Removing the dotenv entirely is the strongest fix; if the value genuinely needs to flow downstream, validate the sanitiser is doing what you think before relying on it.
+Sanitize the value at the producer job before it lands in the dotenv file. The canonical safe pattern is to copy the ``$CI_COMMIT_*`` / ``$CI_MERGE_REQUEST_*`` source into an intermediate shell variable, run a sanitizer (``tr -dc 'a-zA-Z0-9 '`` is enough for a freeform title), and only then write the cleaned value to dotenv. The consuming job should still treat the auto-imported variable as tainted, reference it quoted (``"$TITLE"``) and never inline into a command without re-quoting. Removing the dotenv entirely is the strongest fix; if the value genuinely needs to flow downstream, validate the sanitizer is doing what you think before relying on it.
 
 </div>
 
@@ -864,13 +1239,13 @@ v1 limitations: ``include:`` cross-pipeline file inclusion isn't tracked yet (wo
 
 **Known false-positive modes**
 
-- If the consuming job sanitises the inherited variable before referencing it (``CLEAN=$(echo "$TITLE" | tr -dc 'a-zA-Z0-9 '); echo $CLEAN``), the rule still fires on the original ``$TITLE`` reference even though the sanitised value is what reaches the shell. Suppress via ignore-file scoped to the consuming job's name when the sanitiser is audited and load-bearing.
+- If the consuming job sanitizes the inherited variable before referencing it (``CLEAN=$(echo "$TITLE" | tr -dc 'a-zA-Z0-9 '); echo $CLEAN``), the rule still fires on the original ``$TITLE`` reference even though the sanitized value is what reaches the shell. Suppress via ignore-file scoped to the consuming job's name when the sanitizer is audited and load-bearing.
 
 <div class="pg-rule__rec" markdown>
 
 **Recommended action**
 
-Move the tainted-source interpolation out of the template's ``variables:`` block. The canonical safe pattern is to receive the source value through ``$CI_*`` directly in the consuming job's script (or a dedicated sanitiser step) and never copy it into a shared variable a downstream job can interpolate unquoted. If the inheritance is genuinely needed, sanitise at the boundary (``TITLE_SAFE: '$(echo "$CI_COMMIT_TITLE" | tr -dc "a-zA-Z0-9 ")'``) and have the extending job reference the cleaned variable. Removing the ``extends:`` propagation is the strongest fix; if the value genuinely needs to flow downstream, validate the sanitiser is doing what you think before relying on it.
+Move the tainted-source interpolation out of the template's ``variables:`` block. The canonical safe pattern is to receive the source value through ``$CI_*`` directly in the consuming job's script (or a dedicated sanitizer step) and never copy it into a shared variable a downstream job can interpolate unquoted. If the inheritance is genuinely needed, sanitize at the boundary (``TITLE_SAFE: '$(echo "$CI_COMMIT_TITLE" | tr -dc "a-zA-Z0-9 ")'``) and have the extending job reference the cleaned variable. Removing the ``extends:`` propagation is the strongest fix; if the value genuinely needs to flow downstream, validate the sanitizer is doing what you think before relying on it.
 
 </div>
 

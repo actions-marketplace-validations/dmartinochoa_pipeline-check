@@ -259,6 +259,28 @@ jobs:
         assert "steps.extract.outputs.title" in f.description
         assert "1 cross-step taint path" in f.description
 
+    def test_propagates_taint_through_lowercase_env_var(self) -> None:
+        # Regression: shell env vars are commonly lowercase. An
+        # uppercase-only ref pattern silently dropped the env-bound
+        # taint link, so this attacker-controlled flow was invisible to
+        # TAINT-001 (and GHA-003 treats the quoted env value as safe).
+        doc = _doc("""
+on: pull_request_target
+jobs:
+  build:
+    steps:
+      - id: extract
+        env:
+          title: ${{ github.event.issue.title }}
+        run: |
+          echo "out=$title" >> "$GITHUB_OUTPUT"
+      - run: echo "${{ steps.extract.outputs.out }}"
+""")
+        f = t1.check("wf.yml", doc)
+        assert not f.passed
+        assert "github.event.issue.title" in f.description
+        assert "steps.extract.outputs.out" in f.description
+
     def test_fails_with_truncation_for_many_paths(self) -> None:
         # Build a workflow with 5 distinct tainted outputs all
         # consumed; the rule's rendered description truncates to
@@ -416,6 +438,72 @@ jobs:
     needs: extract
     steps:
       - run: echo "${{ needs.extract.outputs.title }}"
+""")
+        assert t2.check("wf.yml", doc).passed
+
+    def test_fails_on_cicd_goat_scenario_21_matrix_expansion(self) -> None:
+        # Body lifted from cicd-goat scenario 21. PR labels enter via
+        # a step env binding, flow through the GITHUB_OUTPUT write
+        # (which TAINT-001/002 originally couldn't see because the
+        # value side is a shell var, not a context interpolation),
+        # become a job output, are matrix-expanded via fromJSON, and
+        # land in a downstream ``${{ matrix.target }}`` reference.
+        # The GitHub Security Lab matrix-expansion-injection writeup
+        # shape.
+        doc = _doc("""
+name: scenario-21-matrix-expansion-injection
+on:
+  pull_request:
+    types: [opened, synchronize, labeled]
+permissions:
+  contents: read
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.set.outputs.targets }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: set
+        env:
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          echo "targets=$LABELS" >> "$GITHUB_OUTPUT"
+  build:
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: ${{ fromJSON(needs.prepare.outputs.targets) }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          echo "Building for ${{ matrix.target }}"
+          make build TARGET="${{ matrix.target }}"
+""")
+        f = t2.check("wf.yml", doc)
+        assert not f.passed
+        assert "matrix.target" in f.description
+        assert "fromJSON" in f.description
+
+    def test_matrix_axis_silent_when_upstream_output_is_clean(self) -> None:
+        # Matrix axis fed from fromJSON of a CLEAN output stays
+        # silent — only tainted upstream outputs propagate.
+        doc = _doc("""
+on: push
+jobs:
+  prepare:
+    outputs:
+      targets: '["alpha","beta"]'
+    steps:
+      - run: echo noop
+  build:
+    needs: prepare
+    strategy:
+      matrix:
+        target: ${{ fromJSON(needs.prepare.outputs.targets) }}
+    steps:
+      - run: echo "${{ matrix.target }}"
 """)
         assert t2.check("wf.yml", doc).passed
 
@@ -659,3 +747,66 @@ jobs:
         f = t3.check("wf.yml", caller_doc, wf, ctx)
         assert not f.passed
         assert "CONFIRMED" in f.description
+
+    def test_emits_cross_document_flow_with_callee_path_when_confirmed(
+        self,
+    ) -> None:
+        # A confirmed forward (callee loaded and consumes the input)
+        # keys the structured flow's ``sink_job`` on the resolved callee
+        # path so the chain engine can join it against the callee's own
+        # findings (AC-002's cross-document tier).
+        caller_doc = _doc("""
+on: pull_request_target
+jobs:
+  call:
+    uses: ./.github/workflows/build.yml
+    with:
+      title: ${{ github.event.issue.title }}
+""")
+        callee_doc = _doc("""
+on:
+  workflow_call:
+    inputs:
+      title:
+        type: string
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo ${{ inputs.title }}
+""")
+        callee_wf = Workflow(
+            path=".github/workflows/build.yml", data=callee_doc,
+        )
+        wf, ctx = _ctx_for(caller_doc, callees=[callee_wf])
+        f = t3.check("wf.yml", caller_doc, wf, ctx)
+        assert not f.passed
+        assert f.taint_flows
+        assert any(
+            fl.cross_document
+            and fl.source_job == "call"
+            and fl.sink_job == ".github/workflows/build.yml"
+            for fl in f.taint_flows
+        )
+
+    def test_flow_uses_raw_ref_when_callee_not_loaded(self) -> None:
+        # No callee body in the context: the forward is unconfirmed, so
+        # the flow carries the raw callee ref (not a resource path) and
+        # never matches a callee's findings — no false cross-document
+        # reachability.
+        caller_doc = _doc("""
+on: pull_request_target
+jobs:
+  call:
+    uses: ./.github/workflows/build.yml
+    with:
+      title: ${{ github.event.issue.title }}
+""")
+        wf, ctx = _ctx_for(caller_doc)
+        f = t3.check("wf.yml", caller_doc, wf, ctx)
+        assert f.taint_flows
+        assert all(fl.cross_document for fl in f.taint_flows)
+        assert any(
+            fl.sink_job == "./.github/workflows/build.yml"
+            for fl in f.taint_flows
+        )

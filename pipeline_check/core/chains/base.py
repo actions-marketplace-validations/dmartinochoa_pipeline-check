@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
-from ..checks.base import Confidence, Finding, Severity
+from ..checks.base import Confidence, Finding, Severity, confidence_rank
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +83,33 @@ class Chain:
     #: this alongside the badge so a reader sees *why* the chain is
     #: reachable, not just that it is.
     reachability_note: str = ""
+    #: True when ``confirmed_reachable`` was established by a real
+    #: source-to-sink taint path (phase-2 dataflow reachability), as
+    #: opposed to the weaker phase-1 shared-job co-location signal. A
+    #: chain can be ``confirmed_reachable`` (co-located) without being
+    #: ``via_dataflow`` (a proven executable path). CI consumers can
+    #: gate on the stronger tier with ``--chains-require-dataflow``.
+    via_dataflow: bool = False
+    #: True when ``confirmed_reachable`` rests on a *structural identity*
+    #: link rather than job co-location: the two legs share the same
+    #: build artifact / image digest, IAM role, ServiceAccount, or repo,
+    #: so the produce-to-consume edge is direct, not inferred from
+    #: co-occurrence in a file. This is a confirmed tier (the rule sets
+    #: ``confirmed_reachable=True`` at HIGH confidence), distinct from the
+    #: weak shared-job fallback, but established by identity-matching
+    #: rather than a traced taint path, so it is reported separately from
+    #: ``via_dataflow``. A chain sets at most one of ``via_dataflow`` /
+    #: ``via_structural``; neither set with ``confirmed_reachable`` means
+    #: the shared-job co-location fallback.
+    via_structural: bool = False
+    #: For cross-repo (CXPC) chains, the repo coordinates the chain
+    #: spans, in ``[source, target]`` order (the producer repo that
+    #: carries the risk, then the consumer / partner repo that inherits
+    #: it). Empty for single-repo chains, whose footprint is
+    #: ``resources`` (file paths within one repo). The fleet posture
+    #: graph reads this to draw repo-to-repo edges; ``resources`` alone
+    #: can't, since it holds file paths, not repo coordinates.
+    repos: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -104,8 +131,14 @@ class Chain:
             "recommendation": self.recommendation,
             "confirmed_reachable": self.confirmed_reachable,
         }
+        if self.via_dataflow:
+            out["via_dataflow"] = True
+        if self.via_structural:
+            out["via_structural"] = True
         if self.reachability_note:
             out["reachability_note"] = self.reachability_note
+        if self.repos:
+            out["repos"] = list(self.repos)
         return out
 
 
@@ -218,13 +251,26 @@ def group_by_anchor(
     }
 
 
+def group_cross_repo(
+    findings_by_repo: dict[str, list[Finding]],
+    check_ids: list[str],
+) -> list[tuple[str, Finding]]:
+    """Return ``(repo_coord, finding)`` pairs for failing findings matching *check_ids*."""
+    wanted = set(check_ids)
+    out: list[tuple[str, Finding]] = []
+    for repo, findings in findings_by_repo.items():
+        for f in findings:
+            if (not f.passed) and f.check_id in wanted:
+                out.append((repo, f))
+    return out
+
+
 def min_confidence(findings: list[Finding]) -> Confidence:
     """Return the lowest confidence among *findings* (LOW > MEDIUM > HIGH).
 
     A chain is only as trustworthy as its weakest leg, if one leg is
     a heuristic blob match, the chain shouldn't claim HIGH confidence.
     """
-    from ..checks.base import confidence_rank
     if not findings:
         return Confidence.HIGH
     return min(

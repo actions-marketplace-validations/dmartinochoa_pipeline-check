@@ -33,23 +33,29 @@ from typing import Any
 
 import yaml
 
-from ._yaml_strict import safe_load_strict as _safe_load_strict  # noqa: F401
+from ._yaml_strict import safe_load_strict as _safe_load_strict
+from .checks.base import VALID_SEVERITY_NAMES as _VALID_SEVERITIES
 
 # Keys that are allowed in a config file (and map directly to click option names).
 _TOPLEVEL_KEYS: frozenset[str] = frozenset({
     "pipeline", "target", "checks", "region", "profile",
-    "tf_plan", "gha_path", "gitlab_path", "bitbucket_path", "azure_path",
+    "tf_plan", "tf_source",
+    "gha_path", "gitlab_path", "bitbucket_path", "azure_path",
     "circleci_path", "jenkinsfile_path", "cfn_template",
     "cloudbuild_path", "dockerfile_path", "k8s_path",
-    "buildkite_path", "tekton_path", "argo_path",
+    "buildkite_path", "tekton_path", "argo_path", "argocd_path",
+    "helm_path", "helm_values", "helm_set", "oci_manifest",
+    "drone_path", "harness_path", "npm_path", "pypi_path", "maven_path", "nuget_path",
     # GHA reusable-workflow remote-ref resolver.
     "resolve_remote", "gh_token", "no_cache",
     "gha_search_path", "gha_resolve_depth",
     "output", "output_file",
-    "standards", "severity_threshold",
-    "secret_patterns",
+    "standards", "severity_threshold", "min_confidence",
+    "secret_patterns", "detect_entropy",
     # Custom rule files, paths to YAML rule definitions.
     "custom_rules",
+    # OPA Rego rule directories.
+    "rego_rules",
     # Per-rule severity overrides, see ``_parse_overrides``.
     "overrides",
 })
@@ -183,7 +189,11 @@ def _load_path(p: Path) -> dict[str, Any]:
         else:
             # Unknown extension, best effort: try YAML (it's a superset of JSON).
             data = _safe_load_strict(p.read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError, tomllib.TOMLDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, yaml.YAMLError,
+            tomllib.TOMLDecodeError, RecursionError, MemoryError) as exc:
+        # UnicodeDecodeError (a ValueError, not an OSError) fires when the
+        # config file isn't valid UTF-8; without it a latin-1/cp1252 file
+        # crashes the eager config-load callback before the scan starts.
         print(f"[config] could not parse {p}: {exc}", file=sys.stderr)
         return {}
     return _flatten(data, source=str(p))
@@ -193,7 +203,24 @@ def _load_pyproject(p: Path) -> dict[str, Any]:
     try:
         with p.open("rb") as fh:
             doc = tomllib.load(fh)
-    except (OSError, tomllib.TOMLDecodeError):
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError,
+            RecursionError, MemoryError) as exc:
+        # ``tomllib.load`` decodes UTF-8 and raises ``UnicodeDecodeError``
+        # (a sibling of ``TOMLDecodeError``, not a subclass) on a non-UTF-8
+        # ``pyproject.toml``; without it the eager config callback crashes
+        # before the scan. Mirrors the guard in ``_load_path``.
+        #
+        # ``pyproject.toml`` is auto-probed shared real estate, so a file we
+        # don't even configure through stays silent. But when it carries a
+        # ``[tool.pipeline_check]`` table the user clearly meant to configure
+        # us there; a silent drop would strand that config, so surface the
+        # parse failure the way ``_load_path`` does for an explicit config.
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+        if "[tool.pipeline_check" in text:
+            print(f"[config] could not parse {p}: {exc}", file=sys.stderr)
         return {}
     section = doc.get("tool", {}).get("pipeline_check", {}) or {}
     if not section:
@@ -236,19 +263,12 @@ def _coerce(key: str, value: Any) -> Any:
       Scanner can convert to ``Severity`` without re-validating.
     - Everything else passes through as-is; click handles type conversion.
     """
-    if key in ("checks", "standards", "fail_on_checks", "secret_patterns", "custom_rules") and isinstance(value, list):
+    list_keys = ("checks", "standards", "fail_on_checks", "secret_patterns", "custom_rules", "rego_rules")
+    if key in list_keys and isinstance(value, list):
         return tuple(str(v) for v in value)
     if key == "overrides":
         return _parse_overrides(value)
     return value
-
-
-# Severity values accepted in an ``overrides:`` block. Lower-case copies
-# accommodate the YAML convention of unquoted lower-case strings; the
-# Scanner converts to ``Severity`` enum values once.
-_VALID_SEVERITIES: frozenset[str] = frozenset({
-    "CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO",
-})
 
 
 def _parse_overrides(raw: Any) -> dict[str, dict[str, str]]:
@@ -349,7 +369,8 @@ def _load_from_env() -> dict[str, Any]:
 
 def _coerce_env(key: str, raw: str) -> Any:
     """Env vars arrive as strings; split the multi-value ones on commas."""
-    if key in ("checks", "standards", "fail_on_checks", "secret_patterns", "custom_rules"):
+    if key in ("checks", "standards", "fail_on_checks", "secret_patterns", "custom_rules",
+                "rego_rules", "helm_values", "helm_set", "gha_search_path"):
         return tuple(v.strip() for v in raw.split(",") if v.strip())
     if key == "max_failures":
         try:

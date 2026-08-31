@@ -27,6 +27,32 @@ RULE = Rule(
         "``aws:PrincipalOrgID``, the lift-and-shift cross-account "
         "secret-access pattern needs scoping."
     ),
+    exploit_example=(
+        "# Vulnerable: Secrets Manager resource policy with\n"
+        "# ``Principal: '*'``. Anyone (no auth required) can\n"
+        "# call GetSecretValue. Equivalent to publishing the\n"
+        "# credential on GitHub.\n"
+        "import boto3, json\n"
+        "sm = boto3.client('secretsmanager')\n"
+        "sm.put_resource_policy(\n"
+        "    SecretId='prod/db-master',\n"
+        "    ResourcePolicy=json.dumps({\n"
+        "        'Version': '2012-10-17',\n"
+        "        'Statement': [{\n"
+        "            'Effect': 'Allow',\n"
+        "            'Principal': '*',\n"
+        "            'Action': 'secretsmanager:GetSecretValue',\n"
+        "            'Resource': '*'\n"
+        "        }]\n"
+        "    }),\n"
+        ")\n"
+        "\n"
+        "# Safe: remove the public policy. Resource policies\n"
+        "# should be a defense-in-depth layer over IAM, not a\n"
+        "# replacement. Scope ``Principal`` to specific roles\n"
+        "# (or rely on IAM alone and skip the resource policy).\n"
+        "sm.delete_resource_policy(SecretId='prod/db-master')"
+    ),
 )
 
 
@@ -36,7 +62,11 @@ def check(catalog: ResourceCatalog) -> list[Finding]:
         name = secret.get("Name", "<unnamed>")
         arn = secret.get("ARN", "")
         policy = catalog.secret_resource_policy(arn or name)
-        if policy is None:
+        # ``secret_resource_policy`` returns raw ``json.loads`` output; a
+        # policy that parsed to a list/scalar would crash ``iter_allow``
+        # (which calls ``.get``). AWS only stores object policies, so a
+        # non-dict is a malformed input to skip, not to evaluate.
+        if not isinstance(policy, dict):
             continue
         offenders = [
             idx for idx, stmt in enumerate(iter_allow(policy))

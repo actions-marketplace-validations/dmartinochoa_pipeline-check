@@ -74,7 +74,7 @@ def match(findings: list[Finding]) -> list[Chain]:
     for resource, ck_map in res_map.items():
         if "GHA-012" not in ck_map:
             continue
-        secondary = [c for c in ("GHA-016", "GHA-019") if c in ck_map]
+        secondary: list[str] = [c for c in ("GHA-016", "GHA-019") if c in ck_map]
         if not secondary:
             continue
         triggers = [ck_map["GHA-012"]] + [ck_map[c] for c in secondary]
@@ -116,7 +116,7 @@ def match(findings: list[Finding]) -> list[Chain]:
                 f"job {shared_repr}"
             )
             reach_narrative = (
-                f"  4. Reachability confirmed: the same job(s) "
+                f"  4. Co-located (unverified): the same job(s) "
                 f"({shared_repr}) both persist the GitHub token AND "
                 f"run on a non-ephemeral self-hosted runner. The "
                 f"token outlives the step that wrote it on a host "

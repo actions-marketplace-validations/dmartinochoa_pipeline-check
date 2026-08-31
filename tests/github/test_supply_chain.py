@@ -171,6 +171,53 @@ class TestGHA017DockerInsecure:
         f = run_check(wf, "GHA-017")
         assert f.passed
 
+    def test_fails_on_socket_mount_to_noncanonical_target(self):
+        # Mounting the Docker socket anywhere is an escape, not only to
+        # the canonical /var/run/docker.sock target.
+        wf = """
+        name: ci
+        on: push
+        permissions: { contents: read }
+        jobs:
+          build:
+            runs-on: ubuntu-latest
+            timeout-minutes: 30
+            steps:
+              - run: docker run --volume /var/run/docker.sock:/sock builder make all
+        """
+        f = run_check(wf, "GHA-017")
+        assert not f.passed
+
+    def test_fails_on_seccomp_unconfined(self):
+        wf = """
+        name: ci
+        on: push
+        permissions: { contents: read }
+        jobs:
+          build:
+            runs-on: ubuntu-latest
+            timeout-minutes: 30
+            steps:
+              - run: docker run --security-opt seccomp=unconfined builder make all
+        """
+        f = run_check(wf, "GHA-017")
+        assert not f.passed
+
+    def test_fails_on_ipc_host(self):
+        wf = """
+        name: ci
+        on: push
+        permissions: { contents: read }
+        jobs:
+          build:
+            runs-on: ubuntu-latest
+            timeout-minutes: 30
+            steps:
+              - run: docker run --ipc=host builder make all
+        """
+        f = run_check(wf, "GHA-017")
+        assert not f.passed
+
 
 # ── GHA-018 insecure package source ─────────────────────────────────
 
@@ -220,6 +267,39 @@ class TestGHA018PackageInsecure:
         """
         f = run_check(wf, "GHA-018")
         assert f.passed
+
+    def test_fails_on_pip_index_url_equals_form(self):
+        # ``--index-url=http://`` (equals form) is the same insecure source
+        # as the space form.
+        wf = """
+        name: ci
+        on: push
+        permissions: { contents: read }
+        jobs:
+          build:
+            runs-on: ubuntu-latest
+            timeout-minutes: 30
+            steps:
+              - run: pip install --index-url=http://example.com/simple/ requests
+        """
+        f = run_check(wf, "GHA-018")
+        assert not f.passed
+
+    def test_fails_on_npm_strict_ssl_false(self):
+        # Disabling TLS cert verification for the install.
+        wf = """
+        name: ci
+        on: push
+        permissions: { contents: read }
+        jobs:
+          build:
+            runs-on: ubuntu-latest
+            timeout-minutes: 30
+            steps:
+              - run: npm install --strict-ssl=false some-pkg
+        """
+        f = run_check(wf, "GHA-018")
+        assert not f.passed
 
 
 # ── GHA-021 lockfile enforcement ────────────────────────────────────
@@ -321,6 +401,126 @@ class TestGHA022DepUpdate:
         f = run_check(wf, "GHA-022")
         assert f.passed
 
+    def test_exempt_pip_upgrade_pip(self):
+        wf = """
+        name: ci
+        on: push
+        permissions: { contents: read }
+        jobs:
+          build:
+            runs-on: ubuntu-latest
+            timeout-minutes: 30
+            steps:
+              - run: pip install --upgrade pip
+        """
+        f = run_check(wf, "GHA-022")
+        assert f.passed
+
+    def test_exempt_pip_upgrade_poetry(self):
+        wf = """
+        name: ci
+        on: push
+        permissions: { contents: read }
+        jobs:
+          build:
+            runs-on: ubuntu-latest
+            timeout-minutes: 30
+            steps:
+              - run: pip install --upgrade poetry
+        """
+        f = run_check(wf, "GHA-022")
+        assert f.passed
+
+    def test_exempt_pip_upgrade_black(self):
+        wf = """
+        name: ci
+        on: push
+        permissions: { contents: read }
+        jobs:
+          build:
+            runs-on: ubuntu-latest
+            timeout-minutes: 30
+            steps:
+              - run: pip3 install -U black
+        """
+        f = run_check(wf, "GHA-022")
+        assert f.passed
+
+    def test_exempt_pip_upgrade_pre_commit(self):
+        wf = """
+        name: ci
+        on: push
+        permissions: { contents: read }
+        jobs:
+          build:
+            runs-on: ubuntu-latest
+            timeout-minutes: 30
+            steps:
+              - run: pip install pre-commit --upgrade
+        """
+        f = run_check(wf, "GHA-022")
+        assert f.passed
+
+    def test_exempt_npm_global_self_upgrade(self):
+        wf = """
+        name: ci
+        on: push
+        permissions: { contents: read }
+        jobs:
+          build:
+            runs-on: ubuntu-latest
+            timeout-minutes: 30
+            steps:
+              - run: npm install -g npm
+        """
+        f = run_check(wf, "GHA-022")
+        assert f.passed
+
+    def test_exempt_npm_global_yarn_install(self):
+        wf = """
+        name: ci
+        on: push
+        permissions: { contents: read }
+        jobs:
+          build:
+            runs-on: ubuntu-latest
+            timeout-minutes: 30
+            steps:
+              - run: npm install -g yarn
+        """
+        f = run_check(wf, "GHA-022")
+        assert f.passed
+
+    def test_exempt_npm_global_pnpm_install(self):
+        wf = """
+        name: ci
+        on: push
+        permissions: { contents: read }
+        jobs:
+          build:
+            runs-on: ubuntu-latest
+            timeout-minutes: 30
+            steps:
+              - run: npm i --global pnpm
+        """
+        f = run_check(wf, "GHA-022")
+        assert f.passed
+
+    def test_exempt_corepack_enable(self):
+        wf = """
+        name: ci
+        on: push
+        permissions: { contents: read }
+        jobs:
+          build:
+            runs-on: ubuntu-latest
+            timeout-minutes: 30
+            steps:
+              - run: corepack enable
+        """
+        f = run_check(wf, "GHA-022")
+        assert f.passed
+
 
 # ── GHA-020 vulnerability scanning ──────────────────────────────────
 
@@ -357,6 +557,29 @@ class TestGHA020VulnScanning:
               - run: docker build -t ghcr.io/example/app:v1 .
               - run: trivy image --severity HIGH,CRITICAL ghcr.io/example/app:v1
               - run: docker push ghcr.io/example/app:v1
+        """
+        f = run_check(wf, "GHA-020")
+        assert f.passed
+
+    def test_passes_with_trivy_action(self):
+        # The reusable-action form (``aquasecurity/trivy-action``) is how
+        # most workflows run Trivy, not a ``run: trivy`` CLI line. It must
+        # count as a scan, otherwise the most common build-and-scan setup
+        # is falsely flagged (and GHA-098 already treats this ref as a
+        # scanner, so GHA-020 must agree).
+        wf = """
+        name: release
+        on: push
+        permissions: { contents: read }
+        jobs:
+          build:
+            runs-on: ubuntu-latest
+            timeout-minutes: 30
+            steps:
+              - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+              - uses: docker/build-push-action@v5
+              - uses: aquasecurity/trivy-action@0.20.0
+                with: { image-ref: ghcr.io/example/app:v1 }
         """
         f = run_check(wf, "GHA-020")
         assert f.passed

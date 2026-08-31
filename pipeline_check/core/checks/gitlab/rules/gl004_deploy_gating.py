@@ -1,27 +1,14 @@
 """GL-004, deploy jobs must be gated by manual approval or environment."""
 from __future__ import annotations
 
-import re
 from typing import Any
 
+from ..._primitives.deploy_names import DEPLOY_CMD_RE as _DEPLOY_CMD_RE
 from ..._primitives.oci_refs import extract_image_anchors_from_strings
 from ...base import Finding, ResourceAnchor, Severity
 from ...rule import Rule
 from ..base import iter_jobs, job_scripts
-from ._helpers import DEPLOY_RE, rules_manual
-
-_DEPLOY_CMD_RE = re.compile(
-    r"(?:kubectl\s+(?:apply|create|set\s+image|rollout\s+restart)"
-    r"|terraform\s+(?:apply|destroy)"
-    r"|aws\s+(?:s3\s+(?:cp|sync)|cloudformation\s+deploy|ecs\s+update-service)"
-    r"|docker\s+push"
-    r"|helm\s+(?:upgrade|install)"
-    r"|gcloud\s+(?:app\s+deploy|run\s+deploy|functions\s+deploy)"
-    r"|ansible-playbook"
-    r"|serverless\s+deploy"
-    r"|az\s+(?:webapp\s+deploy|functionapp\s+deploy|containerapp\s+update))",
-    re.IGNORECASE,
-)
+from ._helpers import DEPLOY_RE, rules_fully_manual
 
 RULE = Rule(
     id="GL-004",
@@ -41,6 +28,29 @@ RULE = Rule(
         "`publish` / `promote` should either require manual approval "
         "or declare an `environment:` binding. Otherwise any push to "
         "the trigger branch ships to the target."
+    ),
+    exploit_example=(
+        "# Vulnerable: a deploy job with no manual gate or environment:.\n"
+        "deploy_prod:\n"
+        "  stage: deploy\n"
+        "  script:\n"
+        "    - aws s3 sync ./dist s3://prod-site\n"
+        "\n"
+        "# Attack: nothing gates this. With no `when: manual` and no\n"
+        "# `environment:`, GitLab runs it on every pipeline for the\n"
+        "# trigger branch, so any push (a self-approved MR, a typo'd\n"
+        "# hotfix, a compromised account) ships straight to production\n"
+        "# with no approval and no environment audit trail.\n"
+        "\n"
+        "# Safe: require manual approval and bind an environment for the\n"
+        "# audit trail plus protected-branch policy.\n"
+        "deploy_prod:\n"
+        "  stage: deploy\n"
+        "  environment: production\n"
+        "  when: manual\n"
+        "  allow_failure: false\n"
+        "  script:\n"
+        "    - aws s3 sync ./dist s3://prod-site"
     ),
 )
 
@@ -65,7 +75,10 @@ def check(path: str, doc: dict[str, Any]) -> Finding:
             )
         if not is_deploy:
             continue
-        manual = job.get("when") == "manual" or rules_manual(job.get("rules"))
+        manual = (
+            job.get("when") == "manual"
+            or rules_fully_manual(job.get("rules"))
+        )
         has_env = bool(job.get("environment"))
         if not (manual or has_env):
             ungated.append(name)

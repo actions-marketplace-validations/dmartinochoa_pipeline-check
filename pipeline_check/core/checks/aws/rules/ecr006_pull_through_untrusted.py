@@ -23,6 +23,30 @@ RULE = Rule(
         "``registry-1.docker.io`` without an authenticated credential "
         "silently caches whatever the public namespace resolves to."
     ),
+    exploit_example=(
+        "# Vulnerable: an ECR pull-through cache rule with an\n"
+        "# untrusted upstream registry. A pull-through cache means\n"
+        "# ECR fetches from the upstream on first reference and\n"
+        "# caches the bytes; if the upstream is compromised, those\n"
+        "# bytes land in your registry and ship to every consumer.\n"
+        "import boto3\n"
+        "ecr = boto3.client('ecr')\n"
+        "ecr.create_pull_through_cache_rule(\n"
+        "    ecrRepositoryPrefix='internal-mirror',\n"
+        "    upstreamRegistryUrl='rando-mirror.example.com',\n"
+        ")\n"
+        "\n"
+        "# Safe: pull-through only against registries on the\n"
+        "# trusted allow-list (ECR Public, registry.k8s.io,\n"
+        "# ghcr.io, gcr.io) or against any registry that has an\n"
+        "# authenticated ``credentialArn`` attached. The\n"
+        "# ``upstreamRegistryUrl`` the AWS API stores and returns\n"
+        "# is the bare hostname with no scheme.\n"
+        "ecr.create_pull_through_cache_rule(\n"
+        "    ecrRepositoryPrefix='public-cache',\n"
+        "    upstreamRegistryUrl='public.ecr.aws',\n"
+        ")"
+    ),
 )
 
 #: Registry hostnames that are safe by policy (explicit allow-list).

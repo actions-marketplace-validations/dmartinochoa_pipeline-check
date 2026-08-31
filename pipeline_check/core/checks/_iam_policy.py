@@ -20,6 +20,9 @@ CICD_SERVICE_PRINCIPALS = {
 
 ADMIN_POLICY_ARN = "arn:aws:iam::aws:policy/AdministratorAccess"
 
+# Suffix shared across all partitions; used for partition-tolerant matching.
+_ADMIN_POLICY_SUFFIX = ":iam::aws:policy/AdministratorAccess"
+
 SENSITIVE_ACTION_PREFIXES = (
     "s3:", "kms:", "secretsmanager:", "ssm:", "iam:", "sts:",
     "dynamodb:", "lambda:", "ec2:",
@@ -47,16 +50,28 @@ def parse_doc(raw: object) -> dict[str, Any]:
     return loaded if isinstance(loaded, dict) else {}
 
 
-def iter_allow(doc: dict[str, Any]) -> Iterable[dict[str, Any]]:
-    # Statement can legally be a single dict or a list; be tolerant of None
-    # and of malformed entries that aren't dicts at all.
+def iter_statements(doc: dict[str, Any]) -> Iterable[dict[str, Any]]:
+    """Yield each statement *dict* from a policy document.
+
+    ``Statement`` can legally be a single dict or a list; be tolerant of
+    ``None`` and of malformed entries that aren't dicts at all. Unlike
+    :func:`iter_allow` this does not filter on ``Effect`` (trust-policy
+    callers, e.g. deciding whether a role is CI/CD-scoped, want every
+    statement, not just ``Allow`` ones).
+    """
     stmts = doc.get("Statement") or []
     if isinstance(stmts, dict):
         stmts = [stmts]
     elif not isinstance(stmts, list):
         return
     for stmt in stmts:
-        if isinstance(stmt, dict) and stmt.get("Effect") == "Allow":
+        if isinstance(stmt, dict):
+            yield stmt
+
+
+def iter_allow(doc: dict[str, Any]) -> Iterable[dict[str, Any]]:
+    for stmt in iter_statements(doc):
+        if stmt.get("Effect") == "Allow":
             yield stmt
 
 
@@ -117,7 +132,12 @@ def is_oidc_trust_stmt(stmt: dict[str, Any]) -> str | None:
     """
     if stmt.get("Effect") != "Allow":
         return None
-    principal = stmt.get("Principal", {}) or {}
+    principal = stmt.get("Principal")
+    if not isinstance(principal, dict):
+        # A bare ``Principal: "*"`` (string) or a list is a public/anonymous
+        # trust, not a Federated OIDC one; treat it as a non-match rather
+        # than crashing on ``.get``.
+        return None
     federated = principal.get("Federated")
     if not federated:
         return None
@@ -143,9 +163,44 @@ def oidc_audience_pinned(stmt: dict[str, Any]) -> bool:
     return False
 
 
+def github_repo_sub_too_broad(value: str) -> bool:
+    """Return True when a GitHub Actions OIDC ``sub`` claim is broad
+    enough that an untrusted workflow run can assume the role.
+
+    GitHub subjects look like ``repo:<owner>/<repo>:<context>`` where the
+    context is e.g. ``ref:refs/heads/main`` / ``environment:prod`` /
+    ``pull_request``. A subject is too broad when:
+
+    * the owner/repo segment is wildcarded (``repo:*`` or
+      ``repo:<owner>/*``), so any repo in (or beyond) the org federates; or
+    * the context segment is a bare ``*`` (any ref / environment) or
+      ``pull_request``, so a fork PR (via ``pull_request_target``) mints
+      the role's token.
+
+    Non-``repo:`` subjects (GitLab, Terraform Cloud, ...) return False:
+    only the GitHub claim shape is recognized here, so other IdPs keep
+    the looser "any non-``*`` value is a pin" treatment.
+    """
+    if not isinstance(value, str) or not value.startswith("repo:"):
+        return False
+    owner, sep, context = value[len("repo:"):].partition(":")
+    # Owner/repo wildcard: ``repo:*``, ``repo:org/*``, or a bare segment.
+    if owner == "*" or owner.endswith("/*") or "/" not in owner:
+        return True
+    # Context wildcard or the fork-reachable ``pull_request`` context.
+    return bool(sep) and context in {"*", "pull_request"}
+
+
 def oidc_subject_pinned(stmt: dict[str, Any]) -> bool:
-    """Return True when *stmt* pins a subject condition (``...:sub``)
-    **and** the value is not an unrestricted wildcard."""
+    """Return True when *stmt* pins a subject condition (``...:sub``) to a
+    specific principal.
+
+    A subject is NOT a pin when it is absent, a bare ``*``, or - for
+    GitHub Actions ``repo:`` claims - wildcarded at the owner/repo segment
+    (``repo:org/*``) or the context segment (``repo:org/repo:*`` /
+    ``...:pull_request``). Any of those lets an untrusted workflow run,
+    including a fork pull request, assume the role.
+    """
     conditions = stmt.get("Condition", {}) or {}
     for op, inner in conditions.items():
         if not isinstance(inner, dict):
@@ -156,13 +211,34 @@ def oidc_subject_pinned(stmt: dict[str, Any]) -> bool:
             values = as_list(value)
             if not values:
                 return False
-            # StringLike with bare "*" defeats the purpose. Any other
-            # pattern (including ``repo:myorg/*:ref:refs/heads/main``)
-            # is considered pinned.
+            # StringLike with bare "*" trusts every subject.
             if op.lower() == "stringlike" and all(v == "*" for v in values):
+                return False
+            # GitHub ``repo:`` claims that wildcard the repo or the ref,
+            # or trust the ``pull_request`` context, are not real pins.
+            if any(github_repo_sub_too_broad(v) for v in values):
                 return False
             return True
     return False
+
+
+def principal_is_only_account_root(stmt: dict[str, Any]) -> bool:
+    """Return True when *stmt*'s principal is exclusively the account root
+    (``arn:*:iam::<acct>:root``).
+
+    The default / AWS-recommended KMS key policy grants ``kms:*`` to the
+    account root so IAM policies can govern key access. That baseline
+    statement is not an over-broad grant, so wildcard-action checks
+    (KMS-002) must skip it. A role whose ARN ends in ``:role/root`` does
+    not match (it ends with ``/root``, not ``:root``).
+    """
+    principal = stmt.get("Principal")
+    if not isinstance(principal, dict) or set(principal) - {"AWS"}:
+        return False
+    values = as_list(principal.get("AWS"))
+    if not values:
+        return False
+    return all(isinstance(v, str) and v.endswith(":root") for v in values)
 
 
 def public_principal(stmt: dict[str, Any]) -> bool:

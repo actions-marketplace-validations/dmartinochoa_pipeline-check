@@ -32,11 +32,34 @@ RULE = Rule(
         "GL-005 only audits top-level ``include:``. Parent-child and "
         "multi-project pipelines that load YAML via the job-level "
         "``trigger: include:`` slot slip through. Branch refs "
-        "(``main``/``master``/``develop``/``head``) count as unpinned."
+        "(``main``/``master``/``develop``/``head``/``trunk``) count as unpinned."
+    ),
+    exploit_example=(
+        "# Vulnerable: ``trigger:`` ``include:`` pulls a child\n"
+        "# pipeline definition from a remote project without\n"
+        "# pinning the ref. Whoever can push to that project's\n"
+        "# default branch ships child-pipeline content into the\n"
+        "# parent's run.\n"
+        "deploy:\n"
+        "  stage: deploy\n"
+        "  trigger:\n"
+        "    include:\n"
+        "      - project: 'ci/templates'\n"
+        "        file: '/child-pipeline.yml'\n"
+        "        # no ref:\n"
+        "\n"
+        "# Safe: pin ``ref:`` to a SHA or protected tag.\n"
+        "deploy:\n"
+        "  stage: deploy\n"
+        "  trigger:\n"
+        "    include:\n"
+        "      - project: 'ci/templates'\n"
+        "        file: '/child-pipeline.yml'\n"
+        "        ref: 0123456789abcdef0123456789abcdef01234567"
     ),
 )
 
-_FLOATING_REFS = {"main", "master", "develop", "head"}
+_FLOATING_REFS = {"main", "master", "develop", "head", "trunk"}
 
 
 def _inspect_include(includes: Any, where: str, offenders: list[str]) -> None:

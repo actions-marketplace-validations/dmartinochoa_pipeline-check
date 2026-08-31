@@ -15,9 +15,9 @@ provider. They need rendering, which would require a `helm` or
 
 Workload kinds (``Deployment``, ``StatefulSet``, ``DaemonSet``,
 ``Job``, ``CronJob``, ``ReplicaSet``, ``Pod``) all expose a pod
-spec, but at different paths. :func:`pod_specs` normalises that and
-yields ``(path_prefix, podspec)`` tuples; rules iterate that rather
-than walking each kind themselves.
+spec, but at different paths. :func:`iter_workload_pod_specs`
+normalizes that and yields ``(manifest, podspec)`` tuples; rules
+iterate that rather than walking each kind themselves.
 """
 from __future__ import annotations
 
@@ -29,7 +29,8 @@ from typing import Any
 import yaml
 
 from .._yaml_files import load_yaml_files
-from ..base import BaseCheck
+from .._yaml_lines import line_of as _line_of
+from ..base import BaseCheck, Location
 
 #: Workload kinds whose pod spec lives at ``spec.template.spec``.
 _TEMPLATE_WORKLOAD_KINDS: frozenset[str] = frozenset({
@@ -140,7 +141,7 @@ class KubernetesContext:
         ctx = cls([])
         try:
             docs = list(yaml.safe_load_all(text))
-        except yaml.YAMLError as exc:
+        except (yaml.YAMLError, RecursionError, MemoryError) as exc:
             first_line = str(exc).split("\n", 1)[0]
             ctx.warnings = [f"{path_hint}: YAML parse error: {first_line}"]
             return ctx
@@ -194,7 +195,7 @@ def _to_manifest(
     )
 
 
-class KubernetesBaseCheck(BaseCheck):
+class KubernetesBaseCheck(BaseCheck[KubernetesContext]):
     """Base class for Kubernetes manifest rule modules."""
 
     PROVIDER = "kubernetes"
@@ -297,6 +298,24 @@ def iter_workload_pod_specs(
             yield m, ps
 
 
+def manifest_location(m: Manifest, obj: Any = None) -> Location:
+    """Build a :class:`Location` pointing at *obj* within manifest *m*.
+
+    *obj* is the most specific dict available at the offending site (a
+    container, pod spec, volume, or the manifest document itself); the
+    location uses its source line, falling back to the document's line
+    when *obj* isn't line-tagged. Carries ``doc_index`` so a finding in
+    one document of a multi-doc file resolves to the right resource, the
+    same shape the rules that already set locations use (e.g. K8S-001).
+    """
+    line = _line_of(obj) if isinstance(obj, dict) else None
+    if line is None:
+        line = _line_of(m.data)
+    return Location(
+        path=m.path, start_line=line, end_line=line, doc_index=m.doc_index,
+    )
+
+
 __all__ = [
     "KubernetesBaseCheck",
     "KubernetesContext",
@@ -307,5 +326,6 @@ __all__ = [
     "iter_containers",
     "iter_volumes",
     "iter_workload_pod_specs",
+    "manifest_location",
     "pod_spec",
 ]

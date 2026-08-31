@@ -60,7 +60,12 @@ STANDARD = Standard(
         "CB-002":   ["4.1.2", "4.4.4"],
         "GHA-017":  ["4.1.2", "4.4.4"],
         "GHA-026":  ["4.1.2", "4.4.3"],
+        "GHA-107":  ["4.4.3"],            # harden-runner in audit mode (egress not blocked)
+        "GHA-108":  ["4.4.3"],            # no runtime egress control on OIDC/deploy workflow
+        "GHA-109":  ["4.4.3"],            # harden-runner not the first step
         "GL-017":   ["4.1.2", "4.4.4"],
+        "GL-039":   ["4.1.2", "4.4.4"],# dind daemon TLS disabled / exposed on 2375
+        "GL-041":   ["4.1.3"],# IaC apply on an untrusted MR trigger
         "BB-013":   ["4.1.2", "4.4.4"],
         "ADO-017":  ["4.1.2", "4.4.4"],
         "JF-017":   ["4.1.2", "4.4.4"],
@@ -70,22 +75,42 @@ STANDARD = Standard(
         # ── 4.1.3. Embedded malware ────────────────────────────────
         "CB-011":   ["4.1.3"],
         "GHA-003":  ["4.1.3"],
+        "GHA-119":  ["4.1.3"],# untrusted context into an agentic AI CLI
+        "GHA-120":  ["4.1.3"],# trust_remote_code model load = code exec
+        "GHA-122":  ["4.1.3"],# unsafe pickle deser of fetched artifact = code exec
+        "GHA-117":  ["4.1.3"],# IaC apply on untrusted PR trigger
+        "GHA-118":  ["4.1.3"],# untrusted content into $GITHUB_ENV / $GITHUB_PATH
         "GHA-016":  ["4.1.3"],
         "GHA-027":  ["4.1.3"],
         "GHA-028":  ["4.1.3"],
         "GL-002":   ["4.1.3"],
+        "GL-045":   ["4.1.3"],# trust_remote_code model load = code exec
+        "GL-047":   ["4.1.3"],# unsafe pickle deser of fetched artifact = code exec
+        "GL-048":   ["4.1.3"],# untrusted MR context into agentic CLI = prompt injection
         "GL-016":   ["4.1.3"],
         "GL-025":   ["4.1.3"],
         "GL-026":   ["4.1.3"],
         "BB-002":   ["4.1.3"],
+        "BB-035":   ["4.1.3"],   # trust_remote_code model load = code exec
+        "CC-034":   ["4.1.3"],   # trust_remote_code model load = code exec (CircleCI)
+        "CC-036":   ["4.1.3"],   # unsafe pickle deser of fetched artifact = code exec (CircleCI)
+        "CC-037":   ["4.1.3"],   # agentic CLI ingests untrusted context (prompt injection) (CircleCI)
+        "BB-036":   ["4.1.3"],   # untrusted PR context into agentic CLI = prompt injection
+        "BB-037":   ["4.1.3"],   # unsafe pickle deser of fetched artifact = code exec
         "BB-012":   ["4.1.3"],
         "BB-025":   ["4.1.3"],
         "BB-026":   ["4.1.3"],
         "ADO-002":  ["4.1.3"],
+        "ADO-034":  ["4.1.3"],   # trust_remote_code model load = code exec
+        "ADO-035":  ["4.1.3"],   # untrusted PR context into agentic CLI = prompt injection
+        "ADO-036":  ["4.1.3"],   # unsafe pickle deser of fetched artifact = code exec
         "ADO-016":  ["4.1.3"],
         "ADO-026":  ["4.1.3"],
         "ADO-027":  ["4.1.3"],
         "JF-002":   ["4.1.3"],
+        "JF-037":   ["4.1.3"],   # agentic CLI ingests untrusted context (prompt injection)
+        "JF-039":   ["4.1.3"],   # trust_remote_code model load = code exec
+        "JF-041":   ["4.1.3"],   # unsafe pickle deser of fetched artifact = code exec
         "JF-016":   ["4.1.3"],
         "JF-029":   ["4.1.3"],
         "JF-030":   ["4.1.3"],
@@ -93,6 +118,11 @@ STANDARD = Standard(
         "CC-016":   ["4.1.3"],
         "CC-026":   ["4.1.3"],
         "CC-027":   ["4.1.3"],
+        "DR-017":  ["4.1.3"],  # Drone dangerous shell idiom
+        "BK-016":  ["4.1.3"],  # Buildkite dangerous shell idiom
+        "ARGO-019":  ["4.1.3"],  # Argo dangerous shell idiom
+        "TKN-018":  ["4.1.3"],  # Tekton dangerous shell idiom
+        "HARNESS-014":  ["4.1.3"],  # Harness dangerous shell idiom
         "GCB-004":  ["4.1.3"],
         "GCB-006":  ["4.1.3"],
 
@@ -102,6 +132,7 @@ STANDARD = Standard(
         "GHA-008":  ["4.1.4"],
         "GL-003":   ["4.1.4"],
         "GL-008":   ["4.1.4"],
+        "DEV-008":   ["4.1.4"],   # literal secret in a devenv config
         "GL-013":   ["4.1.4"],
         "BB-003":   ["4.1.4"],
         "BB-008":   ["4.1.4"],
@@ -129,6 +160,7 @@ STANDARD = Standard(
         "GHA-029":  ["4.1.5"],
         "GL-001":   ["4.1.5"],
         "GL-005":   ["4.1.5"],
+        "GL-042":   ["4.1.5"],    # include: component unpinned
         "GL-009":   ["4.1.5"],
         "GL-018":   ["4.1.5"],
         "GL-021":   ["4.1.5"],
@@ -197,6 +229,7 @@ STANDARD = Standard(
         "PBAC-001": ["4.4.3"],
         "PBAC-003": ["4.4.3"],
         "GHA-012":  ["4.4.3"],             # self-hosted runner = uncontrolled net
+        "GHA-105":  ["4.4.3"],             # self-hosted runner on PR trigger
         "GL-014":   ["4.4.3"],
         "BB-016":   ["4.4.3"],
         "ADO-013":  ["4.4.3"],
@@ -267,6 +300,7 @@ STANDARD = Standard(
         # rules (TKN-009..012 signing/SBOM/provenance/vuln-scan) live
         # outside 800-190's scope and aren't mapped here.
         "TKN-001":  ["4.1.5"],
+        "TKN-016": ["4.1.5"],  # remote resolver / bundle task body not pinned
         "TKN-002":  ["4.1.2", "4.4.4"],
         "TKN-004":  ["4.4.4"],
         "TKN-005":  ["4.1.4"],
@@ -285,6 +319,13 @@ STANDARD = Standard(
         # cleartext secrets in images, 4.1.5 untrusted images
         # (unpinned).
         "DF-001": ["4.1.5"],                       # FROM not digest-pinned
+        "MODEL-001": ["4.1.5"],                    # unpinned base model
+        "MODEL-002": ["4.1.5"],                    # third-party hub base model
+        "MODEL-003": ["4.1.5"],                    # local unverified weights blob
+        "MODEL-006": ["4.1.5"],                    # committed unsafe-serialization model artifact
+        "MODEL-004": ["4.1.5"],                    # remote LoRA adapter
+        "MODEL-005": ["4.1.5"],                    # config auto_map = custom loader code
+        "DF-031": ["4.1.5"],                       # COPY --from external image not digest-pinned
         "DF-002": ["4.1.2", "4.4.4"],              # runs as root
         "DF-003": ["4.1.5", "4.2.1"],              # ADD remote, no integrity
         "DF-004": ["4.2.1"],                       # curl-pipe
@@ -335,11 +376,16 @@ STANDARD = Standard(
         "NPM-006":  ["4.1.3"],                     # compromised npm version
         "NPM-007":  ["4.4.5"],                     # .npmrc ignore-scripts
         "NPM-011":  ["4.1.4"],                     # secret-shaped paths in files field
+        "NPM-013":  ["4.1.4"],                     # broad files-field publishes everything
         "PYPI-001": ["4.1.5"],                     # missing ==pin
         "PYPI-002": ["4.1.5"],                     # hash pinning missing
         "PYPI-003": ["4.2.1"],                     # http index / --trusted-host
+        "PYPI-018": ["4.2.1"],  # --no-binary forces sdist build
         "PYPI-004": ["4.1.5"],                     # VCS dep without commit SHA
+        "PYPI-015": ["4.1.5"],  # direct artifact URL
         "PYPI-005": ["4.2.1"],                     # --extra-index-url (dep confusion)
+        "PYPI-017": ["4.2.1"],  # remote --find-links
+        "PYPI-016": ["4.2.1"],  # primary index repointed
         "PYPI-006": ["4.1.3"],                     # compromised PyPI version
         "MVN-001":  ["4.1.5"],                     # floating Maven range
         "MVN-002":  ["4.1.5"],                     # mutable SNAPSHOT dep
@@ -348,6 +394,73 @@ STANDARD = Standard(
         "MVN-005":  ["4.1.5"],                     # lax checksumPolicy
         "MVN-006":  ["4.1.3"],                     # compromised Maven version
         "MVN-007":  ["4.2.1"],                     # settings.xml wildcard mirror
+        "MVN-008":  ["4.1.3"],                     # cooldown gate (--resolve-remote)
+        "MVN-009":  ["4.1.3"],                     # OSV advisory (--resolve-remote)
+        # ── Maven extended pack ──
+        "MVN-010":  ["4.1.4"],                     # plaintext server password
+        "MVN-011":  ["4.1.4"],                     # repo URL credentials
+        "MVN-012":  ["4.1.3"],                     # build plugin floating
+        "MVN-013":  ["4.1.3"],                     # build extension floating
+        "MVN-014":  ["4.1.3"],                     # wrapper sha256 missing
+        "MVN-015": ["4.1.3"],  # build-time plugin exec bound to lifecycle
+        "MVN-016": ["4.1.3"],  # gradle allowInsecureProtocol
+        "MVN-017": ["4.1.4"],  # settings.xml privateKey + plaintext passphrase
+        "MVN-018": ["4.1.3"],  # distributionManagement release accepts snapshots
+        "NPM-008":  ["4.1.3"],                     # cooldown gate (--resolve-remote)
+        "NPM-009":  ["4.1.5"],                     # new-transitive-dep diff gate
+        "NPM-010":  ["4.1.3"],                     # OSV advisory (--resolve-remote)
+        "PYPI-008": ["4.1.3"],                     # cooldown gate (--resolve-remote)
+        "PYPI-009": ["4.1.3"],                     # OSV advisory (--resolve-remote)
+        # ── nuget (dep supply-chain) ─────────────────────────────
+        "NUGET-001": ["4.1.5"],                    # floating NuGet version range
+        "NUGET-002": ["4.1.5"],                    # wildcard prerelease version
+        "NUGET-003": ["4.1.5"],                    # missing explicit version
+        "NUGET-004": ["4.2.1"],                    # HTTP-only package source
+        "NUGET-005": ["4.1.3"],                    # known-compromised package version
+        "NUGET-006": ["4.1.5"],                    # no lock file for reproducible restores
+        "NUGET-007": ["4.2.1"],                    # multiple sources without packageSourceMapping
+        "NUGET-008": ["4.1.3"],                    # cooldown gate (--resolve-remote)
+        "NUGET-009": ["4.1.3"],                    # OSV advisory (--resolve-remote)
+        "NUGET-010": ["4.4.5"],                    # NuGet.config cleartext feed credential
+        # ── NuGet extended pack ──
+        "NUGET-011": ["4.1.3"],
+        "NUGET-012": ["4.1.3"],
+        "NUGET-013": ["4.1.3"],
+        "NUGET-014": ["4.1.4"],
+        "NUGET-015": ["4.1.3"],
+        "NUGET-016": ["4.2.1"],  # missing <clear/> inherits public gallery
+        "NUGET-017": ["4.2.1"],  # public gallery active alongside private feed, not disabled
+        "NUGET-018": ["4.1.3"],  # build-time MSBuild execution
+        "NUGET-019": ["4.1.3"],  # require mode, no trusted signers
+        # ── Composer / PHP ──
+        "COMPOSER-001": ["4.1.3"],
+        "COMPOSER-002": ["4.1.3"],
+        "COMPOSER-003": ["4.2.1"],
+        "COMPOSER-012": ["4.2.1"],  # disables Packagist / marks custom repo canonical
+        "COMPOSER-011": ["4.2.1"],  # external VCS repository re-points a package
+        "COMPOSER-004": ["4.4.5"],
+        "COMPOSER-005": ["4.1.3"],
+        "COMPOSER-014": ["4.1.3"],  # minimum-stability without prefer-stable
+        "COMPOSER-006": ["4.1.3"],
+        "COMPOSER-007": ["4.1.3"],
+        "COMPOSER-008": ["4.1.3"],
+        "COMPOSER-009": ["4.4.5"],
+        "COMPOSER-010": ["4.2.1"],
+        "COMPOSER-013": ["4.2.1"],  # config.disable-tls
+        # ── RubyGems / Bundler ──
+        "GEM-001": ["4.1.3"],
+        "GEM-002": ["4.1.3"],
+        "GEM-003": ["4.2.1"],
+        "GEM-004": ["4.4.5"],
+        "GEM-005": ["4.1.3"],
+        "GEM-006": ["4.1.3"],
+        "GEM-007": ["4.1.3"],
+        "GEM-008": ["4.1.3"],
+        "GEM-009": ["4.4.5"],
+        "GEM-010": ["4.1.3"],
+        "GEM-011": ["4.1.3"],  # Bundler plugin install-time exec
+        "GEM-012": ["4.1.3"],  # per-gem :source override
+        "GEM-013": ["4.1.3"],  # insecure git transport
         # ── OCI image manifest gaps ──────────────────────────────
         # OCI-001..003/005 are image-provenance metadata gaps —
         # untrusted-image surface (4.1.5). OCI-004 foreign-layer
@@ -361,6 +474,7 @@ STANDARD = Standard(
         "OCI-006":  ["4.1.2"],                     # excessive layer count (image config)
         "OCI-007":  ["4.1.5"],                     # legacy schemaVersion 1
         "OCI-008":  ["4.1.5"],                     # weak digest algorithm
+        "OCI-009":  ["4.1.5"],                     # missing base-image annotations
         # ── Helm chart provenance metadata ───────────────────────
         # The same chart-provenance surface that HELM-001..004
         # already map to 4.1.5 / 4.2.1 — these are the per-field
@@ -371,6 +485,14 @@ STANDARD = Standard(
         "HELM-008": ["4.2.2"],                     # stale Chart.lock > 90 days
         "HELM-009": ["4.2.1"],                     # non-HTTPS home / sources URL
         "HELM-010": ["4.1.5"],                     # missing appVersion
+        # ── Helm extended pack ──
+        "HELM-011": ["4.2.1"],                     # dependency URL embedded creds
+        "HELM-012": ["4.1.5"],                     # deprecated without successor
+        "HELM-013": ["4.1.5"],                     # invalid chart type
+        "HELM-014": ["4.1.5"],                     # known-compromised dep
+        "HELM-015": ["4.1.3"],  # oci:// dependency not digest-pinned
+        "HELM-016": ["4.1.4"],  # default secret in values.yaml
+        "HELM-017": ["4.1.3"],  # tpl of an untrusted .Values value
         # ── Buildkite (CI runner runs builds inside containers) ───
         # Mostly 4.1.2 / 4.4.4 (runtime config defects), 4.1.5
         # (untrusted images), 4.1.4 (secrets baked into env), and
@@ -382,6 +504,8 @@ STANDARD = Standard(
         "BK-005": ["4.1.2", "4.4.4"],              # privileged container
         "BK-008": ["4.2.1"],                       # TLS bypass
         "BK-012": ["4.1.1"],                       # no vuln scan
+        "HARNESS-018":  ["4.1.1"],  # Harness no vuln scan
+        "DR-022":  ["4.1.1"],  # Drone no vuln scan
         "BK-006": ["4.4.5"],                       # no timeout = unbounded build exec
         "BK-014": ["4.1.5"],                       # unpinned package install
         "BK-015": ["4.4.5"],                       # agents map untrusted interpolation
@@ -413,6 +537,7 @@ STANDARD = Standard(
         "GHA-032":  ["4.4.5"],                     # local script on untrusted trigger
         "GHA-033":  ["4.1.4"],                     # secret echoed
         "GHA-034":  ["4.1.4"],                     # secrets: inherit
+        "GHA-116":  ["4.1.4"],                     # bulk secrets serialization
         "GHA-035":  ["4.4.5"],                     # github-script untrusted context
         "GHA-036":  ["4.4.5"],                     # runs-on untrusted context
         "GHA-037":  ["4.1.4"],                     # checkout persists GITHUB_TOKEN
@@ -436,6 +561,7 @@ STANDARD = Standard(
         "GHA-058":  ["4.4.5"],                     # agentic CLI permission-bypass
         "GHA-059":  ["4.1.5"],                     # npm install without audit signatures
         "GHA-060":  ["4.1.5"],                     # pip install without --require-hashes
+        "GHA-092":  ["4.4.5"],                     # TOCTOU PR head SHA force-push race
         # ── GitLab CI container-touching extras ──────────────────
         "GL-015":  ["4.4.5"],                      # no timeout
         "GL-020":  ["4.1.4"],                      # CI_JOB_TOKEN persisted
@@ -473,6 +599,16 @@ STANDARD = Standard(
         "CC-022":  ["4.1.5"],                      # dep-update bypasses lockfile pins
         # ── Drone CI ─────────────────────────────────────────────
         "DR-001":  ["4.1.5"],                      # step image not digest-pinned
+        "HARNESS-001":   ["4.1.5"],  # Harness step image not digest-pinned
+        "HARNESS-002":   ["4.4.5"],  # Harness expression injection in step command
+        "HARNESS-003":   ["4.1.2", "4.4.4"],  # Harness privileged step
+        "HARNESS-004":   ["4.1.4"],  # Harness literal credential in variable
+        "HARNESS-005":   ["4.1.5", "4.4.5"],  # Harness pipe-to-shell
+        "HARNESS-006":   ["4.2.1"],  # Harness TLS bypass in commands
+        "HARNESS-007":   ["4.4.4"],  # Harness sensitive host-path mount
+        "HARNESS-008":   ["4.1.3"],  # Harness agentic-CLI prompt injection
+        "HARNESS-010":   ["4.1.3"],  # Harness model trust_remote_code (code exec)
+        "HARNESS-011":   ["4.1.3"],  # Harness unsafe model deser (pickle RCE)
         "DR-002":  ["4.1.2", "4.4.4"],             # privileged step
         "DR-003":  ["4.4.5"],                      # Drone variable injection
         "DR-004":  ["4.1.4"],                      # literal credential
@@ -483,14 +619,22 @@ STANDARD = Standard(
         "DR-009":  ["4.4.6"],                      # cache key tainted = rogue input
         "DR-010":  ["4.1.5"],                      # unpinned package install
         "DR-011":  ["4.4.5"],                      # node map interpolates untrusted
+        # ── Drone extended pack ──
+        "DR-012":  ["4.1.5"],                      # service image not pinned
+        "DR-013":  ["4.4.5"],                      # no trigger event filter
+        "DR-014":  ["4.1.5", "4.4.5"],             # pipe-to-shell
+        "DR-015":  ["4.4.5"],                      # clone recursive
+        "DR-016":  ["4.4.5"],                      # image field interpolation
         # ── Tekton container-touching extras ─────────────────────
         "TKN-003": ["4.4.5"],                      # param injection in script
         "TKN-006": ["4.4.5"],                      # no timeout
+        "HARNESS-019":  ["4.4.5"],  # Harness pipeline lacks an explicit timeout
         "TKN-008": ["4.2.1"],                      # remote install / TLS
         "TKN-014": ["4.1.5"],                      # unpinned package install
         "TKN-015": ["4.4.5"],                      # workspace subPath param injection
         # ── Argo Workflows container-touching extras ─────────────
         "ARGO-005": ["4.4.5"],                     # parameter injection in script
+        "ARGO-017": ["4.4.5"],                     # resource template manifest injection
         "ARGO-007": ["4.4.5"],                     # missing activeDeadlineSeconds
         "ARGO-008": ["4.2.1"],                     # remote install / TLS bypass
         "ARGO-014": ["4.1.5"],                     # unpinned package install
@@ -527,5 +671,52 @@ STANDARD = Standard(
         # being pulled into the pipeline). Other SCM rules cover
         # source-side governance, not container risk.
         "SCM-022": ["4.1.5"],
+        # ── Azure Cloud (container-adjacent rules) ────────────────────
+        "AZST-001":  ["4.2.3"],                    # public blob access (registry auth/authz)
+        "AZST-002":  ["4.2.1"],                    # non-HTTPS traffic (insecure registry conn)
+        "AZST-003":  ["4.2.3"],                    # no CMK encryption
+        "AKV-001":   ["4.1.4"],                    # soft delete off (secret recoverability)
+        "AKV-002":   ["4.1.4"],                    # purge protection off
+        "AKV-003":   ["4.2.3"],                    # network ACLs allow all
+        "ACR-001":   ["4.2.3"],                    # admin user enabled
+        "ACR-002":   ["4.2.3"],                    # public network access
+        "ACR-003":   ["4.1.5"],                    # content trust not enabled
+        # ── GCP (container-adjacent rules) ────────────────────────────
+        "GCS-001":   ["4.2.3"],                    # public bucket
+        "GCS-002":   ["4.2.3"],                    # no uniform access
+        "GCKMS-002": ["4.2.3"],                    # public KMS key access
+        "GAR-001":   ["4.1.1"],                    # no vulnerability scanning
+        "GAR-002":   ["4.2.3"],                    # publicly readable repo
+        "GAR-003":   ["4.2.2"],                    # no cleanup policy (stale images)
+        # ── Azure Cloud phase-2 (container-adjacent rules) ───────────
+        "AZST-004":  ["4.2.1"],                    # min TLS (insecure registry conn)
+        "ACR-004":   ["4.1.1"],                    # defender scan (image vulns)
+        "ACR-005":   ["4.1.5"],                    # tag immutability (untrusted images)
+        "AZNW-001":  ["4.4.3"],                    # SSH/RDP internet (unbounded net)
+        "AZNW-002":  ["4.4.3"],                    # flow logs
+        "AZNW-004":  ["4.4.3"],                    # deny-all
+        "AZNW-005":  ["4.4.3"],                    # public IP VM
+        "AZAPP-001": ["4.2.1"],                    # HTTPS (insecure conn)
+        "AZAPP-002": ["4.2.1"],                    # TLS
+        "AZSQL-003": ["4.4.3"],                    # public access
+        "AZVM-001":  ["4.1.4"],                    # disk encrypt (secret at rest)
+        "AZVM-002":  ["4.4.3"],                    # public IP
+        "AZVM-004":  ["4.1.1"],                    # OS patch (image vulns)
+        # ── GCP phase-2 (container-adjacent rules) ───────────────────
+        "GCNET-001": ["4.4.3"],                    # default network
+        "GCNET-002": ["4.4.3"],                    # deny-all
+        "GCNET-003": ["4.4.3"],                    # SSH/RDP (CRITICAL)
+        "GCNET-004": ["4.4.3"],                    # private access
+        "GCNET-005": ["4.4.3"],                    # Cloud NAT
+        "GCCE-001":  ["4.1.2"],                    # shielded VM (config defect)
+        "GCCE-002":  ["4.1.2"],                    # OS Login
+        "GCCE-003":  ["4.4.4"],                    # serial port (runtime config)
+        "GCCE-004":  ["4.4.3"],                    # public IP
+        "GCCE-005":  ["4.1.2"],                    # project SSH keys
+        "GCSQL-001": ["4.4.3"],                    # public IP
+        "GCSQL-003": ["4.2.1"],                    # SSL (insecure conn)
+        "GCRUN-001": ["4.2.3"],                    # unauth (registry auth)
+        "GCRUN-002": ["4.1.2"],                    # custom SA
+        "GCRUN-004": ["4.4.3"],                    # VPC connector
     },
 )

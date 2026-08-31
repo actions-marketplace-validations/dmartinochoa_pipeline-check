@@ -60,15 +60,43 @@ _PROVIDER_PACKAGES: tuple[tuple[str, str, str], ...] = (
     ("cloudbuild", "pipeline_check.core.checks.cloudbuild.rules", "Cloud Build"),
     ("buildkite",  "pipeline_check.core.checks.buildkite.rules",  "Buildkite"),
     ("drone",      "pipeline_check.core.checks.drone.rules",      "Drone CI"),
+    ("harness",    "pipeline_check.core.checks.harness.rules",    "Harness CI/CD"),
     ("tekton",     "pipeline_check.core.checks.tekton.rules",     "Tekton"),
     ("argo",       "pipeline_check.core.checks.argo.rules",       "Argo Workflows"),
+    ("argocd",     "pipeline_check.core.checks.argocd.rules",     "Argo CD"),
     ("dockerfile", "pipeline_check.core.checks.dockerfile.rules", "Dockerfile"),
+    ("modelfile",  "pipeline_check.core.checks.modelfile.rules",  "Modelfile"),
     ("kubernetes", "pipeline_check.core.checks.kubernetes.rules", "Kubernetes"),
     ("helm",       "pipeline_check.core.checks.helm.rules",       "Helm"),
     ("oci",        "pipeline_check.core.checks.oci.rules",        "OCI manifest"),
     ("scm",        "pipeline_check.core.checks.scm.rules",        "SCM"),
-    ("aws",        "pipeline_check.core.checks.aws.rules",        "AWS"),
-    ("maven",      "pipeline_check.core.checks.maven.rules",      "maven"),
+    ("scm_org",    "pipeline_check.core.checks.scm_org.rules",    "SCM org governance"),
+    ("gitlab_group", "pipeline_check.core.checks.gitlab_group.rules", "GitLab group governance"),
+    ("runs",       "pipeline_check.core.checks.runs.rules",       "Actions run history"),
+    ("gitlab_runs", "pipeline_check.core.checks.gitlab_runs.rules", "GitLab pipeline run history"),
+    ("devenv",     "pipeline_check.core.checks.devenv.rules",     "Developer environment"),
+    # cloudformation, terraform, npm, pypi each ship a rule-based
+    # ``rules/`` package now. Listing them BEFORE aws preserves the
+    # historical "AWS wins for shared IDs (IAM-001, S3-001, ...)"
+    # behavior in the flat ``check_id -> _CheckRow`` index, while
+    # exposing the CFN/TF/npm/pypi-only IDs (CF-001..003, TF-001..003,
+    # NPM-NNN, PYPI-NNN) so their per-rule prose surfaces in the
+    # standards docs instead of falling through to the stale
+    # _FALLBACK stubs.
+    ("cloudformation", "pipeline_check.core.checks.cloudformation.rules", "CloudFormation"),
+    ("terraform",  "pipeline_check.core.checks.terraform.rules",  "Terraform"),
+    ("npm",        "pipeline_check.core.checks.npm.rules",        "npm"),
+    ("pypi",       "pipeline_check.core.checks.pypi.rules",       "PyPI"),
+    ("aws",          "pipeline_check.core.checks.aws.rules",          "AWS"),
+    ("azure_cloud",  "pipeline_check.core.checks.azure_cloud.rules", "Azure Cloud"),
+    ("gcp",          "pipeline_check.core.checks.gcp.rules",          "GCP"),
+    ("maven",        "pipeline_check.core.checks.maven.rules",        "maven"),
+    ("nuget",        "pipeline_check.core.checks.nuget.rules",        "NuGet"),
+    ("gomod",        "pipeline_check.core.checks.gomod.rules",        "Go modules"),
+    ("cargo",        "pipeline_check.core.checks.cargo.rules",        "Cargo"),
+    ("composer",     "pipeline_check.core.checks.composer.rules",     "Composer"),
+    ("rubygems",     "pipeline_check.core.checks.rubygems.rules",     "RubyGems"),
+    ("pulumi",       "pipeline_check.core.checks.pulumi.rules",       "Pulumi"),
 )
 
 # --------------------------------------------------------------------------- #
@@ -80,15 +108,15 @@ _PROVIDER_PACKAGES: tuple[tuple[str, str, str], ...] = (
 # --------------------------------------------------------------------------- #
 _ANCHORED_PROVIDERS: frozenset[str] = frozenset({
     "github", "gitlab", "bitbucket", "azure", "jenkins", "circleci",
-    "cloudbuild", "buildkite", "drone", "tekton", "argo", "dockerfile",
-    "kubernetes", "scm", "oci", "maven",
-    # AWS provider doc carries hand-written ``### CB-001: …`` headers
-    # that mkdocs slugifies to anchors of shape
-    # ``cb-001-secrets-in-plaintext-environment-variables``. Linking with
-    # just ``#cb-001`` won't land. Treat AWS as un-anchored so the link
-    # points at the page top, the per-rule sections are still alphabetised
-    # so the reader scrolls a screen at most.
+    "cloudbuild", "buildkite", "drone", "harness", "tekton", "argo", "dockerfile",
+    "modelfile", "kubernetes", "scm", "runs", "oci", "maven", "nuget",
+    "aws", "cloudformation", "terraform", "npm", "pypi", "helm", "argocd",
+    "gitlab_runs", "scm_org", "gitlab_group",
 })
+
+_DOC_FILENAME_OVERRIDES: dict[str, str] = {
+    "scm": "scm_github",
+}
 
 # --------------------------------------------------------------------------- #
 # Fallback metadata for check_ids that have no Rule object in the registry:
@@ -117,32 +145,19 @@ _FALLBACK: dict[str, tuple[str, str, str, str]] = {
     "S3-000":   ("S3 API access failed", "INFO", "aws", "AWS"),
     "SM-000":   ("Secrets Manager API access failed", "INFO", "aws", "AWS"),
     "SSM-000":  ("SSM Parameter Store API access failed", "INFO", "aws", "AWS"),
-    # Legacy class-based Terraform / CloudFormation checks
-    "TF-001":   ("aws_iam_access_key declares a long-lived access key", "CRITICAL", "terraform", "Terraform"),
-    "TF-002":   ("Resource attribute carries a hard-coded secret shape", "CRITICAL", "terraform", "Terraform"),
-    "TF-003":   ("CodeBuild VPC shares its VPC with a public subnet", "HIGH", "terraform", "Terraform"),
-    "CF-001":   ("Inline credential parameter on a CloudFormation resource",
-                 "HIGH", "cloudformation", "CloudFormation"),
-    "CF-002":   ("CloudFormation parameter declares a default secret value",
-                 "HIGH", "cloudformation", "CloudFormation"),
-    "CF-003":   ("CloudFormation resource opens a 0.0.0.0/0 ingress",
-                 "HIGH", "cloudformation", "CloudFormation"),
+    # NB: TF-001..003 and CF-001..003 used to live here as legacy
+    # class-based stubs (e.g. ``"Inline credential parameter on a
+    # CloudFormation resource"``) that pre-dated the rule-based
+    # rewrite. They're now sourced from the
+    # ``terraform.rules`` / ``cloudformation.rules`` registries via
+    # ``_PROVIDER_PACKAGES`` so the standards docs render the real
+    # rule titles + prose instead of stale stubs.
 }
 
 
 @dataclass(frozen=True, slots=True)
 class _CheckRow:
-    """Flat per-check view used to render the per-control tables AND the
-    bottom-of-page check details section.
-
-    The prose fields (``docs_note``, ``recommendation``, ``known_fp``,
-    ``incident_refs``, ``exploit_example``) are taken straight from the
-    Rule registry and rendered verbatim in the details block. For
-    ``_FALLBACK`` entries (AWS degraded-mode synthesized findings and
-    the legacy class-based Terraform / CloudFormation checks), the
-    prose fields are empty — the details block falls back to a short
-    auto-generated stub pointing at the provider page.
-    """
+    """Flat per-check view used to render the per-control tables."""
 
     check_id: str
     title: str
@@ -150,11 +165,6 @@ class _CheckRow:
     provider_slug: str
     provider_title: str
     autofix: bool
-    docs_note: str = ""
-    recommendation: str = ""
-    known_fp: tuple[str, ...] = ()
-    incident_refs: tuple[str, ...] = ()
-    exploit_example: str | None = None
 
 
 def _build_index() -> dict[str, _CheckRow]:
@@ -170,11 +180,6 @@ def _build_index() -> dict[str, _CheckRow]:
                 provider_slug=slug,
                 provider_title=title,
                 autofix=rule.id in autofixable,
-                docs_note=rule.docs_note,
-                recommendation=rule.recommendation,
-                known_fp=rule.known_fp,
-                incident_refs=rule.incident_refs,
-                exploit_example=rule.exploit_example,
             )
     for cid, (title, severity, slug, prov_title) in _FALLBACK.items():
         if cid in out:
@@ -315,7 +320,7 @@ The OWASP CI/CD Top 10 is the canonical risk taxonomy this scanner
 organizes around. Every other compliance standard's check set is a
 subset of OWASP's; the cross-standard integrity test in
 `tests/test_standards.py` enforces it. If a check fails, it is
-because at least one OWASP risk fires, the other 14 frameworks layer
+because at least one OWASP risk fires, the other 15 frameworks layer
 their own labels on top of the same evidence.
 
 Use this page when you want full coverage of the canonical CI/CD
@@ -533,6 +538,59 @@ Ingest, inventory, scan, rebuild, fix, the consumer-side controls
 for taking a third-party dependency safely.
 """,
     ),
+    "oscr": _StandardConfig(
+        intro="""\
+- **Version:** 2024
+- **URL:** <https://pbom.dev/>
+- **Source of truth:** `pipeline_check/core/standards/data/oscr.py`
+
+OSC&R (Open Software Supply Chain Attack Reference) is an open
+framework that mirrors the MITRE ATT&CK matrix structure for software
+supply chain attacks. Twelve tactics (Reconnaissance through Impact),
+86 techniques. The matrix is maintained at
+[pbom-dev/OSCAR](https://github.com/pbom-dev/OSCAR).
+
+OSC&R fills a gap between the OWASP CI/CD Top 10 (CI/CD-specific but
+only 10 items) and broader frameworks like NIST 800-53 (exhaustive
+but not attack-centric). Use this page when you want to map pipeline
+posture findings to a supply-chain attack taxonomy, showing which
+attacker techniques your current configuration would or would not
+resist.
+
+Pair with [OWASP CI/CD Top 10](owasp_cicd_top_10.md) for the
+canonical risk vocabulary and [SLSA](slsa.md) for the build-integrity
+axis.
+""",
+        footer="""\
+## Not covered
+
+Several OSC&R techniques describe attacker-side actions that a CI/CD
+configuration scanner cannot detect:
+
+- **Reconnaissance** (REC-1, REC-3, REC-4, REC-5, REC-7, REC-8, REC-9):
+  discovering naming conventions, technology stacks, coding flaws,
+  and internal artifact names are attacker-side information gathering.
+- **Resource Development** (RD-2, RD-6): creating registry accounts
+  and advertising malicious artifacts are attacker-side prep.
+- **Initial Access** (IA-2, IA-12, IA-14, IA-15): malicious IDE
+  extensions, exposed internal APIs, compromised developer workstations,
+  and exposed databases require runtime or network telemetry.
+- **Execution** (EX-2, EX-3, EX-4, EX-5, EX-7, EX-8, EX-10):
+  runtime logic bombs, IDE execution, runtime backdoors, package-manager
+  exploitation, SQL injection, XSS, and cloud workload abuse are
+  application-security or runtime concerns.
+- **Persistence** (PER-5, PER-7): untagged cloud resources and zombie
+  instances require cloud-inventory introspection.
+- **Credential Access** (CA-1, CA-7): application-level password
+  logging and runtime credential leakage require runtime telemetry.
+- **Defense Evasion** (DE-2, DE-5): SaaS sprawl and malicious
+  compilers require asset-inventory and build-tool-chain introspection.
+- **Exfiltration** (EXF-1): outbound traffic bypass requires network
+  telemetry.
+- **Impact** (IMP-1 partial): repository deletion is partially
+  covered via SCM branch-protection rules.
+""",
+    ),
     "soc2": _StandardConfig(
         intro="""\
 - **Version:** 2017 (revised 2022)
@@ -544,6 +602,27 @@ evidence control gaps; they are not a substitute for an auditor's
 opinion. Use this page to prepare CC6 / CC7 / CC8 evidence walks.
 """,
     ),
+    "cis_azure_foundations": _StandardConfig(
+        intro="""\
+- **Version:** 2.1.0
+- **URL:** <https://www.cisecurity.org/benchmark/azure>
+- **Source of truth:** `pipeline_check/core/standards/data/cis_azure_foundations.py`
+
+CIS Microsoft Azure Foundations Benchmark, CI/CD-relevant subset.
+Covers identity (Entra ID), storage accounts, Key Vault, container
+registry, and monitoring controls.
+""",
+    ),
+    "cis_gcp_foundations": _StandardConfig(
+        intro="""\
+- **Version:** 3.0.0
+- **URL:** <https://www.cisecurity.org/benchmark/google_cloud_computing_platform>
+- **Source of truth:** `pipeline_check/core/standards/data/cis_gcp_foundations.py`
+
+CIS Google Cloud Platform Foundations Benchmark, CI/CD-relevant subset.
+Covers IAM, Cloud Storage, Cloud KMS, and Cloud Logging controls.
+""",
+    ),
 }
 
 
@@ -551,28 +630,20 @@ opinion. Use this page to prepare CC6 / CC7 / CC8 evidence walks.
 # Rendering helpers
 # --------------------------------------------------------------------------- #
 def _check_link(row: _CheckRow) -> str:
-    """Markdown link for a check_id, anchored to the per-rule section if the
-    provider doc carries pinned anchors, otherwise to the page top.
+    """Markdown link for a check_id pointing at the provider doc's per-rule
+    anchor.
 
-    Used in the bottom-of-page details block where the goal is to send the
-    reader to the canonical provider doc for the rule's source. The
-    in-page links from the per-control table go through
-    :func:`_check_detail_link` instead so the reader stays on the standards
-    page.
+    ``*-000`` ids are degraded-mode, service-level findings (emitted at
+    runtime when a cloud service can't be enumerated, e.g. ``ECR-000``);
+    they are not rules under ``<provider>/rules/`` so the provider doc has
+    no per-rule section / anchor for them. Link those to the page top
+    instead of a dead ``#<svc>-000`` fragment.
     """
-    if row.provider_slug in _ANCHORED_PROVIDERS:
+    doc_slug = _DOC_FILENAME_OVERRIDES.get(row.provider_slug, row.provider_slug)
+    if row.provider_slug in _ANCHORED_PROVIDERS and not row.check_id.endswith("-000"):
         anchor = row.check_id.lower()
-        return f"[`{row.check_id}`](../providers/{row.provider_slug}.md#{anchor})"
-    return f"[`{row.check_id}`](../providers/{row.provider_slug}.md)"
-
-
-def _check_detail_link(row: _CheckRow) -> str:
-    """Markdown link from a per-control row down to the bottom-of-page
-    check details block. Keeps the reader on the standards page so they
-    can scan the mechanism, recommendation, and incidents without
-    bouncing through the provider doc."""
-    anchor = _check_detail_anchor(row.check_id)
-    return f"[`{row.check_id}`](#{anchor})"
+        return f"[`{row.check_id}`](../providers/{doc_slug}.md#{anchor})"
+    return f"[`{row.check_id}`](../providers/{doc_slug}.md)"
 
 
 def _severity_chip(severity: str) -> str:
@@ -598,11 +669,7 @@ def _control_anchor(control_id: str) -> str:
     rejects ID values that begin with a digit. PCI DSS controls like
     ``6.5.1`` and NIST 800-190 controls like ``4.1.1`` would otherwise
     produce anchors starting with a digit, which ``attr_list`` silently
-    drops — links from the coverage-by-control table land at the page top
-    instead of the matching section. Prefixing with a literal letter dodges
-    the rejection entirely. Same shape as :func:`_check_detail_anchor` for
-    symmetry; the prefix also disambiguates them from the auto-generated
-    heading slugs the ``toc`` extension would otherwise emit.
+    drops. Prefixing with a literal letter dodges the rejection entirely.
     """
     return "ctrl-" + (
         control_id.lower()
@@ -610,16 +677,6 @@ def _control_anchor(control_id: str) -> str:
         .replace("/", "-")
         .replace(" ", "-")
     )
-
-
-def _check_detail_anchor(check_id: str) -> str:
-    """In-page anchor for the bottom-of-page check details block.
-
-    ``detail-`` prefix avoids collisions with control anchors (some control
-    IDs normalize into strings that look like check IDs) and dodges the
-    same ``attr_list`` digit-prefix rejection that affects numeric control
-    IDs."""
-    return "detail-" + check_id.lower()
 
 
 # Plain-English severity meanings. Identical wording across every standard
@@ -727,116 +784,6 @@ def _severity_breakdown(rows: list[_CheckRow]) -> str:
         if counts.get(sev):
             parts.append(f"{counts[sev]}{short[sev]}")
     return " · ".join(parts) or "—"
-
-
-def _render_check_detail(
-    row: _CheckRow, controls_evidenced: list[tuple[str, str]],
-) -> str:
-    """Markdown block for one check in the bottom-of-page details section.
-
-    *controls_evidenced* is the list of ``(control_id, control_title)``
-    pairs this check evidences within the standard being rendered. Used
-    to surface backlinks ("this check fires under CICD-SEC-3 and
-    CICD-SEC-8") so the reader can navigate the cross-control mesh
-    without reading the whole page.
-
-    Sections in render order:
-      * H4 with check ID + title + severity chip + autofix chip
-      * Backlinks to the evidenced controls
-      * "How this is detected" (``docs_note``)
-      * "Recommendation" (``recommendation``)
-      * "Known false positives" (``known_fp``, if any)
-      * "Seen in the wild" (``incident_refs``, if any)
-      * "Proof of exploit" (``exploit_example``, if any)
-      * Link to the provider doc for the raw rule source
-
-    Empty / missing fields are skipped so a Rule that doesn't carry an
-    ``incident_refs`` tuple doesn't render an empty section.
-    """
-    anchor = _check_detail_anchor(row.check_id)
-    parts: list[str] = []
-    parts.append(
-        f"### `{row.check_id}`: {row.title} "
-        f"{_severity_chip(row.severity)} "
-        f"{_autofix_chip(row.autofix)}".rstrip()
-        + f" {{ #{anchor} }}\n\n"
-    )
-
-    # Backlinks to the controls this check evidences within the standard.
-    if controls_evidenced:
-        backlinks = ", ".join(
-            f"[`{cid}`](#{_control_anchor(cid)}) {ctitle}"
-            for cid, ctitle in controls_evidenced
-        )
-        parts.append(f"**Evidences:** {backlinks}.\n\n")
-
-    # Mechanism. For fallback entries (degraded-mode AWS findings, legacy
-    # class-based checks) ``docs_note`` is empty; fall back to a short
-    # stub pointing at the provider doc.
-    parts.append("**How this is detected.** ")
-    if row.docs_note:
-        parts.append(row.docs_note.strip() + "\n\n")
-    else:
-        parts.append(
-            f"See [`{row.provider_title}` provider documentation]"
-            f"(../providers/{row.provider_slug}.md) for the rule's "
-            f"detection mechanism.\n\n"
-        )
-
-    # Recommendation. Same fallback shape.
-    parts.append("**Recommendation.** ")
-    if row.recommendation:
-        parts.append(row.recommendation.strip() + "\n\n")
-    else:
-        parts.append(
-            f"See [`{row.provider_title}` provider documentation]"
-            f"(../providers/{row.provider_slug}.md) for the recommended "
-            f"remediation.\n\n"
-        )
-
-    # Autofix nudge — separate from the chip because the chip alone
-    # doesn't explain what `--fix` will do, and readers landing here from
-    # an audit context want the concrete command.
-    if row.autofix:
-        parts.append(
-            "**Autofix.** "
-            "`pipeline_check --fix` will patch this finding "
-            "automatically. Review the diff before committing; the "
-            "fixer applies the conservative remediation pattern (e.g. "
-            "swap a floating tag for the digest it currently resolves "
-            "to), not the most aggressive one.\n\n"
-        )
-
-    if row.known_fp:
-        parts.append("**Known false positives.**\n\n")
-        for fp in row.known_fp:
-            parts.append(f"- {fp.strip()}\n")
-        parts.append("\n")
-
-    if row.incident_refs:
-        parts.append("**Seen in the wild.**\n\n")
-        for ref in row.incident_refs:
-            parts.append(f"- {ref.strip()}\n")
-        parts.append("\n")
-
-    if row.exploit_example:
-        # Wrap the raw example in a fenced code block so any
-        # ``# Vulnerable: ...`` / ``# Safe: ...`` comment lines render
-        # as code rather than getting parsed as Markdown headings
-        # (which trip MD019 / MD022 / MD024 and break section depth).
-        parts.append(
-            "**Proof of exploit.**\n\n"
-            "```\n"
-            f"{row.exploit_example.rstrip()}\n"
-            "```\n\n"
-        )
-
-    parts.append(
-        f"**Source:** {_check_link(row)} in the "
-        f"[{row.provider_title} provider]"
-        f"(../providers/{row.provider_slug}.md).\n\n"
-    )
-    return "".join(parts)
 
 
 def _render(name: str, standard: Standard, cfg: _StandardConfig,
@@ -951,38 +898,14 @@ def _render(name: str, standard: Standard, cfg: _StandardConfig,
         parts.append("| Check | Title | Severity | Provider | Fix |\n")
         parts.append("|-------|-------|----------|----------|-----|\n")
         for row in ctrl_rows:
-            # The check-id cell jumps to the on-page details block;
-            # the provider cell points at the provider doc for the
-            # raw rule source. Two routes, two different reading goals.
             parts.append(
-                f"| {_check_detail_link(row)} | {row.title} | "
+                f"| {_check_link(row)} | {row.title} | "
                 f"{_severity_chip(row.severity)} | "
-                f"[{row.provider_title}](../providers/{row.provider_slug}.md) | "
+                f"[{row.provider_title}](../providers/"
+                f"{_DOC_FILENAME_OVERRIDES.get(row.provider_slug, row.provider_slug)}.md) | "
                 f"{_autofix_chip(row.autofix)} |\n"
             )
         parts.append("\n")
-
-    # ── Check details ───────────────────────────────────────────────────
-    # Reverse-index: for every distinct check that evidences a control on
-    # this page, list the controls it evidences. Drives the backlinks at
-    # the top of each check's detail block so the reader can navigate the
-    # check <-> control mesh without scrolling the whole page.
-    controls_by_check: dict[str, list[tuple[str, str]]] = {}
-    for cid, ctitle in standard.controls.items():
-        for row in by_control.get(cid, []):
-            controls_by_check.setdefault(row.check_id, []).append((cid, ctitle))
-    if controls_by_check:
-        parts.append("## Check details\n\n")
-        parts.append(
-            "Every check that evidences this standard, rendered once "
-            "with its detection mechanism, recommendation, and any "
-            "known false-positive modes or real-world incident "
-            "references. The per-control tables above link to the "
-            "matching block here.\n\n"
-        )
-        for cid in sorted(controls_by_check.keys()):
-            row = index[cid]
-            parts.append(_render_check_detail(row, controls_by_check[cid]))
 
     # ── Mappings to controls outside this standard's catalog ─────────────
     if unknown_controls:

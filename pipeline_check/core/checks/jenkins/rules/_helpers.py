@@ -45,18 +45,47 @@ def strip_groovy_comments(text: str) -> str:
         return re.sub(r"[^\n]", " ", s)
     return _GROOVY_TOKEN_RE.sub(_replace, text)
 
-PINNED_REF_RE = re.compile(r"^(?:v?\d+(?:\.\d+){0,2}|[0-9a-f]{40})$")
+PINNED_REF_RE = re.compile(
+    # A semver tag (optionally with a prerelease / build suffix like
+    # ``-rc1`` / ``+build.5``) or a full 40-char commit sha — all
+    # immutable pins.
+    r"^(?:v?\d+(?:\.\d+){1,2}(?:[-+][0-9A-Za-z.-]+)?|[0-9a-f]{40})$",
+)
 FLOATING_REFS = frozenset({"main", "master", "develop", "head", "trunk", "latest"})
 
-UNTRUSTED_ENV_RE = re.compile(
-    r"\$\{?\s*(?:env\.)?"
-    r"(?:BRANCH_NAME|GIT_BRANCH|TAG_NAME"
+#: The attacker-controllable Jenkins env-var names. Multibranch /
+#: pipeline ``CHANGE_*`` + git author/committer fields, plus the GitHub
+#: Pull Request Builder (``ghprb*``) plugin vars, the dominant
+#: attacker-controlled source on classic Jenkins PR jobs: a fork PR sets
+#: the source branch name, PR title/description, and commit author.
+#: ``ghprbTargetBranch`` is the repo's own branch (author-controlled) and
+#: is deliberately excluded. Defined once so the direct-injection and
+#: agent-label catalogs (below) can't drift apart.
+_UNTRUSTED_ENV_NAMES = (
+    r"BRANCH_NAME|GIT_BRANCH|TAG_NAME"
     r"|CHANGE_TITLE|CHANGE_BRANCH|CHANGE_AUTHOR(?:_DISPLAY_NAME)?"
     r"|CHANGE_URL|CHANGE_TARGET"
     r"|GIT_AUTHOR_NAME|GIT_AUTHOR_EMAIL"
-    r"|GIT_COMMITTER_NAME|GIT_COMMITTER_EMAIL)"
+    r"|GIT_COMMITTER_NAME|GIT_COMMITTER_EMAIL"
+    r"|ghprbSourceBranch|ghprbActualCommitAuthor(?:Email)?"
+    r"|ghprbPull(?:Title|Description|AuthorLogin|Link)"
+)
+
+UNTRUSTED_ENV_RE = re.compile(
+    r"\$\{?\s*(?:env\.)?"
+    r"(?:" + _UNTRUSTED_ENV_NAMES + r")"
     r"\s*\}?"
 )
+
+# ── Build-parameter taint ─────────────────────────────────────────────
+#: A Groovy ``${params.X}`` / ``$params.X`` interpolation. ``params.*``
+#: is set by whoever queues the run (Jenkins' analogue to GHA
+#: ``inputs.X`` / ADO ``parameters.X``), so it's attacker-controllable
+#: for any job a non-author can trigger. Shared so JF-032 (agent
+#: labels) and JF-036 (shell bodies) stay in lockstep on what counts as
+#: a tainted parameter reference.
+_PARAMS_TAINT = r"\$\{?\s*params\.[A-Za-z_][A-Za-z0-9_]*\s*\}?"
+PARAMS_TAINT_RE = re.compile(_PARAMS_TAINT)
 
 # ── JF-032: agent label / node targeting taint ───────────────────────
 #: Matches Groovy ``${...}`` interpolations whose body resolves to an
@@ -70,18 +99,28 @@ UNTRUSTED_ENV_RE = re.compile(
 #: ``${env.WORKSPACE}`` are NOT in the catalog.
 LABEL_TAINT_RE = re.compile(
     r"\$\{?\s*(?:env\.)?"
-    r"(?:BRANCH_NAME|GIT_BRANCH|TAG_NAME"
-    r"|CHANGE_TITLE|CHANGE_BRANCH|CHANGE_AUTHOR(?:_DISPLAY_NAME)?"
-    r"|CHANGE_URL|CHANGE_TARGET"
-    r"|GIT_AUTHOR_NAME|GIT_AUTHOR_EMAIL"
-    r"|GIT_COMMITTER_NAME|GIT_COMMITTER_EMAIL)"
+    r"(?:" + _UNTRUSTED_ENV_NAMES + r")"
     r"\s*\}?"
-    r"|\$\{?\s*params\.[A-Za-z_][A-Za-z0-9_]*\s*\}?"
+    r"|" + _PARAMS_TAINT
 )
 
 
 SHELL_STEP_RE = re.compile(
-    r"(?:sh|bat|powershell|pwsh)\s*\(?\s*"
+    # ``\b`` on both sides so a token merely ending in ``sh``/``bat``
+    # (``publish``, ``finish``, ``combat``) is not read as a shell step.
+    r"\b(?:sh|bat|powershell|pwsh)\b\s*\(?\s*"
+    # Optional Groovy named-argument form. ``sh(script: "…")``,
+    # ``sh label: 'x', script: "…"``, and
+    # ``sh(returnStdout: true, script: "…")`` are the mainstream ways to
+    # write a shell step that returns stdout/status; the ``script:`` label
+    # (and any preceding named args) sit between the keyword and the body.
+    # Two guards keep this run linear (the original tripped a py/redos):
+    # ``(?!script\b)`` stops a leading ``script:`` from being eaten as a
+    # named-arg pair (so it's always the explicit ``script:`` clause below,
+    # no pair-vs-clause backtracking); and the value is ``:[^,\n]*`` rather
+    # than ``:\s*[^,\n]*`` so no two adjacent quantifiers both match the
+    # spaces after the colon (the overlap that exploded on crafted input).
+    r"(?:(?:(?!script\b)[A-Za-z_]\w*\s*:[^,\n]*,\s*)*script\s*:\s*)?"
     r"(?:\"\"\"(?P<triple_d>.*?)\"\"\""
     r"|'''(?P<triple_s>.*?)'''"
     r"|\"(?P<dq>(?:[^\"\\]|\\.)*)\""
@@ -97,6 +136,16 @@ AWS_KEY_VAR_RE = re.compile(
     r"(?:accessKeyVariable|secretKeyVariable|aws_access_key_id|aws_secret_access_key)",
     re.IGNORECASE,
 )
+#: A credentials-binding keyword bound to an AWS key environment name,
+#: e.g. ``usernameVariable: 'AWS_ACCESS_KEY_ID'``. This is enough to flag
+#: a long-lived AWS key even when the ``credentialsId`` string itself
+#: doesn't contain "aws" (``credentialsId: 'prod-static'``).
+AWS_KEY_VAR_BINDING_RE = re.compile(
+    r"(?:usernameVariable|passwordVariable|accessKeyVariable|secretKeyVariable"
+    r"|variable)\s*:\s*['\"]"
+    r"(?:AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN)['\"]",
+    re.IGNORECASE,
+)
 #: ``withAWS(credentials: 'id')``, the AWS Steps plugin with long-lived
 #: credentials.  ``withAWS(role: '…')`` is the safe IAM-role pattern and
 #: is NOT matched.
@@ -106,7 +155,9 @@ WITH_AWS_CREDS_RE = re.compile(
 )
 
 DOCKER_IMAGE_RE = re.compile(
-    r"docker\s*\{\s*[^}]*?\bimage\s+['\"]([^'\"]+)['\"]",
+    # Both the directive form ``image 'name:tag'`` and the Groovy
+    # method-call form ``image('name:tag')``.
+    r"docker\s*\{\s*[^}]*?\bimage\s*\(?\s*['\"]([^'\"]+)['\"]",
     re.DOTALL,
 )
 
@@ -117,7 +168,8 @@ ENV_AWS_KEY_RE = re.compile(
 
 BUILD_DISCARDER_RE = re.compile(r"\b(?:buildDiscarder|logRotator)\s*\(")
 
-LOAD_STEP_RE = re.compile(r"\bload\s+['\"]([^'\"]+\.groovy)['\"]")
+# Both ``load 'file.groovy'`` and the method-call ``load('file.groovy')``.
+LOAD_STEP_RE = re.compile(r"\bload\s*\(?\s*['\"]([^'\"]+\.groovy)['\"]")
 
 COPY_ARTIFACTS_RE = re.compile(r"\b(?:copyArtifacts|CopyArtifact)\b")
 VERIFY_RE = re.compile(
@@ -187,4 +239,9 @@ ARCHIVE_ARTIFACTS_RE = re.compile(
 #: digest so consumers of ``copyArtifacts`` can verify provenance.
 FINGERPRINT_TRUE_RE = re.compile(
     r"\bfingerprint\s*:\s*true\b"
+)
+#: The standalone ``fingerprint '<glob>'`` step records the same
+#: digests as ``fingerprint: true`` on ``archiveArtifacts``.
+FINGERPRINT_STEP_RE = re.compile(
+    r"\bfingerprint\s+['\"]"
 )

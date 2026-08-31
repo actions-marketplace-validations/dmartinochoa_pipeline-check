@@ -79,9 +79,40 @@ STANDARD = Standard(
         "NPM-004":  ["ING-1"],             # install-time lifecycle script
         "NPM-007":  ["ING-1"],             # .npmrc ignore-scripts enforcement
         "PYPI-003": ["ING-1"],             # http index / --trusted-host
+        "PYPI-018": ["ING-1"],  # --no-binary forces sdist build
         "PYPI-005": ["ING-1"],             # --extra-index-url (dep confusion)
+        "PYPI-017": ["ING-1"],  # remote --find-links
+        "PYPI-016": ["ING-1"],  # primary index repointed
         "MVN-003":  ["ING-1"],             # plaintext-HTTP repository
         "MVN-007":  ["ING-1"],             # settings.xml wildcard mirror
+        "NUGET-004": ["ING-1"],            # HTTP-only NuGet package source
+        "NUGET-007": ["ING-1"],            # multiple sources without packageSourceMapping
+        "NUGET-010": ["ING-1"],            # NuGet.config cleartext feed credential
+        # ── NuGet extended pack ──
+        "NUGET-011": ["ING-1"],
+        "NUGET-012": ["ING-1"],
+        "NUGET-013": ["ING-1"],
+        "NUGET-014": ["ING-1"],
+        "NUGET-015": ["ING-1"],
+        "NUGET-016": ["ING-1"],  # missing <clear/> inherits public gallery
+        "NUGET-017": ["ING-1"],  # public gallery active alongside private feed, not disabled
+        "NUGET-018": ["ING-1"],  # build-time MSBuild execution
+        "NUGET-019": ["ING-1"],  # require mode, no trusted signers
+        # ── Composer / PHP ──
+        "COMPOSER-003": ["ING-1"],         # HTTP composer repository
+        "COMPOSER-012": ["ING-1"],  # disables Packagist / marks custom repo canonical
+        "COMPOSER-011": ["ING-1"],  # external VCS repository re-points a package
+        "COMPOSER-004": ["ING-1"],         # composer.json repo URL credentials
+        "COMPOSER-005": ["ING-1"],         # minimum-stability dev / pre-release
+        "COMPOSER-014": ["ING-1"],  # minimum-stability without prefer-stable
+        "COMPOSER-009": ["ING-1"],         # auth.json committed
+        "COMPOSER-010": ["ING-1"],         # secure-http false (HTTP enabled)
+        "COMPOSER-013": ["ING-1"],  # config.disable-tls
+        # ── RubyGems / Bundler ──
+        "GEM-003": ["ING-1"],              # HTTP Gemfile source
+        "GEM-004": ["ING-1"],              # Gemfile source URL credentials
+        "GEM-007": ["ING-1"],              # multiple top-level sources (dep-confusion)
+        "GEM-009": ["ING-1"],              # .bundle/config credentials
         # Dockerfile env-bypass pack disables the trusted-source channel
         # for any subsequent OSS install in the image.
         "DF-021":   ["ING-1"],             # pip install TLS bypass / http index
@@ -103,6 +134,8 @@ STANDARD = Standard(
         "ECR-001":  ["SCA-1"],
         "ECR-007":  ["SCA-1"],             # Inspector v2 enhanced scanning
         "BK-012":   ["SCA-1"],
+        "HARNESS-018":  ["SCA-1"],  # Harness no vuln scan
+        "DR-022":  ["SCA-1"],  # Drone no vuln scan
         "TKN-012":  ["SCA-1"],
         "ARGO-012": ["SCA-1"],
 
@@ -124,8 +157,26 @@ STANDARD = Standard(
         # capability), same shape as GHA-056 above.
         "GHA-040":  ["SCA-3", "ING-3"],     # known-compromised action ref
         "NPM-006":  ["SCA-3", "ING-3"],     # compromised npm version
+        "NPM-008":  ["SCA-3", "ING-3"],     # cooldown gate (--resolve-remote)
+        "NPM-010":  ["SCA-3", "ING-3"],     # OSV advisory (--resolve-remote)
         "PYPI-006": ["SCA-3", "ING-3"],     # compromised PyPI version
+        "PYPI-008": ["SCA-3", "ING-3"],     # cooldown gate (--resolve-remote)
+        "PYPI-009": ["SCA-3", "ING-3"],     # OSV advisory (--resolve-remote)
         "MVN-006":  ["SCA-3", "ING-3"],     # compromised Maven version
+        "MVN-008":  ["SCA-3", "ING-3"],     # cooldown gate (--resolve-remote)
+        "MVN-009":  ["SCA-3", "ING-3"],     # OSV advisory (--resolve-remote)
+        # ── Maven extended pack ──
+        "MVN-010":  ["ING-3"],              # plaintext server password
+        "MVN-011":  ["ING-3"],              # repo URL credentials
+        "MVN-012":  ["SCA-3", "ING-3"],     # build plugin floating
+        "MVN-013":  ["SCA-3", "ING-3"],     # build extension floating
+        "MVN-014":  ["ING-3"],              # wrapper sha256 missing
+        "NUGET-005": ["SCA-3", "ING-3"],    # known-compromised NuGet version
+        "NUGET-008": ["SCA-3", "ING-3"],    # cooldown gate (--resolve-remote)
+        "NUGET-009": ["SCA-3", "ING-3"],    # OSV advisory (--resolve-remote)
+        "COMPOSER-007": ["SCA-3", "ING-3"], # compromised Composer package
+        "COMPOSER-008": ["SCA-3", "ING-3"], # allow-plugins wildcard (transitive plugin run)
+        "GEM-006": ["SCA-3", "ING-3"],      # compromised gem version
         # Reputation-class deny-list signals: not malware-confirmed,
         # but each finding is one entry on a curated deny-list of
         # references that should require human-in-the-loop review
@@ -146,6 +197,7 @@ STANDARD = Standard(
         "GHA-021":  ["UPD-1"],             # lockfile present = tracked versions
         "GL-001":   ["UPD-1"],
         "GL-005":   ["UPD-1"],
+        "GL-042":   ["UPD-1"],
         "GL-009":   ["UPD-1"],
         "GL-021":   ["UPD-1"],
         "GL-028":   ["UPD-1"],
@@ -171,9 +223,13 @@ STANDARD = Standard(
         "ECR-002":  ["UPD-1"],
         "BK-001":   ["UPD-1"],
         "TKN-001":  ["UPD-1"],
+        "TKN-016": ["UPD-1"],  # remote resolver / bundle task body not pinned
         "ARGO-001": ["UPD-1"],
         # Drone pinning surface
         "DR-001":   ["UPD-1"],             # step image not digest-pinned
+        "HARNESS-001":   ["UPD-1"],  # Harness step image not digest-pinned
+        "HARNESS-006":   ["ING-1"],  # Harness TLS bypass in commands
+        "HARNESS-009":   ["ENF-1"],  # Harness agentic-CLI output autolands without review
         "DR-005":   ["UPD-1"],             # plugin floating tag
         "DR-008":   ["UPD-1"],             # pull: never (skips registry verification)
         # NPM / PyPI / Maven pinning
@@ -183,10 +239,20 @@ STANDARD = Standard(
         "PYPI-001": ["UPD-1"],             # requirements lacks ==pin
         "PYPI-002": ["UPD-1"],             # hash pinning missing
         "PYPI-004": ["UPD-1"],             # VCS dep without commit SHA
+        "PYPI-015": ["UPD-1"],  # direct artifact URL
         "MVN-001":  ["UPD-1"],             # floating Maven version range
         "MVN-002":  ["UPD-1"],             # mutable SNAPSHOT dep
         "MVN-004":  ["UPD-1"],             # missing <version> element
         "MVN-005":  ["UPD-1"],             # lax repository checksumPolicy
+        "NUGET-001": ["UPD-1"],            # floating NuGet version range
+        "NUGET-002": ["UPD-1"],            # wildcard prerelease version
+        "NUGET-003": ["UPD-1"],            # missing explicit version
+        "NUGET-006": ["UPD-1"],            # no lock file for reproducible restores
+        "COMPOSER-001": ["UPD-1"],         # missing composer.lock
+        "COMPOSER-002": ["UPD-1"],         # floating require constraint
+        "GEM-001": ["UPD-1"],              # missing Gemfile.lock
+        "GEM-002": ["UPD-1"],              # floating gem constraint
+        "GEM-005": ["UPD-1"],              # git/github source mutable ref
         # OCI image manifest pinning
         "OCI-007":  ["UPD-1"],             # legacy schemaVersion 1 (no digest immutability)
         "OCI-008":  ["UPD-1"],             # weak digest algorithm
@@ -210,6 +276,11 @@ STANDARD = Standard(
         "CP-005":   ["ENF-1", "ENF-2"],
         "CD-002":   ["ENF-1"],
         "GHA-014":  ["ENF-1"],
+        "GHA-123":  ["ENF-1"],
+        "GL-049":   ["ENF-1"],   # agentic CLI output lands without review
+        "BB-039":   ["ENF-1"],   # agentic CLI output lands without review
+        "JF-038":   ["ENF-1"],   # agentic CLI output lands without review
+        "ADO-038":  ["ENF-1"],   # agentic CLI output lands without review
         "GL-004":   ["ENF-1", "ENF-2"],
         "GL-029":   ["ENF-2"],
         "BB-004":   ["ENF-1"],
@@ -236,6 +307,8 @@ STANDARD = Standard(
         "CC-006":   ["REB-2"],
         "GCB-009":  ["REB-2"],
         "BK-009":   ["REB-2"],
+        "HARNESS-015":  ["REB-2"],  # Harness artifacts not signed
+        "DR-019":  ["REB-2"],  # Drone artifacts not signed
         "TKN-009":  ["REB-2"],
         "ARGO-009": ["REB-2"],
 
@@ -247,18 +320,29 @@ STANDARD = Standard(
         "JF-007":   ["REB-3"],
         "CC-007":   ["REB-3"],
         "BK-010":   ["REB-3"],
+        "HARNESS-016":  ["REB-3"],  # Harness no SBOM
+        "DR-020":  ["REB-3"],  # Drone no SBOM
         "TKN-010":  ["REB-3"],
         "ARGO-010": ["REB-3"],
         # OCI image provenance annotations are the "SBOM accompanies
         # artifact" surface for container artifacts; same shape as
         # DF-016 above.
         "OCI-001":  ["REB-3"],             # missing OCI provenance annotations
+        "OCI-009":  ["REB-3"],             # missing OCI base-image annotations
         "OCI-003":  ["REB-3"],             # missing image.created
         "OCI-005":  ["REB-3"],             # missing image.licenses
         # Helm chart provenance metadata
         "HELM-005": ["REB-3"],             # maintainers chain-of-custody
         "HELM-007": ["REB-3"],             # description empty
         "HELM-010": ["REB-3"],             # appVersion empty
+        # ── Helm extended pack ──
+        "HELM-011": ["REB-3"],             # dependency URL embedded creds
+        "HELM-012": ["REB-3"],             # deprecated without successor
+        "HELM-013": ["REB-3"],             # invalid chart type
+        "HELM-014": ["REB-3"],             # known-compromised dep
+        "HELM-015": ["SCA-3"],  # oci:// dependency not digest-pinned
+        "HELM-016": ["ING-3"],  # default secret in values.yaml
+        "HELM-017": ["SCA-3"],  # tpl of an untrusted .Values value
         # SBOM content gaps live here too (the SBOM exists but
         # under-specifies what it should track).
         "ATTEST-003": ["REB-3"],           # SBOM floating versions
@@ -272,7 +356,10 @@ STANDARD = Standard(
         "ADO-024":  ["REB-4"],
         "JF-028":   ["REB-4"],
         "CC-024":   ["REB-4"],
+        "CC-038":   ["ENF-1"],   # agentic CLI output lands without review
         "BK-011":   ["REB-4"],
+        "HARNESS-017":  ["REB-4"],  # Harness no SLSA provenance
+        "DR-021":  ["REB-4"],  # Drone no SLSA provenance
         "TKN-011":  ["REB-4"],
         "ARGO-011": ["REB-4"],
         # in-toto / SLSA attestation content rules: each flags the
@@ -291,6 +378,13 @@ STANDARD = Standard(
         # tracking and updating OSS; REB-2 / REB-3 cover signing
         # and SBOMs of produced artifacts.
         "DF-001":  ["ING-1", "UPD-1"],   # FROM not digest-pinned
+        "MODEL-001": ["ING-1", "UPD-1"],  # unpinned base model
+        "MODEL-002": ["ING-1", "UPD-1"],  # third-party hub base model
+        "MODEL-003": ["ING-1", "UPD-1"],  # local unverified weights blob
+        "MODEL-006": ["ING-1", "UPD-1"],  # committed unsafe-serialization model artifact
+        "MODEL-004": ["ING-1", "UPD-1"],  # remote LoRA adapter
+        "MODEL-005": ["ING-1", "UPD-1"],  # config auto_map = custom loader code
+        "DF-031":  ["ING-1", "UPD-1"],   # COPY --from external image not digest-pinned
         "DF-003":  ["ING-1", "UPD-1"],   # ADD remote no integrity
         "DF-004":  ["ING-1"],            # curl-pipe
         "DF-010":  ["UPD-1"],            # apt upgrade unpinned
@@ -304,5 +398,109 @@ STANDARD = Standard(
         "HELM-004": ["UPD-1"],           # version range
         "HELM-008": ["UPD-1"],           # stale Chart.lock
         "HELM-009": ["ING-1"],           # non-HTTPS home/sources
+        # ── Azure Cloud (Entra ID / Storage / Key Vault / ACR / Monitor) ──
+        "ENTRA-001": ["ENF-1"],              # SP assigned Global Administrator
+        "ENTRA-002": ["UPD-1"],              # app credential beyond 180 days
+        "ENTRA-003": ["UPD-1"],              # SP uses password credential
+        "AZST-001":  ["ENF-1"],              # public blob access
+        "AZST-002":  ["ING-1"],              # non-HTTPS traffic
+        "AZST-003":  ["REB-2"],              # no CMK encryption
+        "AKV-001":   ["ENF-1"],              # soft delete not enabled
+        "AKV-002":   ["ENF-1"],              # purge protection not enabled
+        "AKV-003":   ["ENF-1"],              # network ACLs allow all
+        "ACR-001":   ["ENF-1"],              # admin user enabled
+        "ACR-002":   ["ENF-1"],              # public network access
+        "ACR-003":   ["REB-2"],              # content trust not enabled
+        "AZMON-001": ["ENF-2"],              # no diagnostic setting
+        "AZMON-002": ["ENF-2"],              # log retention < 365 days
+        "AZMON-003": ["ENF-2"],              # no alert rule
+        # ── GCP (IAM / GCS / KMS / Artifact Registry / Cloud Logging) ────
+        "GCIAM-001": ["ENF-1"],              # SA has Owner/Editor role
+        "GCIAM-002": ["UPD-1"],              # user-managed SA key
+        "GCIAM-003": ["ENF-1"],              # token creator without condition
+        "GCS-001":   ["ENF-1"],              # public bucket
+        "GCS-002":   ["ENF-1"],              # no uniform access
+        "GCS-003":   ["UPD-1"],              # versioning not enabled
+        "GCKMS-001": ["UPD-1"],              # key rotation > 365 days
+        "GCKMS-002": ["ENF-1"],              # public KMS key access
+        "GCKMS-003": ["REB-2"],              # no HSM protection
+        "GAR-001":   ["SCA-1"],              # no vulnerability scanning
+        "GAR-002":   ["ENF-1"],              # publicly readable repo
+        "GAR-003":   ["UPD-1"],              # no cleanup policy
+        "GCLOG-001": ["ENF-2"],              # audit logs not enabled
+        "GCLOG-002": ["ENF-2"],              # no log sink
+        "GCLOG-003": ["ENF-2"],              # log retention < 365 days
+        # ── Azure Cloud phase-2 ──────────────────────────────────────
+        "ENTRA-004": ["ENF-1"],              # cond access MFA
+        "ENTRA-005": ["ENF-1"],              # ext user restrict
+        "ENTRA-006": ["ENF-2"],              # risky signin
+        "AZST-004":  ["ING-1"],              # min TLS
+        "AZST-005":  ["UPD-1"],              # lifecycle
+        "AZST-006":  ["UPD-1"],              # key rotation
+        "AKV-004":   ["UPD-1"],              # key expiry
+        "AKV-005":   ["UPD-1"],              # secret expiry
+        "AKV-006":   ["ENF-1"],              # RBAC
+        "ACR-004":   ["SCA-1"],              # defender scan
+        "ACR-005":   ["ENF-1"],              # tag immutability
+        "AZMON-004": ["ENF-2"],              # KV diagnostics
+        "AZMON-005": ["ENF-2"],              # NSG flow retention
+        "AZMON-006": ["ENF-2"],              # LAW retention
+        "AZMON-007": ["ENF-2"],              # svc health alert
+        "AZNW-001":  ["ENF-1"],              # SSH/RDP internet (CRITICAL)
+        "AZNW-002":  ["ENF-2"],              # flow logs
+        "AZNW-003":  ["ENF-1"],              # WAF
+        "AZNW-004":  ["ENF-1"],              # deny-all
+        "AZNW-005":  ["ENF-1"],              # public IP VM
+        "AZAPP-001": ["ING-1"],              # HTTPS
+        "AZAPP-002": ["ING-1"],              # TLS
+        "AZAPP-003": ["ENF-1"],              # managed identity
+        "AZAPP-004": ["ENF-1"],              # remote debug
+        "AZAPP-005": ["ENF-1"],              # FTP
+        "AZSQL-001": ["REB-2"],              # TDE CMK
+        "AZSQL-002": ["ENF-2"],              # auditing
+        "AZSQL-003": ["ENF-1"],              # public access
+        "AZSQL-004": ["ENF-1"],              # AAD admin
+        "AZSQL-005": ["SCA-1"],              # threat detect
+        "AZVM-001":  ["REB-2"],              # disk encrypt
+        "AZVM-002":  ["ENF-1"],              # public IP
+        "AZVM-003":  ["ENF-1"],              # JIT
+        "AZVM-004":  ["SCA-1"],              # OS patch
+        "AZVM-005":  ["ENF-1"],              # managed identity
+        # ── GCP phase-2 ──────────────────────────────────────────────
+        "GCIAM-004": ["ENF-1"],              # default SA
+        "GCIAM-005": ["ENF-1"],              # domain restrict
+        "GCIAM-006": ["UPD-1"],              # SA key age
+        "GCS-004":   ["REB-2"],              # CMEK
+        "GCS-005":   ["ENF-2"],              # access logging
+        "GCLOG-004": ["ENF-2"],              # VPC flow logs
+        "GCLOG-005": ["ENF-2"],              # firewall logging
+        "GCLOG-006": ["ENF-2"],              # data access
+        "GCLOG-007": ["ENF-2"],              # metric filter IAM
+        "GCLOG-008": ["ENF-2"],              # metric filter firewall
+        "GCLOG-009": ["ENF-2"],              # metric filter route
+        "GCLOG-010": ["ENF-2"],              # metric filter SQL
+        "GCLOG-011": ["ENF-2"],              # metric filter custom role
+        "GCNET-001": ["ENF-1"],              # default network
+        "GCNET-002": ["ENF-1"],              # deny-all
+        "GCNET-003": ["ENF-1"],              # SSH/RDP (CRITICAL)
+        "GCNET-004": ["ENF-1"],              # private access
+        "GCNET-005": ["ENF-1"],              # Cloud NAT
+        "GCCE-001":  ["ENF-1"],              # shielded VM
+        "GCCE-002":  ["ENF-1"],              # OS Login
+        "GCCE-003":  ["ENF-1"],              # serial port
+        "GCCE-004":  ["ENF-1"],              # public IP
+        "GCCE-005":  ["ENF-1"],              # project SSH keys
+        "GCSQL-001": ["ENF-1"],              # public IP
+        "GCSQL-002": ["ENF-1"],              # backups
+        "GCSQL-003": ["ING-1"],              # SSL
+        "GCSQL-004": ["ENF-1"],              # IAM auth
+        "GCSQL-005": ["ENF-1"],              # PITR
+        "GCRUN-001": ["ENF-1"],              # unauth
+        "GCRUN-002": ["ENF-1"],              # custom SA
+        "GCRUN-003": ["ENF-1"],              # min instances
+        "GCRUN-004": ["ENF-1"],              # VPC connector
+        "GCKMS-004": ["ENF-1"],              # keyring IAM
+        "GCKMS-005": ["ENF-1"],              # destroy sched
+        "GCKMS-006": ["REB-2"],              # imported key
     },
 )

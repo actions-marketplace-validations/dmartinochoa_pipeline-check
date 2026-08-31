@@ -1,9 +1,9 @@
 """ARGO-009. Argo workflow should sign artifacts it produces."""
 from __future__ import annotations
 
-from ...base import Finding, Severity, has_signing, produces_artifacts
+from ...base import NO_ARTIFACT_DESC, Finding, Severity, has_signing, produces_artifacts
 from ...rule import Rule
-from ..base import ArgoContext
+from ..base import ArgoContext, doc_location
 
 RULE = Rule(
     id="ARGO-009",
@@ -44,7 +44,7 @@ def check(ctx: ArgoContext) -> Finding:
         return Finding(
             check_id=RULE.id, title=RULE.title, severity=RULE.severity,
             resource="argo",
-            description="No artifact production detected, check not applicable.",
+            description=NO_ARTIFACT_DESC,
             recommendation=RULE.recommendation, passed=True,
         )
     unsigned = [d for d in artifact_producers if not has_signing(d.data)]
@@ -61,4 +61,5 @@ def check(ctx: ArgoContext) -> Finding:
         check_id=RULE.id, title=RULE.title, severity=RULE.severity,
         resource="argo", description=desc,
         recommendation=RULE.recommendation, passed=passed,
+        locations=[doc_location(d) for d in unsigned],
     )

@@ -160,6 +160,66 @@ class TestGHA002PullRequestTarget:
         )
         assert not f.passed
 
+    def test_checkout_of_head_ref_shorthand_fails(self):
+        # Regression: ``github.head_ref`` is the documented shorthand
+        # for ``github.event.pull_request.head.ref`` and the more common
+        # way to write a PR-head checkout, so it must be caught too.
+        f = _run(
+            """
+            on: pull_request_target
+            jobs:
+              build:
+                runs-on: ubuntu-latest
+                steps:
+                  - uses: actions/checkout@v4
+                    with:
+                      ref: ${{ github.head_ref }}
+            """,
+            "GHA-002",
+        )
+        assert not f.passed
+        assert f.severity == Severity.CRITICAL
+
+    def test_checkout_of_merge_commit_sha_fails(self):
+        # Regression: the auto-generated merge commit contains the PR's
+        # code merged into base, so checking it out on pull_request_target
+        # still runs attacker code, a documented bypass of head.sha-only
+        # detection.
+        f = _run(
+            """
+            on: pull_request_target
+            jobs:
+              build:
+                runs-on: ubuntu-latest
+                steps:
+                  - uses: actions/checkout@v4
+                    with:
+                      ref: ${{ github.event.pull_request.merge_commit_sha }}
+            """,
+            "GHA-002",
+        )
+        assert not f.passed
+        assert f.severity == Severity.CRITICAL
+
+    def test_checkout_of_refs_pull_merge_fails(self):
+        # The literal-ref form: ``refs/pull/<n>/merge`` (and ``/head``)
+        # check out PR-controlled code without a ``${{ }}`` expression.
+        f = _run(
+            """
+            on: pull_request_target
+            jobs:
+              build:
+                runs-on: ubuntu-latest
+                steps:
+                  - uses: actions/checkout@v4
+                    with:
+                      ref: refs/pull/${{ github.event.number }}/merge
+            """,
+            "GHA-002",
+        )
+        assert not f.passed
+        assert f.severity == Severity.CRITICAL
+
     def test_pull_request_target_without_head_checkout_passes(self):
         f = _run(
             """
@@ -169,6 +229,24 @@ class TestGHA002PullRequestTarget:
                 runs-on: ubuntu-latest
                 steps:
                   - uses: actions/checkout@v4
+            """,
+            "GHA-002",
+        )
+        assert f.passed
+
+    def test_pull_request_target_checkout_base_sha_passes(self):
+        # Checking out the base SHA (``github.sha``) is the safe pattern,
+        # it must not be confused with the PR-controlled refs above.
+        f = _run(
+            """
+            on: pull_request_target
+            jobs:
+              build:
+                runs-on: ubuntu-latest
+                steps:
+                  - uses: actions/checkout@v4
+                    with:
+                      ref: ${{ github.sha }}
             """,
             "GHA-002",
         )
@@ -221,6 +299,27 @@ class TestGHA003ScriptInjection:
         )
         assert not f.passed
 
+    def test_inline_shell_assignment_of_untrusted_context_fails(self):
+        # Regression: ``VAR="${{ … }}"`` inside a run: block is NOT the
+        # safe env-capture idiom. GitHub expands ``${{ … }}`` into the
+        # script text before the shell parses it, so a PR title of
+        # ``foo"; whoami; "`` closes the assignment and runs ``whoami``.
+        f = _run(
+            """
+            on: pull_request_target
+            jobs:
+              build:
+                runs-on: ubuntu-latest
+                steps:
+                  - run: |
+                      TITLE="${{ github.event.pull_request.title }}"
+                      echo "handling $TITLE"
+            """,
+            "GHA-003",
+        )
+        assert not f.passed
+        assert f.severity == Severity.HIGH
+
     def test_run_via_env_passes(self):
         f = _run(
             """
@@ -232,6 +331,124 @@ class TestGHA003ScriptInjection:
                   - env:
                       TITLE: ${{ github.event.pull_request.title }}
                     run: echo "$TITLE"
+            """,
+            "GHA-003",
+        )
+        assert f.passed
+
+    def test_single_quoted_env_ref_passes(self):
+        # Regression: single quotes suppress shell expansion entirely,
+        # so referencing a tainted env var single-quoted is safe and
+        # must not false-positive (single-quoting is a recommended
+        # mitigation). Only double-quoted segments used to be stripped.
+        f = _run(
+            """
+            on: pull_request_target
+            jobs:
+              build:
+                runs-on: ubuntu-latest
+                steps:
+                  - env:
+                      TITLE: ${{ github.event.pull_request.title }}
+                    run: echo 'literal $TITLE text'
+            """,
+            "GHA-003",
+        )
+        assert f.passed
+
+    def test_fork_repo_description_in_run_fails(self):
+        # Regression: a fork PR author controls their fork repo's
+        # free-form ``head.repo.description``; interpolating it into a
+        # run: block under pull_request_target is template injection.
+        f = _run(
+            """
+            on: pull_request_target
+            jobs:
+              build:
+                runs-on: ubuntu-latest
+                steps:
+                  - run: echo "${{ github.event.pull_request.head.repo.description }}"
+            """,
+            "GHA-003",
+        )
+        assert not f.passed
+
+    def test_actor_id_not_flagged(self):
+        # Regression: ``github.actor_id`` is a numeric account ID (no
+        # shell metacharacters possible). The ``github.actor``
+        # alternative used to swallow the ``_id`` suffix via the trailing
+        # wildcard and false-positive.
+        f = _run(
+            """
+            on: [push]
+            jobs:
+              build:
+                runs-on: ubuntu-latest
+                steps:
+                  - run: echo "${{ github.actor_id }}"
+            """,
+            "GHA-003",
+        )
+        assert f.passed
+
+    def test_services_options_with_untrusted_context_fails(self):
+        # Widening, zizmor proposal #1128.
+        # services.<name>.options passes to docker create's argv;
+        # ``${{ ... }}`` interpolation of an untrusted context here
+        # is a shell-injection sink.
+        f = _run(
+            """
+            on: issues
+            jobs:
+              build:
+                runs-on: ubuntu-latest
+                services:
+                  db:
+                    image: postgres:15
+                    options: --hostname=${{ github.event.issue.title }}
+                steps:
+                  - run: echo build
+            """,
+            "GHA-003",
+        )
+        assert not f.passed
+        assert "services" in f.description
+
+    def test_services_env_with_untrusted_context_fails(self):
+        # services.<name>.env values become container env vars at
+        # ``docker create`` time; ``${{ ... }}`` interpolation reaches
+        # the docker argv.
+        f = _run(
+            """
+            on: pull_request
+            jobs:
+              build:
+                runs-on: ubuntu-latest
+                services:
+                  db:
+                    image: postgres:15
+                    env:
+                      FOO: ${{ github.event.pull_request.head.label }}
+                steps:
+                  - run: echo build
+            """,
+            "GHA-003",
+        )
+        assert not f.passed
+
+    def test_services_options_with_safe_string_passes(self):
+        f = _run(
+            """
+            on: push
+            jobs:
+              build:
+                runs-on: ubuntu-latest
+                services:
+                  db:
+                    image: postgres:15
+                    options: --health-cmd=pg_isready
+                steps:
+                  - run: echo build
             """,
             "GHA-003",
         )
@@ -441,6 +658,26 @@ class TestGHA005AwsCredentials:
                   - env:
                       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
                     run: aws s3 ls
+            """,
+            "GHA-005",
+        )
+        assert not f.passed
+
+    def test_job_level_env_access_key_reference_fails(self):
+        # Job-level env with a secrets-sourced AWS key is the same
+        # long-lived-key shape as step-level; it must fire too (A6 FN:
+        # only step/workflow scope was scanned for the secrets value).
+        f = _run(
+            """
+            on: push
+            jobs:
+              deploy:
+                runs-on: ubuntu-latest
+                env:
+                  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+                  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+                steps:
+                  - run: aws s3 sync . s3://bucket
             """,
             "GHA-005",
         )

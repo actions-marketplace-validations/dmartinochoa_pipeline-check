@@ -52,7 +52,7 @@ _CHECKOUT_USES_RE = re.compile(
 )
 
 
-@register("GHA-004")
+@register("GHA-004", safety="safe")
 def _fix_gha004(content: str, finding: Finding) -> str | None:
     """Insert ``permissions: contents: read`` at the top of the workflow.
 
@@ -74,14 +74,19 @@ def _fix_gha004(content: str, finding: Finding) -> str | None:
     return content[:insert_at] + block + content[insert_at:]
 
 
-@register("GHA-002")
+@register("GHA-002", safety="safe")
+@register("GHA-037", safety="safe")
+@register("GHA-054", safety="safe")
 def _fix_gha002(content: str, finding: Finding) -> str | None:
     """Add ``persist-credentials: false`` under every actions/checkout step.
 
-    Doesn't resolve the underlying GHA-002 (pull_request_target +
-    PR head) on its own — that requires a workflow redesign — but
-    the checkout option is a defense-in-depth measure that reduces
-    the blast radius of the issue and is always safe to apply.
+    For GHA-037 (``actions/checkout`` persists the GITHUB_TOKEN into
+    ``.git/config``) and GHA-054 (a checkout ``ssh-key`` persisted into the
+    repo's ``.git/config``) this is the canonical fix and resolves the
+    finding outright. For GHA-002 (pull_request_target + PR head) it
+    doesn't resolve the underlying issue on its own — that requires a
+    workflow redesign — but the checkout option is a defense-in-depth
+    measure that reduces the blast radius and is always safe to apply.
     Idempotent: skips checkout steps that already set the flag.
     """
     edits: list[tuple[int, int, str]] = []
@@ -91,13 +96,34 @@ def _fix_gha002(content: str, finding: Finding) -> str | None:
         uses_col = " " * len(m.group("prefix"))
         child_col = uses_col + "  "
         after = content[m.end():]
-        # A ``with:`` block sits right under the uses line at the same
-        # column, followed by at least one child indented two spaces
-        # deeper. Recognize either style of quoting for the child.
+        # Scan forward past any sibling-level keys (e.g. ``if:``,
+        # ``env:``) that sit between ``uses:`` and ``with:``.  A sibling
+        # key starts at the same column as ``uses:`` and is followed by
+        # its own children indented deeper.  We accumulate all such
+        # siblings so the ``with:`` regex can match even when it is not
+        # the first key after ``uses:``.
+        sibling_key_re = re.compile(
+            r"\n" + re.escape(uses_col) + r"(?!with:)\S[^\n]*\n?"
+            r"(?:" + re.escape(child_col) + r"\S[^\n]*\n?)*",
+        )
+        scan_offset = 0
+        while True:
+            skipped = sibling_key_re.match(after, scan_offset)
+            if skipped:
+                scan_offset = skipped.end()
+            else:
+                break
+        # A ``with:`` block sits at the same column as ``uses:``,
+        # followed by at least one child indented two spaces deeper.
+        # The leading newline is optional: when sibling keys were
+        # skipped above, the sibling scan already consumed the newline
+        # before ``with:`` (``scan_offset`` points at the start of the
+        # ``with:`` line). Requiring ``\n`` here would miss the existing
+        # block and wrongly insert a duplicate ``with:`` key.
         block_match = re.match(
-            r"\n" + re.escape(uses_col) + r"with:\s*\n"
+            r"\n?" + re.escape(uses_col) + r"with:\s*\n"
             r"(?:" + re.escape(child_col) + r"\S[^\n]*\n?)+",
-            after,
+            after[scan_offset:],
         )
         if block_match:
             existing_block = block_match.group(0)
@@ -107,7 +133,7 @@ def _fix_gha002(content: str, finding: Finding) -> str | None:
             # inserted line ends in a newline even when the matched
             # block was at EOF without one.
             insertion = f"{child_col}persist-credentials: false\n"
-            insert_at = m.end() + block_match.end()
+            insert_at = m.end() + scan_offset + block_match.end()
             if not content[m.end():].endswith("\n") and insert_at == len(content):
                 insertion = "\n" + insertion
             edits.append((insert_at, insert_at, insertion))
@@ -127,14 +153,22 @@ def _fix_gha002(content: str, finding: Finding) -> str | None:
     return out
 
 
-@register("GHA-008")
-@register("GL-008")
-@register("BB-008")
-@register("ADO-008")
-@register("CC-008")
-@register("BK-002")
-@register("TKN-005")
-@register("ARGO-006")
+@register("GHA-008", safety="safe")
+@register("GL-008", safety="safe")
+@register("BB-008", safety="safe")
+@register("ADO-008", safety="safe")
+@register("CC-008", safety="safe")
+@register("BK-002", safety="safe")
+@register("TKN-005", safety="safe")
+@register("ARGO-006", safety="safe")
+# Cloud Build (GCB-012, a literal in ``substitutions:``) and Harness
+# (HARNESS-004, a literal ``variables:`` value) detect purely by value
+# shape, so redacting the value resolves the finding the same way it does
+# for the ``*-008`` family. Drone DR-004 is deliberately NOT here: it also
+# fires on a credential-named key holding any literal, so ``<REDACTED>``
+# (still a literal) wouldn't clear it -- that needs a from_secret rewrite.
+@register("GCB-012", safety="safe")
+@register("HARNESS-004", safety="safe")
 def _fix_gha008(content: str, finding: Finding) -> str | None:
     """Replace credential-shaped literals with ``<REDACTED>`` + TODO comment.
 
@@ -156,7 +190,10 @@ def _fix_gha008(content: str, finding: Finding) -> str | None:
         new_line = line
         # Conservative: only redact whole-token matches on the RHS of
         # a ``key: value`` pair, not inside arbitrary scripts.
-        m = re.match(r"^(\s*[^#:\n]+:\s*)(\S+)(\s*)(#.*)?(\n?)$", new_line)
+        # ``[^\S\n]*`` for the trailing whitespace, NOT ``\s*``: ``\s``
+        # includes the newline, so on a comment-less line it would swallow
+        # the ``\n`` and push the TODO marker onto its own mis-indented line.
+        m = re.match(r"^(\s*[^#:\n]+:\s*)(\S+)([^\S\n]*)(#.*)?(\n?)$", new_line)
         if m:
             prefix, value, trailing_ws, comment, newline = m.groups()
             stripped = value.strip("\"'")
@@ -183,7 +220,7 @@ def _fix_gha008(content: str, finding: Finding) -> str | None:
 # ── Timeout fixer ──────────────────────────────────────────────────────
 
 
-@register("GHA-015")
+@register("GHA-015", safety="safe")
 def _fix_gha015(content: str, finding: Finding) -> str | None:
     """Insert ``timeout-minutes: 30`` into jobs that lack one.
 
@@ -226,8 +263,15 @@ def _fix_gha015(content: str, finding: Finding) -> str | None:
                 child_indent = job_indent + "  "
                 result.append(line)
                 i += 1
-                # Scan ahead to check if timeout-minutes already exists.
+                # Scan ahead to check if timeout-minutes already exists,
+                # or if the job body is a reusable-workflow ``uses:``
+                # call. GitHub's job schema rejects ``timeout-minutes``
+                # on the latter; the called workflow's own jobs declare
+                # their own bounds. The rule itself already exempts
+                # these jobs (see gha015_timeout.py).
                 has_timeout = False
+                is_reusable = False
+                child_col = len(job_indent) + 2
                 j = i
                 while j < len(lines):
                     next_line = lines[j]
@@ -236,11 +280,19 @@ def _fix_gha015(content: str, finding: Finding) -> str | None:
                         next_indent = len(next_line) - len(next_line.lstrip())
                         if next_indent <= len(job_indent):
                             break
-                    if "timeout-minutes" in next_line:
+                        if (
+                            next_indent == child_col
+                            and re.match(r"uses\s*:\s*\S", next_line.lstrip())
+                        ):
+                            is_reusable = True
+                            break
+                    if next_line.lstrip().startswith("timeout-minutes") and re.match(
+                        r"timeout-minutes\s*:", next_line.lstrip(),
+                    ):
                         has_timeout = True
                         break
                     j += 1
-                if not has_timeout:
+                if not has_timeout and not is_reusable:
                     result.append(f"{child_indent}timeout-minutes: 30\n")
                     changed = True
                 continue
@@ -337,9 +389,21 @@ def _fix_yaml_timeout(
 
 
 def _scan_for_key(
-    lines: list[str], start: int, keyword: str, parent_indent: int,
+    lines: list[str],
+    start: int,
+    keyword: str,
+    parent_indent: int,
+    *,
+    child_offset: int = 2,
 ) -> bool:
-    """Return True if *keyword* appears inside the block starting at *start*."""
+    """Return True if *keyword* appears as a direct-child YAML key.
+
+    Only keys at exactly ``parent_indent + child_offset`` are
+    considered.  The default offset of 2 works for standard YAML
+    mappings; callers whose children are indented further (e.g.
+    Bitbucket's 4-space step bodies) pass ``child_offset=4``.
+    """
+    target_indent = parent_indent + child_offset
     j = start
     while j < len(lines):
         ln = lines[j]
@@ -348,18 +412,24 @@ def _scan_for_key(
             ind = len(ln) - len(ln.lstrip())
             if ind <= parent_indent:
                 break
-        if keyword in ln:
+        # Only match keys at exactly the direct-child indent level,
+        # not deeper nested keys that happen to share the same name.
+        ind = len(ln) - len(ln.lstrip())
+        stripped = ln.lstrip()
+        if ind == target_indent and stripped.startswith(keyword) and re.match(
+            re.escape(keyword) + r"\s*:", stripped,
+        ):
             return True
         j += 1
     return False
 
 
-@register("GL-015")
+@register("GL-015", safety="safe")
 def _fix_gl015(content: str, finding: Finding) -> str | None:
     return _fix_yaml_timeout(content, "timeout", "30 minutes")
 
 
-@register("ADO-015")
+@register("ADO-015", safety="safe")
 def _fix_ado015(content: str, finding: Finding) -> str | None:
     """Insert ``timeoutInMinutes: 30`` into Azure ``- job:`` list items.
 
@@ -408,7 +478,7 @@ def _comment_curl_pipe(content: str, finding: Finding) -> str | None:
     for line in content.splitlines(keepends=True):
         stripped = line.lstrip()
         # Skip lines that are already comments or already have our marker.
-        if _TODO_CURL in line or stripped.startswith("#") or stripped.startswith("//"):
+        if _TODO_CURL in line or stripped.startswith(("#", "//")):
             out.append(line)
             continue
         if _CURL_PIPE_LINE_RE.search(line):
@@ -429,10 +499,51 @@ def _comment_curl_pipe(content: str, finding: Finding) -> str | None:
 for _cid in (
     "GHA-016", "GL-016", "ADO-016", "BB-012", "JF-016", "CC-016",
     # Buildkite has a dedicated curl-pipe rule (BK-004); the heuristic
-    # is provider-agnostic so the same comment-out fixer applies.
-    "BK-004",
+    # is provider-agnostic so the same comment-out fixer applies. Drone
+    # (DR-014) and Harness (HARNESS-005) carry the same pipe-to-shell
+    # rule and consume the same fixer.
+    "BK-004", "DR-014", "HARNESS-005",
 ):
-    register(_cid)(_comment_curl_pipe)
+    register(_cid, safety="safe")(_comment_curl_pipe)
+
+
+# ── GHA-031: migrate retired ::set-output / ::save-state ──────────────────
+
+#: ``set-output`` writes to ``$GITHUB_OUTPUT``; ``save-state`` to
+#: ``$GITHUB_STATE`` (GitHub's documented file-redirect replacements).
+_DEPRECATED_CMD_TARGET = {
+    "set-output": "GITHUB_OUTPUT",
+    "save-state": "GITHUB_STATE",
+}
+#: The echoed form ``echo "::set-output name=NAME::VALUE"``. ``name`` is a
+#: command-key identifier; ``val`` runs to the closing quote (the
+#: non-greedy match stops at the first matching quote, which is the
+#: closing one for a well-formed shell string).
+_DEPRECATED_ECHO_RE = re.compile(
+    r"""echo\s+(?P<q>["'])::(?P<cmd>set-output|save-state)\s+"""
+    r"""name=(?P<name>[A-Za-z_][\w.\-]*)::(?P<val>[^\n]*?)(?P=q)""",
+    re.IGNORECASE,
+)
+
+
+@register("GHA-031", safety="safe")
+def _fix_gha031(content: str, finding: Finding) -> str | None:
+    """Migrate ``echo "::set-output name=X::V"`` to the file-redirect form.
+
+    GitHub retired the ``::set-output::`` / ``::save-state::`` stdout
+    commands (they're disabled on the runners), so the replacement is the
+    documented, behavior-equivalent file redirect:
+    ``echo "X=V" >> "$GITHUB_OUTPUT"`` (``$GITHUB_STATE`` for save-state).
+    The new form is also injection-safe (the runner no longer parses the
+    value out of stdout). Safe and idempotent: only the echoed command is
+    rewritten, and the rewritten line no longer matches.
+    """
+    def _sub(m: re.Match[str]) -> str:
+        env = _DEPRECATED_CMD_TARGET[m.group("cmd").lower()]
+        return f'echo "{m.group("name")}={m.group("val")}" >> "${env}"'
+
+    new = _DEPRECATED_ECHO_RE.sub(_sub, content)
+    return new if new != content else None
 
 
 # ── Docker --privileged removal ────────────────────────────────────────
@@ -452,8 +563,12 @@ def _strip_docker_flags(content: str, finding: Finding) -> str | None:
     for line in content.splitlines(keepends=True):
         if "docker" in line and _DOCKER_FLAG_RE.search(line):
             new_line = _DOCKER_FLAG_RE.sub("", line)
-            # Collapse multiple spaces left by removals.
-            new_line = re.sub(r"  +", " ", new_line)
+            # Collapse multi-space runs left by the strip, but only
+            # those preceded by a non-whitespace char. A bare ``  +``
+            # rule would also eat the YAML leading indent and break
+            # the surrounding mapping; the safety net catches that
+            # but the user gets no patch at all.
+            new_line = re.sub(r"(?<=\S)  +", " ", new_line)
             if new_line != line:
                 out.append(new_line)
                 changed = True
@@ -471,7 +586,13 @@ for _cid in (
     # shared flag-stripping fixer.
     "BK-005",
 ):
-    register(_cid)(_strip_docker_flags)
+    # Unsafe: this is a whole-file strip and the triggering rule fires
+    # once if any insecure flag appears anywhere in the file, so a benign
+    # ``-v /data:/data`` bind or ``--cap-add`` on an unrelated command can
+    # be removed too, changing that job's runtime. The YAML round-trip
+    # net doesn't catch a behavior-only change, so gate it behind
+    # ``--fix=unsafe``.
+    register(_cid, safety="unsafe")(_strip_docker_flags)
 
 
 # ── Insecure package-install flag removal ──────────────────────────────
@@ -492,7 +613,10 @@ def _strip_pkg_flags(content: str, finding: Finding) -> str | None:
     for line in content.splitlines(keepends=True):
         if _PKG_UNSAFE_FLAG_RE.search(line):
             new_line = _PKG_UNSAFE_FLAG_RE.sub("", line)
-            new_line = re.sub(r"  +", " ", new_line)
+            # See ``_strip_docker_flags`` for why the lookbehind is
+            # required: a bare ``  +`` collapse eats the leading YAML
+            # indent and breaks the step mapping.
+            new_line = re.sub(r"(?<=\S)  +", " ", new_line)
             if new_line != line:
                 out.append(new_line)
                 changed = True
@@ -504,13 +628,16 @@ def _strip_pkg_flags(content: str, finding: Finding) -> str | None:
 
 
 for _cid in ("GHA-018", "GL-018", "ADO-018", "BB-014", "JF-018", "CC-018"):
-    register(_cid)(_strip_pkg_flags)
+    # Unsafe for the same reason as ``_strip_docker_flags``: a whole-file
+    # strip that can remove an install flag on a command other than the
+    # one the finding pointed at. Gate behind ``--fix=unsafe``.
+    register(_cid, safety="unsafe")(_strip_pkg_flags)
 
 
 # ── Jenkins secret redaction (Groovy syntax) ───────────────────────────
 
 
-@register("JF-008")
+@register("JF-008", safety="safe")
 def _fix_jf008(content: str, finding: Finding) -> str | None:
     """Redact credential-shaped literals in Groovy source.
 
@@ -546,7 +673,7 @@ def _fix_jf008(content: str, finding: Finding) -> str | None:
 # ── BB-005 Bitbucket timeout fixer ───────────────────────────────────
 
 
-@register("BB-005")
+@register("BB-005", safety="safe")
 def _fix_bb005(content: str, finding: Finding) -> str | None:
     """Insert ``max-time: 120`` into Bitbucket steps missing it.
 
@@ -567,7 +694,7 @@ def _fix_bb005(content: str, finding: Finding) -> str | None:
             child_indent = base_indent + "    "  # step children are 4 spaces in
             out.append(line)
             i += 1
-            has_timeout = _scan_for_key(lines, i, "max-time", len(base_indent))
+            has_timeout = _scan_for_key(lines, i, "max-time", len(base_indent), child_offset=4)
             if not has_timeout:
                 out.append(f"{child_indent}max-time: 120\n")
                 changed = True
@@ -582,7 +709,7 @@ def _fix_bb005(content: str, finding: Finding) -> str | None:
 # ── JF-015 Jenkins timeout fixer ─────────────────────────────────────
 
 
-@register("JF-015")
+@register("JF-015", safety="safe")
 def _fix_jf015(content: str, finding: Finding) -> str | None:
     """Insert a TODO comment for adding a timeout wrapper.
 
@@ -604,7 +731,7 @@ def _fix_jf015(content: str, finding: Finding) -> str | None:
 # ── JF-011 Jenkins buildDiscarder fixer ─────────────────────────────
 
 
-@register("JF-011")
+@register("JF-011", safety="safe")
 def _fix_jf011(content: str, finding: Finding) -> str | None:
     """Insert a ``buildDiscarder`` option into a declarative pipeline.
 
@@ -657,7 +784,7 @@ _TODO_PIN = "TODO(pipeline-check): pin to commit SHA"
 _TODO_PIN_IMG = "TODO(pipeline-check): pin to digest"
 
 
-@register("GHA-001")
+@register("GHA-001", safety="safe")
 def _fix_gha001(content: str, finding: Finding) -> str | None:
     """Add TODO comment next to unpinned action uses: references."""
     _USES_RE = re.compile(r"^(\s*-?\s*uses:\s*)(\S+@)([^#\s]+)(.*)$")
@@ -681,7 +808,7 @@ def _fix_gha001(content: str, finding: Finding) -> str | None:
     return "".join(out)
 
 
-@register("GL-001")
+@register("GL-001", safety="safe")
 def _fix_gl001(content: str, finding: Finding) -> str | None:
     """Add TODO comment next to unpinned image: references."""
     _IMAGE_RE = re.compile(r"^(\s*image:\s*)(\S+)(.*)$")
@@ -706,7 +833,7 @@ def _fix_gl001(content: str, finding: Finding) -> str | None:
     return "".join(out)
 
 
-@register("BB-001")
+@register("BB-001", safety="safe")
 def _fix_bb001(content: str, finding: Finding) -> str | None:
     """Add TODO comment next to unpinned pipe: references."""
     _PIPE_RE = re.compile(r"^(\s*(?:- )?pipe:\s*)(\S+)(.*)$")
@@ -728,7 +855,7 @@ def _fix_bb001(content: str, finding: Finding) -> str | None:
     return "".join(out)
 
 
-@register("ADO-001")
+@register("ADO-001", safety="safe")
 def _fix_ado001(content: str, finding: Finding) -> str | None:
     """Add TODO comment next to unpinned task: references."""
     _TASK_RE = re.compile(r"^(\s*-?\s*task:\s*)(\S+@\S+)(.*)$")
@@ -753,7 +880,7 @@ def _fix_ado001(content: str, finding: Finding) -> str | None:
 # ── GHA-003 Script injection — env-var indirection ──────────────────
 
 
-@register("GHA-003")
+@register("GHA-003", safety="unsafe")
 def _fix_gha003(content: str, finding: Finding) -> str | None:
     """Add env-var indirection for untrusted context expressions in run: blocks.
 
@@ -791,7 +918,13 @@ def _fix_gha003(content: str, finding: Finding) -> str | None:
             contexts = list(UNTRUSTED_CONTEXT_RE.finditer(run_body))
             if contexts:
                 prefix = m.group(2)
-                indent = " " * len(prefix)
+                # ``env:`` must sit at the column of the ``run:`` key,
+                # NOT at the column where the command body begins. For
+                # ``  - run: foo`` the prefix is ``"  - run: "`` (10
+                # chars) but ``run:`` lives at column 4; ``env:`` at
+                # column 10 would be deeper than its parent step and
+                # break the YAML mapping.
+                indent = " " * prefix.index("run:")
                 new_body = run_body
                 env_vars: list[tuple[str, str]] = []
                 for idx, ctx_m in enumerate(reversed(contexts)):
@@ -804,11 +937,52 @@ def _fix_gha003(content: str, finding: Finding) -> str | None:
                     env_vars.append((var_name, expr))
                 env_vars.reverse()
                 out.append(f"{prefix}{new_body}  # {_TODO_INJECT}\n")
-                out.append(f"{indent}env:\n")
-                for var_name, expr in env_vars:
-                    out.append(f"{indent}  {var_name}: {expr}\n")
+                # Check if the step already has an ``env:`` block
+                # immediately following the ``run:`` line (possibly
+                # with other sibling keys in between). If so, merge
+                # the new vars into it instead of inserting a duplicate.
+                # ``env:`` is a sibling of ``run:``, so it sits at the
+                # SAME column (``step_indent``), not two deeper. Looking
+                # at ``step_indent + 2`` (and breaking on ``<= step_indent``)
+                # meant a sibling ``env:`` was never found and a duplicate
+                # block was inserted at ``run:``'s column instead.
+                step_indent = len(indent)
+                existing_env_line: int | None = None
+                peek = i + 1
+                while peek < len(lines):
+                    peek_line = lines[peek]
+                    peek_stripped = peek_line.rstrip()
+                    if not peek_stripped or peek_stripped.lstrip().startswith("#"):
+                        peek += 1
+                        continue
+                    peek_ind = len(peek_line) - len(peek_line.lstrip())
+                    if peek_ind < step_indent:
+                        # Dedented past the step's keys — left the step.
+                        break
+                    if peek_ind == step_indent:
+                        # A sibling key at the step's key column. A
+                        # ``- `` here starts a new list item / step.
+                        if peek_stripped.lstrip().startswith("- "):
+                            break
+                        if re.match(r"\s*env\s*:", peek_line):
+                            existing_env_line = peek
+                            break
+                    peek += 1
+                if existing_env_line is not None:
+                    # Copy lines up to and including the existing
+                    # ``env:`` header, then inject the new vars.
+                    i += 1
+                    while i <= existing_env_line:
+                        out.append(lines[i])
+                        i += 1
+                    for var_name, expr in env_vars:
+                        out.append(f"{indent}  {var_name}: {expr}\n")
+                else:
+                    out.append(f"{indent}env:\n")
+                    for var_name, expr in env_vars:
+                        out.append(f"{indent}  {var_name}: {expr}\n")
+                    i += 1
                 changed = True
-                i += 1
                 continue
         out.append(line)
         i += 1
@@ -834,7 +1008,7 @@ def _expr_to_env_name(expr: str) -> str:
 _TODO_ORB = "TODO(pipeline-check): pin to exact semver (e.g. @5.1.0)"
 
 
-@register("CC-001")
+@register("CC-001", safety="safe")
 def _fix_cc001(content: str, finding: Finding) -> str | None:
     """Add TODO comment next to unpinned orb references."""
     _ORB_RE = re.compile(r"^(\s*\w[\w-]*:\s*)(\S+@\S+)(.*)$")
@@ -868,7 +1042,7 @@ def _fix_cc001(content: str, finding: Finding) -> str | None:
 # ── CC-015 CircleCI timeout fixer ───────────────────────────────────
 
 
-@register("CC-015")
+@register("CC-015", safety="safe")
 def _fix_cc015(content: str, finding: Finding) -> str | None:
     """Insert ``no_output_timeout: 30m`` into CircleCI run steps that lack it."""
     _RUN_KEY_RE = re.compile(r"^(\s*)- run:\s*$")
@@ -884,7 +1058,7 @@ def _fix_cc015(content: str, finding: Finding) -> str | None:
             child_indent = base_indent + "    "
             out.append(line)
             i += 1
-            has_timeout = _scan_for_key(lines, i, "no_output_timeout", len(base_indent))
+            has_timeout = _scan_for_key(lines, i, "no_output_timeout", len(base_indent), child_offset=4)
             if not has_timeout:
                 out.append(f"{child_indent}no_output_timeout: 30m\n")
                 changed = True
@@ -916,7 +1090,7 @@ def _comment_token_persist(content: str, finding: Finding) -> str | None:
     changed = False
     for line in content.splitlines(keepends=True):
         stripped = line.lstrip()
-        if _TODO_TOKEN in line or stripped.startswith("#") or stripped.startswith("//"):
+        if _TODO_TOKEN in line or stripped.startswith(("#", "//")):
             out.append(line)
             continue
         if pattern.search(line):
@@ -934,7 +1108,7 @@ def _comment_token_persist(content: str, finding: Finding) -> str | None:
 
 
 for _cid in ("GHA-019", "GL-020", "BB-017"):
-    register(_cid)(_comment_token_persist)
+    register(_cid, safety="safe")(_comment_token_persist)
 
 
 # ── *-005 AWS long-lived key comment-out ──────────────────────────────
@@ -951,7 +1125,7 @@ def _comment_aws_keys(content: str, finding: Finding) -> str | None:
     changed = False
     for line in content.splitlines(keepends=True):
         stripped = line.lstrip()
-        if _TODO_AWS in line or stripped.startswith("#") or stripped.startswith("//"):
+        if _TODO_AWS in line or stripped.startswith(("#", "//")):
             out.append(line)
             continue
         if _AWS_KEY_LINE_RE.search(line):
@@ -970,7 +1144,7 @@ def _comment_aws_keys(content: str, finding: Finding) -> str | None:
 
 
 for _cid in ("GHA-005", "GL-013", "BB-011", "ADO-014", "CC-005", "JF-004", "JF-010"):
-    register(_cid)(_comment_aws_keys)
+    register(_cid, safety="safe")(_comment_aws_keys)
 
 
 # ── Deploy environment stubs ─────────────────────────────────────────
@@ -979,7 +1153,7 @@ _TODO_ENV = "TODO(pipeline-check): configure deployment environment"
 _DEPLOY_NAME_RE = re.compile(r"(?i)(deploy|release|publish|promote)")
 
 
-@register("GHA-014")
+@register("GHA-014", safety="safe")
 def _fix_gha014(content: str, finding: Finding) -> str | None:
     """Insert ``environment:`` placeholder into deploy-named GHA jobs."""
     lines = content.splitlines(keepends=True)
@@ -1027,7 +1201,16 @@ def _fix_gha014(content: str, finding: Finding) -> str | None:
 
 # ── *-021 npm install → npm ci ───────────────────────────────────────
 
-_NPM_INSTALL_RE = re.compile(r"\bnpm\s+install\b")
+# Only rewrite ``npm install`` when it carries no argument that ``npm
+# ci`` would reject: package names (``npm install react``), -g/--global
+# (``npm install --global typescript``), or any other flag. ``npm ci``
+# accepts no package args at all, so the rewrite is safe only for the
+# bare/lockfile form. Followed-by recognized: EOL, comment, shell
+# separator/pipe/redirect.
+_NPM_INSTALL_RE = re.compile(
+    r"\bnpm\s+install\b"
+    r"(?=[ \t]*(?:\n|$|#|&&|\|\||;|\||>|<))"
+)
 
 
 def _fix_npm_ci(content: str, finding: Finding) -> str | None:
@@ -1041,7 +1224,7 @@ def _fix_npm_ci(content: str, finding: Finding) -> str | None:
 
 
 for _cid in ("GHA-021", "GL-021", "ADO-021", "BB-021", "JF-021", "CC-021"):
-    register(_cid)(_fix_npm_ci)
+    register(_cid, safety="safe")(_fix_npm_ci)
 
 
 # ── *-022 dependency-update command comment-out ──────────────────────
@@ -1056,7 +1239,7 @@ def _comment_dep_update(content: str, finding: Finding) -> str | None:
     changed = False
     for line in content.splitlines(keepends=True):
         stripped = line.lstrip()
-        if _TODO_DEP_UPDATE in line or stripped.startswith("#") or stripped.startswith("//"):
+        if _TODO_DEP_UPDATE in line or stripped.startswith(("#", "//")):
             out.append(line)
             continue
         if DEP_UPDATE_RE.search(line) and not _DEP_UPDATE_TOOL_EXEMPT_RE.search(line):
@@ -1074,7 +1257,7 @@ def _comment_dep_update(content: str, finding: Finding) -> str | None:
 
 
 for _cid in ("GHA-022", "GL-022", "ADO-022", "BB-022", "JF-022", "CC-022"):
-    register(_cid)(_comment_dep_update)
+    register(_cid, safety="safe")(_comment_dep_update)
 
 
 # ── *-023 TLS bypass comment-out ─────────────────────────────────────
@@ -1096,7 +1279,7 @@ def _comment_tls_bypass(content: str, finding: Finding) -> str | None:
     changed = False
     for line in content.splitlines(keepends=True):
         stripped = line.lstrip()
-        if _TODO_TLS in line or stripped.startswith("#") or stripped.startswith("//"):
+        if _TODO_TLS in line or stripped.startswith(("#", "//")):
             out.append(line)
             continue
         if tls_bypass.scan(line):
@@ -1117,12 +1300,17 @@ for _cid in (
     "GHA-023", "GL-023", "ADO-023", "BB-023", "JF-023", "CC-023",
     # Buildkite's TLS-bypass rule covers the same flags / env vars.
     "BK-008",
+    # Drone (DR-006) and Harness (HARNESS-006) detect TLS bypass through
+    # the same ``tls_bypass`` primitive, so the comment-out fix applies
+    # unchanged -- the analog of their curl-pipe siblings (DR-014 /
+    # HARNESS-005) already sharing ``_comment_curl_pipe``.
+    "DR-006", "HARNESS-006",
 ):
-    register(_cid)(_comment_tls_bypass)
+    register(_cid, safety="safe")(_comment_tls_bypass)
 
 
 # Cloud Build TLS bypass reuses the same heuristic as the CI providers.
-register("GCB-011")(_comment_tls_bypass)
+register("GCB-011", safety="safe")(_comment_tls_bypass)
 
 
 # ── Tekton / Argo combined curl-pipe + TLS-bypass fixer ──────────────
@@ -1149,7 +1337,7 @@ def _comment_curl_pipe_and_tls(
 
 
 for _cid in ("TKN-008", "ARGO-008"):
-    register(_cid)(_comment_curl_pipe_and_tls)
+    register(_cid, safety="safe")(_comment_curl_pipe_and_tls)
 
 
 # ── Kubernetes drop-line fixers (K8S-002/003/004/005) ────────────────
@@ -1188,7 +1376,7 @@ def _fix_k8s_drop_true_line(content: str, finding: Finding) -> str | None:
 
 
 for _cid in _K8S_DROP_TRUE_KEYS:
-    register(_cid)(_fix_k8s_drop_true_line)
+    register(_cid, safety="safe")(_fix_k8s_drop_true_line)
 
 
 # ── Kubernetes flip-value fixers (K8S-006/007/008) ───────────────────
@@ -1224,7 +1412,7 @@ def _fix_k8s_flip_value(content: str, finding: Finding) -> str | None:
 
 
 for _cid in _K8S_FLIP_VALUE:
-    register(_cid)(_fix_k8s_flip_value)
+    register(_cid, safety="safe")(_fix_k8s_flip_value)
 
 
 # ── Kubernetes comment-only TODO fixers (K8S-013, K8S-020) ───────────
@@ -1244,20 +1432,17 @@ _TODO_K8S_HOSTPATH = (
 _HOSTPATH_RE = re.compile(r"^(\s*)hostPath\s*:\s*$", re.MULTILINE)
 
 
-@register("K8S-013")
+@register("K8S-013", safety="safe")
 def _fix_k8s013_hostpath(content: str, finding: Finding) -> str | None:
-    if _TODO_K8S_HOSTPATH in content:
-        return None
     edits: list[tuple[int, str]] = []
     for m in _HOSTPATH_RE.finditer(content):
+        if _todo_already_above(content, m.start(), _TODO_K8S_HOSTPATH):
+            continue
         indent = m.group(1)
         edits.append((m.start(), f"{indent}# {_TODO_K8S_HOSTPATH}\n"))
     if not edits:
         return None
-    out = content
-    for start, text in sorted(edits, reverse=True):
-        out = out[:start] + text + out[start:]
-    return out
+    return _insert_comment_above(content, edits)
 
 
 _TODO_K8S_CLUSTER_ADMIN = (
@@ -1274,20 +1459,17 @@ _CLUSTER_ADMIN_NAME_RE = re.compile(
 )
 
 
-@register("K8S-020")
+@register("K8S-020", safety="safe")
 def _fix_k8s020_cluster_admin(content: str, finding: Finding) -> str | None:
-    if _TODO_K8S_CLUSTER_ADMIN in content:
-        return None
     edits: list[tuple[int, str]] = []
     for m in _CLUSTER_ADMIN_NAME_RE.finditer(content):
+        if _todo_already_above(content, m.start(), _TODO_K8S_CLUSTER_ADMIN):
+            continue
         indent = m.group(1)
         edits.append((m.start(), f"{indent}# {_TODO_K8S_CLUSTER_ADMIN}\n"))
     if not edits:
         return None
-    out = content
-    for start, text in sorted(edits, reverse=True):
-        out = out[:start] + text + out[start:]
-    return out
+    return _insert_comment_above(content, edits)
 
 
 # ── K8S-001 image-pinning TODO ───────────────────────────────────────
@@ -1313,7 +1495,7 @@ _K8S_IMAGE_RE = re.compile(
 )
 
 
-@register("K8S-001")
+@register("K8S-001", safety="safe")
 def _fix_k8s001_image_pin(content: str, finding: Finding) -> str | None:
     """Insert a TODO above each container ``image:`` line that lacks
     a sha256 digest.
@@ -1321,12 +1503,12 @@ def _fix_k8s001_image_pin(content: str, finding: Finding) -> str | None:
     Idempotent via the marker. Lines whose value already contains
     ``@sha256:`` are skipped — they're already pinned.
     """
-    if _TODO_K8S_IMAGE_PIN in content:
-        return None
     edits: list[tuple[int, str]] = []
     for m in _K8S_IMAGE_RE.finditer(content):
         ref = m.group("ref")
         if "@sha256:" in ref:
+            continue
+        if _todo_already_above(content, m.start(), _TODO_K8S_IMAGE_PIN):
             continue
         indent = m.group("indent")
         edits.append((m.start(), f"{indent}# {_TODO_K8S_IMAGE_PIN}\n"))
@@ -1348,7 +1530,7 @@ _K8S_HOSTPORT_RE = re.compile(
 )
 
 
-@register("K8S-028")
+@register("K8S-028", safety="safe")
 def _fix_k8s028_host_port(content: str, finding: Finding) -> str | None:
     """Drop ``hostPort: <N>`` lines. The container's ``containerPort``
     is unaffected — only the node-IP binding is removed. Operators who
@@ -1377,7 +1559,7 @@ _K8S_DEFAULT_SA_NAME_RE = re.compile(
 )
 
 
-@register("K8S-029")
+@register("K8S-029", safety="safe")
 def _fix_k8s029_default_sa(content: str, finding: Finding) -> str | None:
     """Insert a TODO above each ``name: default`` line in a subjects
     block.
@@ -1386,10 +1568,10 @@ def _fix_k8s029_default_sa(content: str, finding: Finding) -> str | None:
     (b) bind that SA explicitly, and (c) leave the default SA
     unbound. The fixer can't synthesize the named SA's manifest.
     """
-    if _TODO_K8S_DEFAULT_SA in content:
-        return None
     edits: list[tuple[int, str]] = []
     for m in _K8S_DEFAULT_SA_NAME_RE.finditer(content):
+        if _todo_already_above(content, m.start(), _TODO_K8S_DEFAULT_SA):
+            continue
         indent = m.group(1)
         edits.append((m.start(), f"{indent}# {_TODO_K8S_DEFAULT_SA}\n"))
     if not edits:
@@ -1416,7 +1598,7 @@ _K8S_CTRL_PLANE_TOLERATION_KEY_RE = re.compile(
 )
 
 
-@register("K8S-030")
+@register("K8S-030", safety="safe")
 def _fix_k8s030_control_plane(content: str, finding: Finding) -> str | None:
     """Insert a TODO above each control-plane targeting line.
 
@@ -1426,13 +1608,15 @@ def _fix_k8s030_control_plane(content: str, finding: Finding) -> str | None:
     scheduling constraints below the offending line, and a structured
     YAML rewrite is out of scope for a text patch.
     """
-    if _TODO_K8S_CTRL_PLANE in content:
-        return None
     edits: list[tuple[int, str]] = []
     for m in _K8S_CTRL_PLANE_LABEL_RE.finditer(content):
+        if _todo_already_above(content, m.start(), _TODO_K8S_CTRL_PLANE):
+            continue
         indent = m.group(1)
         edits.append((m.start(), f"{indent}# {_TODO_K8S_CTRL_PLANE}\n"))
     for m in _K8S_CTRL_PLANE_TOLERATION_KEY_RE.finditer(content):
+        if _todo_already_above(content, m.start(), _TODO_K8S_CTRL_PLANE):
+            continue
         indent_raw = m.group(1)
         indent_ws = indent_raw[: len(indent_raw) - len(indent_raw.lstrip())]
         edits.append((m.start(), f"{indent_ws}# {_TODO_K8S_CTRL_PLANE}\n"))
@@ -1455,7 +1639,7 @@ _GHA_SECRETS_INHERIT_RE = re.compile(
 )
 
 
-@register("GHA-034")
+@register("GHA-034", safety="unsafe")
 def _fix_gha034_secrets_inherit(content: str, finding: Finding) -> str | None:
     """Insert a TODO above each ``secrets: inherit`` line.
 
@@ -1463,10 +1647,10 @@ def _fix_gha034_secrets_inherit(content: str, finding: Finding) -> str | None:
     name the secrets the callee actually needs, which the fixer
     can't infer from the calling YAML alone.
     """
-    if _TODO_GHA_INHERIT in content:
-        return None
     edits: list[tuple[int, str]] = []
     for m in _GHA_SECRETS_INHERIT_RE.finditer(content):
+        if _todo_already_above(content, m.start(), _TODO_GHA_INHERIT):
+            continue
         indent = m.group(1)
         edits.append((m.start(), f"{indent}# {_TODO_GHA_INHERIT}\n"))
     if not edits:
@@ -1491,7 +1675,7 @@ _GCB_FIRST_TOPLEVEL_RE = re.compile(
 )
 
 
-@register("GCB-005")
+@register("GCB-005", safety="safe")
 def _fix_gcb005_timeout(content: str, finding: Finding) -> str | None:
     """Insert ``timeout: '600s'`` at the top of cloudbuild.yaml.
 
@@ -1515,7 +1699,7 @@ _GCB_LOGGING_NONE_RE = re.compile(
 )
 
 
-@register("GCB-014")
+@register("GCB-014", safety="safe")
 def _fix_gcb014_logging(content: str, finding: Finding) -> str | None:
     """Drop ``logging: NONE`` so Cloud Build falls back to logging
     enabled. The operator can re-pick a logging mode (``CLOUD_LOGGING_ONLY``,
@@ -1540,7 +1724,7 @@ _GCB_SUBOPT_LOOSE_RE = re.compile(
 )
 
 
-@register("GCB-022")
+@register("GCB-022", safety="safe")
 def _fix_gcb022_subopt_loose(content: str, finding: Finding) -> str | None:
     """Drop ``substitutionOption: ALLOW_LOOSE``.
 
@@ -1568,7 +1752,7 @@ _TODO_GCB_POOL = (
 _GCB_OPTIONS_RE = re.compile(r"^(\s*)options\s*:\s*$", re.MULTILINE)
 
 
-@register("GCB-021")
+@register("GCB-021", safety="safe")
 def _fix_gcb021_worker_pool(content: str, finding: Finding) -> str | None:
     """Insert a TODO above the ``options:`` block when no worker pool
     is configured.
@@ -1577,10 +1761,10 @@ def _fix_gcb021_worker_pool(content: str, finding: Finding) -> str | None:
     (the rule's recommendation already covers the from-scratch case;
     inserting a top-level block from text is too easy to misindent).
     """
-    if _TODO_GCB_POOL in content:
-        return None
     m = _GCB_OPTIONS_RE.search(content)
     if m is None:
+        return None
+    if _todo_already_above(content, m.start(), _TODO_GCB_POOL):
         return None
     indent = m.group(1)
     return (
@@ -1606,19 +1790,19 @@ _GCB_STEP_NAME_RE = re.compile(
 )
 
 
-@register("GCB-001")
+@register("GCB-001", safety="safe")
 def _fix_gcb001_pin_todo(content: str, finding: Finding) -> str | None:
     """Insert a TODO above each step image line that isn't pinned to
     a digest. Comment-only — pinning to a real digest needs an out-
     of-band registry lookup (``gcloud container images describe``)
     that the scanner can't make.
     """
-    if _TODO_GCB_PIN in content:
-        return None
     edits: list[tuple[int, str]] = []
     for m in _GCB_STEP_NAME_RE.finditer(content):
         image = m.group("image")
         if "@sha256:" in image:
+            continue
+        if _todo_already_above(content, m.start(), _TODO_GCB_PIN):
             continue
         # The leading dash, if any, already lives in ``indent``. Pull
         # the comment indent off of just the whitespace prefix so it
@@ -1634,10 +1818,7 @@ def _fix_gcb001_pin_todo(content: str, finding: Finding) -> str | None:
         edits.append((m.start(), f"{indent_ws}# {_TODO_GCB_PIN}\n"))
     if not edits:
         return None
-    out = content
-    for start, text in sorted(edits, reverse=True):
-        out = out[:start] + text + out[start:]
-    return out
+    return _insert_comment_above(content, edits)
 
 
 # ── Dockerfile comment-only TODO fixers ───────────────────────────────
@@ -1745,6 +1926,23 @@ _DF_ARG_CRED_RE = re.compile(
 )
 
 
+def _todo_already_above(content: str, match_start: int, marker: str) -> bool:
+    """True when the line immediately above ``match_start`` already
+    carries ``marker``. Per-match dedup so a partial state (one TODO
+    landed by hand, others still missing) doesn't suppress the
+    remaining annotations."""
+    if match_start == 0:
+        return False
+    # Regex matches are anchored at ``^`` in MULTILINE mode, so the
+    # newline at content[match_start - 1] separates the previous line
+    # from the matched one. Find that previous line's bounds.
+    prev_line_end = match_start - 1
+    if prev_line_end < 0 or content[prev_line_end] != "\n":
+        return False
+    prev_line_start = content.rfind("\n", 0, prev_line_end) + 1
+    return marker in content[prev_line_start:prev_line_end]
+
+
 def _insert_comment_above(content: str, edits: list[tuple[int, str]]) -> str:
     """Apply [(start, text), ...] inserts in reverse so offsets stay valid."""
     out = content
@@ -1753,7 +1951,7 @@ def _insert_comment_above(content: str, edits: list[tuple[int, str]]) -> str:
     return out
 
 
-@register("DF-001")
+@register("DF-001", safety="safe")
 def _fix_df001_pin_todo(content: str, finding: Finding) -> str | None:
     """Insert a TODO above any FROM line that lacks a sha256 digest.
 
@@ -1761,12 +1959,12 @@ def _fix_df001_pin_todo(content: str, finding: Finding) -> str | None:
     each unpinned one. Stages already pinned by digest are left alone.
     Idempotent via the marker check.
     """
-    if _TODO_DF_PIN in content:
-        return None
     edits: list[tuple[int, str]] = []
     for m in _DF_FROM_RE.finditer(content):
         image = m.group("image")
         if "@sha256:" in image:
+            continue
+        if _todo_already_above(content, m.start(), _TODO_DF_PIN):
             continue
         indent = m.group(1)
         edits.append((m.start(), f"{indent}# {_TODO_DF_PIN}\n"))
@@ -1775,7 +1973,7 @@ def _fix_df001_pin_todo(content: str, finding: Finding) -> str | None:
     return _insert_comment_above(content, edits)
 
 
-@register("DF-002")
+@register("DF-002", safety="safe")
 def _fix_df002_user_todo(content: str, finding: Finding) -> str | None:
     """Insert a TODO above the final CMD/ENTRYPOINT when no USER is set.
 
@@ -1784,14 +1982,14 @@ def _fix_df002_user_todo(content: str, finding: Finding) -> str | None:
     ``USER appuser`` line would land (just before the runtime entry
     point).
     """
-    if _TODO_DF_USER in content:
-        return None
     if _DF_USER_RE.search(content):
         return None
     matches = list(_DF_FINAL_CMD_RE.finditer(content))
     if not matches:
         return None
     last = matches[-1]
+    if _todo_already_above(content, last.start(), _TODO_DF_USER):
+        return None
     indent = last.group(1)
     return (
         content[:last.start()]
@@ -1800,17 +1998,17 @@ def _fix_df002_user_todo(content: str, finding: Finding) -> str | None:
     )
 
 
-@register("DF-007")
+@register("DF-007", safety="safe")
 def _fix_df007_healthcheck_todo(content: str, finding: Finding) -> str | None:
     """Insert a TODO above the final CMD/ENTRYPOINT when no HEALTHCHECK."""
-    if _TODO_DF_HEALTHCHECK in content:
-        return None
     if _DF_HEALTHCHECK_RE.search(content):
         return None
     matches = list(_DF_FINAL_CMD_RE.finditer(content))
     if not matches:
         return None
     last = matches[-1]
+    if _todo_already_above(content, last.start(), _TODO_DF_HEALTHCHECK):
+        return None
     indent = last.group(1)
     return (
         content[:last.start()]
@@ -1819,13 +2017,13 @@ def _fix_df007_healthcheck_todo(content: str, finding: Finding) -> str | None:
     )
 
 
-@register("DF-013")
+@register("DF-013", safety="safe")
 def _fix_df013_expose_ssh_todo(content: str, finding: Finding) -> str | None:
     """Insert a TODO above any EXPOSE line publishing port 22."""
-    if _TODO_DF_EXPOSE_SSH in content:
-        return None
     edits: list[tuple[int, str]] = []
     for m in _DF_EXPOSE_22_RE.finditer(content):
+        if _todo_already_above(content, m.start(), _TODO_DF_EXPOSE_SSH):
+            continue
         indent = m.group(1)
         edits.append((m.start(), f"{indent}# {_TODO_DF_EXPOSE_SSH}\n"))
     if not edits:
@@ -1833,7 +2031,7 @@ def _fix_df013_expose_ssh_todo(content: str, finding: Finding) -> str | None:
     return _insert_comment_above(content, edits)
 
 
-@register("DF-017")
+@register("DF-017", safety="safe")
 def _fix_df017_path_todo(content: str, finding: Finding) -> str | None:
     """Insert a TODO above any ``ENV PATH=`` whose value prepends a
     world-writable prefix ahead of ``$PATH``.
@@ -1842,8 +2040,6 @@ def _fix_df017_path_todo(content: str, finding: Finding) -> str | None:
     operator may genuinely intend the writable dir to be in PATH at
     the tail. The TODO points at the correct shape.
     """
-    if _TODO_DF_PATH in content:
-        return None
     edits: list[tuple[int, str]] = []
     for m in _DF_PATH_PREPEND_RE.finditer(content):
         value = m.group("value")
@@ -1862,6 +2058,8 @@ def _fix_df017_path_todo(content: str, finding: Finding) -> str | None:
                 break
         if not offending:
             continue
+        if _todo_already_above(content, m.start(), _TODO_DF_PATH):
+            continue
         indent = m.group(1)
         edits.append((m.start(), f"{indent}# {_TODO_DF_PATH}\n"))
     if not edits:
@@ -1869,7 +2067,7 @@ def _fix_df017_path_todo(content: str, finding: Finding) -> str | None:
     return _insert_comment_above(content, edits)
 
 
-@register("DF-019")
+@register("DF-019", safety="safe")
 def _fix_df019_copy_cred_todo(content: str, finding: Finding) -> str | None:
     """Insert a TODO above any ``COPY``/``ADD`` whose source basename
     matches a credential filename.
@@ -1879,10 +2077,10 @@ def _fix_df019_copy_cred_todo(content: str, finding: Finding) -> str | None:
     supply the secret-id and the consumption pattern. The TODO points
     at the right shape.
     """
-    if _TODO_DF_COPY_CRED in content:
-        return None
     edits: list[tuple[int, str]] = []
     for m in _DF_COPY_CRED_RE.finditer(content):
+        if _todo_already_above(content, m.start(), _TODO_DF_COPY_CRED):
+            continue
         indent = m.group(1)
         edits.append((m.start(), f"{indent}# {_TODO_DF_COPY_CRED}\n"))
     if not edits:
@@ -1890,7 +2088,7 @@ def _fix_df019_copy_cred_todo(content: str, finding: Finding) -> str | None:
     return _insert_comment_above(content, edits)
 
 
-@register("DF-020")
+@register("DF-020", safety="safe")
 def _fix_df020_arg_cred_todo(content: str, finding: Finding) -> str | None:
     """Insert a TODO above any ``ARG`` whose name looks credential-shaped.
 
@@ -1898,10 +2096,10 @@ def _fix_df020_arg_cred_todo(content: str, finding: Finding) -> str | None:
     ``RUN --mount=type=secret``, which requires the operator to wire
     up the secret source on their build invocation.
     """
-    if _TODO_DF_ARG_CRED in content:
-        return None
     edits: list[tuple[int, str]] = []
     for m in _DF_ARG_CRED_RE.finditer(content):
+        if _todo_already_above(content, m.start(), _TODO_DF_ARG_CRED):
+            continue
         indent = m.group(1)
         edits.append((m.start(), f"{indent}# {_TODO_DF_ARG_CRED}\n"))
     if not edits:
@@ -1923,13 +2121,13 @@ _GCB_VERSION_LATEST_RE = re.compile(
 )
 
 
-@register("GCB-007")
+@register("GCB-007", safety="safe")
 def _fix_gcb007_latest_todo(content: str, finding: Finding) -> str | None:
     """Insert a TODO above each ``versions/latest`` reference."""
-    if _TODO_GCB_LATEST in content:
-        return None
     edits: list[tuple[int, str]] = []
     for m in _GCB_VERSION_LATEST_RE.finditer(content):
+        if _todo_already_above(content, m.start(), _TODO_GCB_LATEST):
+            continue
         indent_raw = m.group(1)
         indent_ws = indent_raw[: len(indent_raw) - len(indent_raw.lstrip())]
         edits.append((m.start(), f"{indent_ws}# {_TODO_GCB_LATEST}\n"))
@@ -1967,7 +2165,7 @@ _GHA_RUNS_ON_INJECTION_RE = re.compile(
 )
 
 
-@register("GHA-036")
+@register("GHA-036", safety="safe")
 def _fix_gha036_runs_on_todo(content: str, finding: Finding) -> str | None:
     """Insert a TODO above each ``runs-on:`` line that interpolates
     untrusted context.
@@ -1976,10 +2174,10 @@ def _fix_gha036_runs_on_todo(content: str, finding: Finding) -> str | None:
     label or a validated allowlist — both require operator input
     the fixer can't infer.
     """
-    if _TODO_GHA_036 in content:
-        return None
     edits: list[tuple[int, str]] = []
     for m in _GHA_RUNS_ON_INJECTION_RE.finditer(content):
+        if _todo_already_above(content, m.start(), _TODO_GHA_036):
+            continue
         indent = m.group(1)
         edits.append((m.start(), f"{indent}# {_TODO_GHA_036}\n"))
     if not edits:
@@ -2008,14 +2206,14 @@ _GL_TAGS_INJECTION_RE = re.compile(
 )
 
 
-@register("GL-032")
+@register("GL-032", safety="safe")
 def _fix_gl032_tags_todo(content: str, finding: Finding) -> str | None:
     """Insert a TODO above each ``tags:`` line that interpolates
     untrusted CI variables (inline list / scalar form)."""
-    if _TODO_GL_032 in content:
-        return None
     edits: list[tuple[int, str]] = []
     for m in _GL_TAGS_INJECTION_RE.finditer(content):
+        if _todo_already_above(content, m.start(), _TODO_GL_032):
+            continue
         indent = m.group(1)
         edits.append((m.start(), f"{indent}# {_TODO_GL_032}\n"))
     if not edits:
@@ -2048,14 +2246,14 @@ _ADO_POOL_INJECTION_RE = re.compile(
 )
 
 
-@register("ADO-030")
+@register("ADO-030", safety="safe")
 def _fix_ado030_pool_todo(content: str, finding: Finding) -> str | None:
     """Insert a TODO above each ``pool:`` / ``name:`` / ``demands:``
     line that interpolates attacker-controllable input."""
-    if _TODO_ADO_030 in content:
-        return None
     edits: list[tuple[int, str]] = []
     for m in _ADO_POOL_INJECTION_RE.finditer(content):
+        if _todo_already_above(content, m.start(), _TODO_ADO_030):
+            continue
         indent = m.group(1)
         # Strip the leading ``-`` if present so the comment lines up
         # with the YAML key column rather than the list-marker column.
@@ -2091,14 +2289,14 @@ _JF_AGENT_LABEL_INJECTION_RE = re.compile(
 )
 
 
-@register("JF-032")
+@register("JF-032", safety="safe")
 def _fix_jf032_label_todo(content: str, finding: Finding) -> str | None:
     """Insert a TODO above each Groovy ``label "..."`` line that
     interpolates an untrusted Groovy reference."""
-    if _TODO_JF_032 in content:
-        return None
     edits: list[tuple[int, str]] = []
     for m in _JF_AGENT_LABEL_INJECTION_RE.finditer(content):
+        if _todo_already_above(content, m.start(), _TODO_JF_032):
+            continue
         indent = m.group(1) or m.group(2) or ""
         edits.append((m.start(), f"{indent}// {_TODO_JF_032}\n"))
     if not edits:

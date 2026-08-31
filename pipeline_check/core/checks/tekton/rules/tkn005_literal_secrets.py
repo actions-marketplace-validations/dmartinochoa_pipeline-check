@@ -4,9 +4,10 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from ...base import Finding, Severity
+from ..._secrets import find_secret_values
+from ...base import Finding, Location, Severity
 from ...rule import Rule
-from ..base import TektonContext, step_name, task_steps
+from ..base import TektonContext, doc_location, step_name, task_steps
 
 RULE = Rule(
     id="TKN-005",
@@ -29,16 +30,46 @@ RULE = Rule(
         "value is a non-empty literal rather than a "
         "``$(params.X)`` / ``valueFrom`` reference."
     ),
+    exploit_example=(
+        "# Vulnerable: the AWS access key literal lives in the\n"
+        "# Task manifest. ``kubectl get task -o yaml`` exposes it;\n"
+        "# the manifest is committed to git for any repo reader.\n"
+        "apiVersion: tekton.dev/v1\n"
+        "kind: Task\n"
+        "metadata: { name: upload }\n"
+        "spec:\n"
+        "  steps:\n"
+        "    - name: upload\n"
+        "      image: aws-cli@sha256:abc123...\n"
+        "      env:\n"
+        "        - name: AWS_ACCESS_KEY_ID\n"
+        "          value: AKIAIOSFODNN7EXAMPLE\n"
+        "        - name: AWS_SECRET_ACCESS_KEY\n"
+        "          value: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n"
+        "      script: aws s3 cp ./build s3://bucket/\n"
+        "\n"
+        "# Safe: reference a Kubernetes Secret via\n"
+        "# ``valueFrom.secretKeyRef``. The Task manifest carries\n"
+        "# the secret's name, not its value; the value lives in\n"
+        "# the cluster's Secret store and can rotate without a\n"
+        "# Task change.\n"
+        "apiVersion: tekton.dev/v1\n"
+        "kind: Task\n"
+        "metadata: { name: upload }\n"
+        "spec:\n"
+        "  steps:\n"
+        "    - name: upload\n"
+        "      image: aws-cli@sha256:abc123...\n"
+        "      env:\n"
+        "        - name: AWS_ACCESS_KEY_ID\n"
+        "          valueFrom:\n"
+        "            secretKeyRef: { name: aws-uploader, key: access_key_id }\n"
+        "        - name: AWS_SECRET_ACCESS_KEY\n"
+        "          valueFrom:\n"
+        "            secretKeyRef: { name: aws-uploader, key: secret_access_key }"
+    ),
 )
 
-_STRONG_PATTERNS = (
-    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
-    re.compile(r"\bASIA[0-9A-Z]{16}\b"),
-    re.compile(r"\bghp_[A-Za-z0-9]{36,}\b"),
-    re.compile(r"\bgho_[A-Za-z0-9]{36,}\b"),
-    re.compile(r"\bsk-[A-Za-z0-9]{20,}\b"),
-    re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\."),
-)
 _SECRET_KEY_RE = re.compile(
     r"(?:^|_)(TOKEN|KEY|SECRET|PASSWORD|PASSWD|API_KEY|"
     r"ACCESS_KEY|PRIVATE_KEY|CREDENTIAL)s?(?:_|$)",
@@ -51,9 +82,11 @@ def _looks_like_secret(name: str, value: str) -> bool:
     v = value.strip()
     if not v or _INTERPOLATED_RE.fullmatch(v):
         return False
-    for pat in _STRONG_PATTERNS:
-        if pat.search(v):
-            return True
+    # Strong value-shape match against the shared vendor-token catalog
+    # (49 detectors: AWS / GitHub / GitLab / cloud / AI provider keys,
+    # JWTs, etc.) rather than a hand-maintained subset.
+    if find_secret_values([v]):
+        return True
     if _SECRET_KEY_RE.search(name):
         if v.lower() in {"true", "false", "none", "null", "0", "1"}:
             return False
@@ -87,15 +120,20 @@ def _scan_params(spec: dict[str, Any]) -> list[str]:
         if not isinstance(p, dict):
             continue
         name = p.get("name", "")
-        default = p.get("default")
-        if isinstance(name, str) and isinstance(default, str):
-            if _looks_like_secret(name, default):
+        if not isinstance(name, str):
+            continue
+        # ``default`` is the Task/ClusterTask param shape; ``value`` is
+        # the PipelineRun/TaskRun shape. Both can carry a literal secret.
+        for candidate in (p.get("default"), p.get("value")):
+            if isinstance(candidate, str) and _looks_like_secret(name, candidate):
                 out.append(f"param {name}")
+                break
     return out
 
 
 def check(ctx: TektonContext) -> Finding:
     offenders: list[str] = []
+    locations: list[Location] = []
     for doc in ctx.docs:
         spec = doc.data.get("spec") or {}
         if not isinstance(spec, dict):
@@ -108,6 +146,7 @@ def check(ctx: TektonContext) -> Finding:
                         f"{doc.kind}/{doc.name} {step_name(step, idx)} "
                         f"env: {', '.join(hits)}"
                     )
+                    locations.append(doc_location(doc, step))
             st = spec.get("stepTemplate")
             if isinstance(st, dict):
                 hits = _scan_env_list(st.get("env"))
@@ -116,8 +155,10 @@ def check(ctx: TektonContext) -> Finding:
                         f"{doc.kind}/{doc.name} stepTemplate env: "
                         f"{', '.join(hits)}"
                     )
+                    locations.append(doc_location(doc, st))
         for h in _scan_params(spec):
             offenders.append(f"{doc.kind}/{doc.name} {h}")
+            locations.append(doc_location(doc))
     if not ctx.docs:
         return Finding(
             check_id=RULE.id, title=RULE.title, severity=RULE.severity,
@@ -137,4 +178,5 @@ def check(ctx: TektonContext) -> Finding:
         check_id=RULE.id, title=RULE.title, severity=RULE.severity,
         resource="tekton", description=desc,
         recommendation=RULE.recommendation, passed=passed,
+        locations=locations,
     )

@@ -21,7 +21,8 @@ from pathlib import Path
 from typing import Any
 
 from .._yaml_files import load_yaml_files
-from ..base import BaseCheck
+from .._yaml_lines import line_of as _line_of
+from ..base import BaseCheck, Location
 
 #: Kinds we recognize as Tekton resources.
 TEKTON_KINDS: frozenset[str] = frozenset({
@@ -114,7 +115,7 @@ def _to_doc(path: str, idx: int, doc: Any) -> TektonDoc | None:
     )
 
 
-class TektonBaseCheck(BaseCheck):
+class TektonBaseCheck(BaseCheck[TektonContext]):
     """Base class for Tekton rule modules."""
 
     PROVIDER = "tekton"
@@ -125,6 +126,24 @@ class TektonBaseCheck(BaseCheck):
 
 
 # ── Helpers shared by multiple rule modules ────────────────────────────
+
+
+def doc_location(doc: TektonDoc, obj: Any = None) -> Location:
+    """Build a :class:`Location` pointing at *obj* within document *doc*.
+
+    *obj* is the most specific dict available at the offending site (a
+    step, sidecar, workspace, ...); the location uses its source line,
+    falling back to the document's line when *obj* isn't line-tagged.
+    Carries ``doc_index`` so a finding in one document of a multi-doc file
+    resolves to the right resource, matching the shape TKN-001 sets
+    natively.
+    """
+    line = _line_of(obj) if isinstance(obj, dict) else None
+    if line is None:
+        line = _line_of(doc.data)
+    return Location(
+        path=doc.path, start_line=line, end_line=line, doc_index=doc.doc_index,
+    )
 
 
 def task_steps(doc: TektonDoc) -> list[dict[str, Any]]:
@@ -165,17 +184,17 @@ def step_name(step: dict[str, Any], idx: int) -> str:
 
 
 def iter_step_scripts(doc: TektonDoc) -> Iterator[tuple[str, str]]:
-    """Yield ``(step_name, script_text)`` for every step that has a script."""
+    """Yield ``(step_name, script_text)`` for every step that runs code.
+
+    Covers both the ``script:`` field and the exec form
+    (``command: ["sh","-c"], args: [...]``); the command and args are
+    joined so shell-scanning rules see that shape too.
+    """
     for idx, step in enumerate(task_steps(doc)):
         script = step.get("script")
         if isinstance(script, str) and script:
             yield step_name(step, idx), script
-
-
-def iter_step_commands(doc: TektonDoc) -> Iterator[tuple[str, list[str]]]:
-    """Yield ``(step_name, command_args)`` for every step using
-    ``command:`` / ``args:``. Returns the joined arg list as strings."""
-    for idx, step in enumerate(task_steps(doc)):
+            continue
         parts: list[str] = []
         cmd = step.get("command")
         if isinstance(cmd, list):
@@ -184,4 +203,4 @@ def iter_step_commands(doc: TektonDoc) -> Iterator[tuple[str, list[str]]]:
         if isinstance(args, list):
             parts.extend(a for a in args if isinstance(a, str))
         if parts:
-            yield step_name(step, idx), parts
+            yield step_name(step, idx), " ".join(parts)

@@ -372,7 +372,7 @@ class TestARGO006LiteralSecrets:
                 image: alpine:3
                 env:
                   - name: AWS_ACCESS_KEY_ID
-                    value: "AKIAIOSFODNN7EXAMPLE"
+                    value: "AKIAZ3MHALF2TESTHIJK"
         """
         f = run_check(cfg, "ARGO-006")
         assert not f.passed
@@ -399,6 +399,28 @@ class TestARGO006LiteralSecrets:
         """
         f = run_check(cfg, "ARGO-006")
         assert f.passed
+
+    def test_fails_with_modern_token_under_innocuous_name(self):
+        # A GitLab PAT under a non-credential-looking env name, caught by
+        # the shared vendor-token catalog, not the name heuristic.
+        cfg = """
+        apiVersion: argoproj.io/v1alpha1
+        kind: Workflow
+        metadata:
+          name: w
+        spec:
+          entrypoint: main
+          serviceAccountName: ci
+          templates:
+            - name: main
+              container:
+                image: alpine:3
+                env:
+                  - name: REGISTRY_AUTH
+                    value: "glpat-abcdefghij1234567890"
+        """
+        f = run_check(cfg, "ARGO-006")
+        assert not f.passed
 
 
 # ── ARGO-007 activeDeadlineSeconds ────────────────────────────────────
@@ -1033,4 +1055,222 @@ class TestARGO015ArtifactInsecureURL:
                 source: ls
         """
         f = run_check(cfg, "ARGO-015")
+        assert f.passed
+
+
+class TestARGO016ClusterAdminServiceAccount:
+    def test_fails_on_cluster_admin_sa(self):
+        cfg = """
+        apiVersion: argoproj.io/v1alpha1
+        kind: Workflow
+        metadata:
+          name: deploy
+        spec:
+          serviceAccountName: cluster-admin
+          entrypoint: main
+          templates:
+            - name: main
+              container:
+                image: kubectl@sha256:0000000000000000000000000000000000000000000000000000000000000001
+                args: ["kubectl get secrets -A"]
+        """
+        f = run_check(cfg, "ARGO-016")
+        assert not f.passed
+        assert "cluster-admin" in f.description
+
+    def test_fails_on_name_containing_cluster_admin(self):
+        cfg = """
+        apiVersion: argoproj.io/v1alpha1
+        kind: Workflow
+        metadata: {name: d}
+        spec:
+          serviceAccountName: my-cluster-admin-sa
+          entrypoint: main
+          templates:
+            - name: main
+              container: {image: "x@sha256:0000000000000000000000000000000000000000000000000000000000000001"}
+        """
+        f = run_check(cfg, "ARGO-016")
+        assert not f.passed
+
+    def test_fails_on_admin_sa(self):
+        cfg = """
+        apiVersion: argoproj.io/v1alpha1
+        kind: Workflow
+        metadata: {name: d}
+        spec:
+          serviceAccountName: admin
+          entrypoint: main
+          templates:
+            - name: main
+              container: {image: "x@sha256:0000000000000000000000000000000000000000000000000000000000000001"}
+        """
+        f = run_check(cfg, "ARGO-016")
+        assert not f.passed
+
+    def test_passes_on_least_privilege_named_sa(self):
+        cfg = """
+        apiVersion: argoproj.io/v1alpha1
+        kind: Workflow
+        metadata: {name: d}
+        spec:
+          serviceAccountName: ci-deploy-sa
+          entrypoint: main
+          templates:
+            - name: main
+              container: {image: "x@sha256:0000000000000000000000000000000000000000000000000000000000000001"}
+        """
+        f = run_check(cfg, "ARGO-016")
+        assert f.passed
+
+    def test_passes_when_no_sa(self):
+        # No serviceAccountName is ARGO-003's concern, not ARGO-016's.
+        cfg = """
+        apiVersion: argoproj.io/v1alpha1
+        kind: Workflow
+        metadata: {name: d}
+        spec:
+          entrypoint: main
+          templates:
+            - name: main
+              container: {image: "x@sha256:0000000000000000000000000000000000000000000000000000000000000001"}
+        """
+        f = run_check(cfg, "ARGO-016")
+        assert f.passed
+
+
+# ── ARGO-017 resource-template manifest injection ──────────────────────
+
+
+class TestARGO017ResourceManifestInjection:
+    def test_fails_when_apply_manifest_interpolates_param(self):
+        cfg = """
+        apiVersion: argoproj.io/v1alpha1
+        kind: WorkflowTemplate
+        metadata: {name: provision}
+        spec:
+          entrypoint: apply
+          templates:
+            - name: apply
+              inputs: {parameters: [{name: spec}]}
+              resource:
+                action: apply
+                manifest: |
+                  apiVersion: v1
+                  kind: ConfigMap
+                  data: {payload: "{{inputs.parameters.spec}}"}
+        """
+        f = run_check(cfg, "ARGO-017")
+        assert not f.passed
+        assert "WorkflowTemplate/provision:apply" in f.job_anchors
+
+    def test_fails_on_create_with_workflow_param(self):
+        cfg = """
+        apiVersion: argoproj.io/v1alpha1
+        kind: Workflow
+        metadata: {name: w}
+        spec:
+          entrypoint: main
+          templates:
+            - name: main
+              resource:
+                action: create
+                manifest: |
+                  kind: Pod
+                  metadata: {name: "{{workflow.parameters.name}}"}
+        """
+        f = run_check(cfg, "ARGO-017")
+        assert not f.passed
+
+    def test_fails_on_expr_template_param(self):
+        # The expr-template ``{{= ... }}`` form reaches the same text sink.
+        cfg = """
+        apiVersion: argoproj.io/v1alpha1
+        kind: WorkflowTemplate
+        metadata: {name: provision}
+        spec:
+          entrypoint: apply
+          templates:
+            - name: apply
+              inputs: {parameters: [{name: spec}]}
+              resource:
+                action: apply
+                manifest: |
+                  apiVersion: v1
+                  kind: ConfigMap
+                  data: {payload: "{{=inputs.parameters.spec}}"}
+        """
+        f = run_check(cfg, "ARGO-017")
+        assert not f.passed
+
+    def test_fails_on_bracket_index_param(self):
+        # Bracket access ``parameters['spec']`` is the same sink as dotted.
+        cfg = """
+        apiVersion: argoproj.io/v1alpha1
+        kind: WorkflowTemplate
+        metadata: {name: provision}
+        spec:
+          entrypoint: apply
+          templates:
+            - name: apply
+              inputs: {parameters: [{name: spec}]}
+              resource:
+                action: apply
+                manifest: |
+                  apiVersion: v1
+                  kind: ConfigMap
+                  data: {payload: "{{ inputs.parameters['spec'] }}"}
+        """
+        f = run_check(cfg, "ARGO-017")
+        assert not f.passed
+
+    def test_passes_on_fixed_manifest(self):
+        cfg = """
+        apiVersion: argoproj.io/v1alpha1
+        kind: WorkflowTemplate
+        metadata: {name: provision}
+        spec:
+          entrypoint: apply
+          templates:
+            - name: apply
+              resource:
+                action: apply
+                manifest: |
+                  apiVersion: v1
+                  kind: ConfigMap
+                  data: {payload: fixed-value}
+        """
+        f = run_check(cfg, "ARGO-017")
+        assert f.passed
+
+    def test_passes_on_read_only_get_action(self):
+        # ``get`` is read-only: a param in the selector can't create objects.
+        cfg = """
+        apiVersion: argoproj.io/v1alpha1
+        kind: WorkflowTemplate
+        metadata: {name: lookup}
+        spec:
+          templates:
+            - name: get
+              resource:
+                action: get
+                manifest: |
+                  kind: Pod
+                  metadata: {name: "{{inputs.parameters.x}}"}
+        """
+        f = run_check(cfg, "ARGO-017")
+        assert f.passed
+
+    def test_passes_when_no_resource_template(self):
+        cfg = """
+        apiVersion: argoproj.io/v1alpha1
+        kind: Workflow
+        metadata: {name: w}
+        spec:
+          entrypoint: main
+          templates:
+            - name: main
+              container: {image: "x@sha256:0000000000000000000000000000000000000000000000000000000000000001"}
+        """
+        f = run_check(cfg, "ARGO-017")
         assert f.passed

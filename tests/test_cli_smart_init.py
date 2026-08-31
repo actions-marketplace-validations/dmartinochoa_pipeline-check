@@ -60,7 +60,7 @@ class TestSmartInit:
                 passed=False,
             ),
         ]
-        with patch("pipeline_check.cli.Scanner") as MS:
+        with patch("pipeline_check.cli_ops_commands.Scanner") as MS:
             MS.return_value.run.return_value = failing
             MS.return_value.metadata = _mock_meta()
             result = runner.invoke(init_cmd, [])
@@ -77,6 +77,12 @@ class TestSmartInit:
         # Summary lands on stderr.
         assert "[init] top to fix first:" in result.stderr
         assert "GHA-001" in result.stderr
+        # The shortlist renders as the aligned table: GHA-001 has a
+        # registered fixer, so its row carries the "(autofix)" tag (a
+        # string only this shortlist emits), and the resource shows the
+        # basename, not the full ``.github/workflows/`` path.
+        assert "(autofix)" in result.stderr
+        assert "ci.yml" in result.stderr
 
     def test_smart_init_skips_baseline_when_no_failures(
         self, runner, tmp_path, monkeypatch
@@ -94,7 +100,7 @@ class TestSmartInit:
                 passed=True,
             ),
         ]
-        with patch("pipeline_check.cli.Scanner") as MS:
+        with patch("pipeline_check.cli_ops_commands.Scanner") as MS:
             MS.return_value.run.return_value = passing
             MS.return_value.metadata = _mock_meta()
             result = runner.invoke(init_cmd, [])
@@ -111,7 +117,7 @@ class TestSmartInit:
     ):
         monkeypatch.chdir(tmp_path)
         (tmp_path / ".github" / "workflows").mkdir(parents=True)
-        with patch("pipeline_check.cli.Scanner") as MS:
+        with patch("pipeline_check.cli_ops_commands.Scanner") as MS:
             result = runner.invoke(init_cmd, ["--no-scan"])
         assert result.exit_code == 0
         # Scanner never invoked.
@@ -127,7 +133,7 @@ class TestSmartInit:
         self, runner, tmp_path, monkeypatch
     ):
         monkeypatch.chdir(tmp_path)
-        with patch("pipeline_check.cli.Scanner") as MS:
+        with patch("pipeline_check.cli_ops_commands.Scanner") as MS:
             result = runner.invoke(init_cmd, [])
         assert result.exit_code == 0
         MS.assert_not_called()
@@ -139,7 +145,7 @@ class TestSmartInit:
     ):
         monkeypatch.chdir(tmp_path)
         (tmp_path / ".github" / "workflows").mkdir(parents=True)
-        with patch("pipeline_check.cli.Scanner") as MS:
+        with patch("pipeline_check.cli_ops_commands.Scanner") as MS:
             MS.side_effect = RuntimeError("boom")
             result = runner.invoke(init_cmd, [])
         assert result.exit_code == 0

@@ -48,6 +48,13 @@ _PATTERNS: tuple[tuple[str, str, re.Pattern[str]], ...] = (
     # ── Git ──
     ("git-sslverify-false", "git",
      re.compile(r"\bgit\s+config\s+[^\n]*http\.sslverify\s+false\b", re.IGNORECASE)),
+    # Per-invocation inline form: ``git -c http.sslVerify=false <cmd>``.
+    # This is the standard way to disable TLS verification for a single
+    # git call without touching the global config; it is just as risky
+    # as the ``git config`` form because it bypasses cert checking for
+    # the entire duration of that invocation.
+    ("git-inline-sslverify-false", "git",
+     re.compile(r"\bgit\b[^\n]*-c\s+http\.sslverify\s*=\s*false\b", re.IGNORECASE)),
     # Env vars are case-insensitive in the primitive: rule callers
     # hand us lowercased blobs via ``blob_lower``, and the uppercased
     # form in raw docs also matches via IGNORECASE.
@@ -63,8 +70,21 @@ _PATTERNS: tuple[tuple[str, str, re.Pattern[str]], ...] = (
      re.compile(r"\bGOINSECURE\s*=", re.IGNORECASE)),
 
     # ── curl / wget ──
+    # ``-k`` is case-sensitive: lowercase ``-k`` is ``--insecure`` while
+    # uppercase ``-K`` is curl's ``--config`` flag and is unrelated to
+    # TLS.  The ``k`` may sit anywhere inside a bundled short-flag
+    # cluster (``curl -sk``, ``curl -fsSLk``, ``curl -kL``), the dominant
+    # real-world form, so match a single-dash letter run that contains a
+    # lowercase ``k``.  ``--insecure`` and other long flags begin with
+    # ``--`` (an empty letter run before a second dash) and so are left
+    # to the dedicated long-flag pattern below.  ``--insecure`` is kept
+    # case-insensitive because it has no ambiguous uppercase sibling.
+    # Both patterns share the "curl-insecure" kind tag so downstream
+    # consumers get a single label.
     ("curl-insecure", "curl",
-     re.compile(r"\bcurl\b[^\n]*(?:\s-k\b|\s--insecure\b)", re.IGNORECASE)),
+     re.compile(r"\bcurl\b[^\n]*\s-[A-Za-z]*k[A-Za-z]*\b")),  # case-sensitive
+    ("curl-insecure", "curl",
+     re.compile(r"\bcurl\b[^\n]*\s--insecure\b", re.IGNORECASE)),
     ("wget-no-check-certificate", "wget",
      re.compile(r"\bwget\s+[^\n]*--no-check-certificate\b", re.IGNORECASE)),
 

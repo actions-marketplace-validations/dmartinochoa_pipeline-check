@@ -7,6 +7,8 @@ import pytest
 
 from pipeline_check.core.config import load_config
 
+from ._check_ids import registered_ids
+
 # ────────────────────────────────────────────────────────────────────────────
 # Top-level loader + precedence
 # ────────────────────────────────────────────────────────────────────────────
@@ -184,6 +186,32 @@ class TestDuplicateKeys:
         captured = capsys.readouterr()
         assert "duplicate key" in captured.err
 
+    def test_merge_key_override_is_not_a_duplicate(self, tmp_path, monkeypatch, capsys):
+        """A YAML merge key (``<<:``) followed by a local override is valid
+        YAML, not a duplicate. The strict loader must keep the override and
+        the inherited keys, not reject the whole file. Regression: the loader
+        used to flatten the merge first and then trip its own duplicate-key
+        guard, silently dropping the entire config."""
+        _clear_env(monkeypatch)
+        cfg_file = tmp_path / ".pipeline-check.yml"
+        cfg_file.write_text(
+            "pipeline: github\n"
+            "gate:\n"
+            "  <<: &base\n"
+            "    fail_on: HIGH\n"
+            "    min_grade: B\n"
+            "  fail_on: CRITICAL\n"
+        )
+        cfg = load_config(cwd=tmp_path)
+        captured = capsys.readouterr()
+        assert "duplicate key" not in captured.err
+        # The file loaded (the bug returned {} here).
+        assert cfg.get("pipeline") == "github"
+        # The local override wins over the merged value.
+        assert cfg.get("fail_on") == "CRITICAL"
+        # The non-overridden merged key is still inherited.
+        assert cfg.get("min_grade") == "B"
+
 
 # ────────────────────────────────────────────────────────────────────────────
 # Environment variables
@@ -249,16 +277,13 @@ class TestCliIntegration:
             "pipeline: gitlab\n"
         )
         (tmp_path / ".gitlab-ci.yml").write_text("build: {script: [make]}\n")
-        result = CliRunner().invoke(scan, ["--output", "json"])
+        result = CliRunner().invoke(scan, ["--output", "json", "--show-passed"])
         assert result.exit_code in (0, 1), result.output
         payload = json.loads(result.stdout)
         # Config-supplied `pipeline: gitlab` actually took effect — only
         # GitLab check IDs should be emitted.
         emitted = {f["check_id"] for f in payload["findings"]}
-        assert emitted == (
-            {f"GL-{i:03d}" for i in range(1, 36)}
-            | {"TAINT-004", "TAINT-008"}
-        )
+        assert emitted == registered_ids("gitlab")
 
     def test_cli_flag_overrides_config(self, tmp_path, monkeypatch):
         import json
@@ -302,16 +327,13 @@ class TestCliIntegration:
         (tmp_path / ".pipeline-check.yml").write_text("pipeline: aws\n")
         monkeypatch.setenv("PIPELINE_CHECK_PIPELINE", "gitlab")
         (tmp_path / ".gitlab-ci.yml").write_text("build: {script: [make]}\n")
-        result = CliRunner().invoke(scan, ["--output", "json"])
+        result = CliRunner().invoke(scan, ["--output", "json", "--show-passed"])
         assert result.exit_code in (0, 1), result.output
         payload = json.loads(result.stdout)
         # GitLab provider actually ran — AWS would need real creds and
         # emit CB-*/IAM-*/etc. ids, none of which should appear here.
         emitted = {f["check_id"] for f in payload["findings"]}
-        assert emitted == (
-            {f"GL-{i:03d}" for i in range(1, 36)}
-            | {"TAINT-004", "TAINT-008"}
-        )
+        assert emitted == registered_ids("gitlab")
 
     def test_gate_config_file_tightens_gate(self, tmp_path, monkeypatch):
         from click.testing import CliRunner

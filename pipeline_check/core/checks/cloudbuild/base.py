@@ -1,6 +1,6 @@
 """Google Cloud Build context and base check.
 
-Parses ``cloudbuild.yaml`` documents from disk. Each file normalises
+Parses ``cloudbuild.yaml`` documents from disk. Each file normalizes
 into a :class:`Pipeline` wrapping the parsed document; checks
 subclass :class:`CloudBuildBaseCheck` and iterate
 ``self.ctx.pipelines``.
@@ -108,7 +108,7 @@ class CloudBuildContext:
         return ctx
 
 
-class CloudBuildBaseCheck(BaseCheck):
+class CloudBuildBaseCheck(BaseCheck[CloudBuildContext]):
     """Base class for Cloud Build rule modules."""
 
     PROVIDER = "cloudbuild"

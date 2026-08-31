@@ -37,7 +37,7 @@ RULE = Rule(
     esf=("ESF-D-INJECTION",),
     cwe=("CWE-78", "CWE-829"),
     recommendation=(
-        "Sanitise the value at the producer step *before* it lands "
+        "Sanitize the value at the producer step *before* it lands "
         "in ``$GITHUB_OUTPUT``. Once the value is in a job output "
         "the consuming job has no expression-level escaping pass "
         "left, ``${{ needs.<job>.outputs.<name> }}`` substitutes "
@@ -61,19 +61,82 @@ RULE = Rule(
         "downstream job's ``run:`` / ``with:`` body. Each match "
         "emits a TAINT-002 finding with the full chain in the "
         "description.\n\n"
+        "Two propagation hops the engine tracks beyond the "
+        "obvious ``${{ ... }}`` interpolation:\n\n"
+        "1. **Step env-var binding.** A producer step with "
+        "``env: { LABELS: \"${{ toJSON(github.event.pull_request."
+        "labels.*.name) }}\" }`` and a run body that writes "
+        "``echo \"targets=$LABELS\" >> $GITHUB_OUTPUT`` propagates "
+        "taint from the env binding into the output, even though "
+        "the run body's RHS doesn't contain a literal "
+        "``${{ ... }}`` token. Catches the indirect-env shape "
+        "GHA-003 deliberately treats as safe (quoted shell) but "
+        "that still flows into downstream sinks.\n"
+        "2. **Matrix expansion via ``fromJSON``.** "
+        "``strategy.matrix.<axis>: ${{ fromJSON(needs.<job>."
+        "outputs.<name>) }}`` paired with ``${{ matrix.<axis> }}`` "
+        "in a downstream ``run:`` body. Every matrix value the "
+        "expansion produces lands in the consumer's shell "
+        "template. This is the GitHub Security Lab "
+        "matrix-expansion-injection writeup shape that closed "
+        "several public bug bounties.\n\n"
         "Same-step interpolations (the producer's own use of "
         "``${{ github.event.* }}`` inside its ``run:``) are still "
         "GHA-003's responsibility; TAINT-002's value is the "
         "cross-job hop the single-step rule can't see."
     ),
     known_fp=(
-        "Sanitisation between the source interpolation and the "
+        "Sanitization between the source interpolation and the "
         "$GITHUB_OUTPUT write isn't modeled. If the producer "
         "step runs ``echo \"$TITLE\" | tr -dc 'a-zA-Z0-9 '`` "
         "before redirecting to GITHUB_OUTPUT, the consumer is "
         "no longer exploitable but TAINT-002 will still fire; "
         "suppress via ignore-file scoped to the consumer job's "
         "workflow file when this is the deliberate shape.",
+    ),
+    exploit_example=(
+        "# Vulnerable: an ``extract`` job exposes an untrusted\n"
+        "# value via ``jobs.extract.outputs:`` and a downstream\n"
+        "# job consumes it via ``needs.extract.outputs.title``\n"
+        "# directly in a shell command. The cross-job hop is\n"
+        "# usually invisible during PR review because the\n"
+        "# producer and consumer live in different YAML blocks.\n"
+        "jobs:\n"
+        "  extract:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    outputs:\n"
+        "      title: ${{ steps.x.outputs.title }}\n"
+        "    steps:\n"
+        "      - id: x\n"
+        "        run: echo \"title=${{ github.event.issue.title }}\" >> \"$GITHUB_OUTPUT\"\n"
+        "  use:\n"
+        "    needs: extract\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - run: ./generate-notes --title ${{ needs.extract.outputs.title }}\n"
+        "\n"
+        "# Safe: sanitize at the producer + quote at the consumer\n"
+        "# via env-var indirection, same shape as TAINT-001 but\n"
+        "# across the jobs boundary.\n"
+        "jobs:\n"
+        "  extract:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    outputs:\n"
+        "      title: ${{ steps.x.outputs.title }}\n"
+        "    steps:\n"
+        "      - id: x\n"
+        "        env:\n"
+        "          RAW: ${{ github.event.issue.title }}\n"
+        "        run: |\n"
+        "          clean=$(echo \"$RAW\" | tr -dc 'a-zA-Z0-9 -')\n"
+        "          echo \"title=$clean\" >> \"$GITHUB_OUTPUT\"\n"
+        "  use:\n"
+        "    needs: extract\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - env:\n"
+        "          TITLE: ${{ needs.extract.outputs.title }}\n"
+        "        run: ./generate-notes --title \"$TITLE\""
     ),
 )
 
@@ -114,4 +177,5 @@ def check(path: str, doc: dict[str, Any]) -> Finding:
         recommendation=RULE.recommendation, passed=False,
         job_anchors=tuple(anchor_jobs),
         path_evidence=tuple(rendered),
+        taint_flows=tuple(p.to_flow() for p in cross_job_paths),
     )

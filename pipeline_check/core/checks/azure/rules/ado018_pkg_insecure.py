@@ -1,9 +1,8 @@
 """ADO-018, package install from insecure source."""
 from __future__ import annotations
 
-from typing import Any
-
-from ...base import PKG_INSECURE_RE, Finding, Severity, blob_lower
+from ..._primitives.blob_rule import yaml_blob_check
+from ...base import PKG_INSECURE_RE, Severity
 from ...rule import Rule
 
 RULE = Rule(
@@ -24,20 +23,34 @@ RULE = Rule(
         "in a pipeline. These patterns allow man-in-the-middle "
         "injection of malicious packages."
     ),
+    exploit_example=(
+        "# Vulnerable: pip resolves and downloads packages over\n"
+        "# plaintext HTTP. ``--trusted-host`` silences hash\n"
+        "# verification for the named host, so an attacker on the\n"
+        "# network path can swap wheels in flight.\n"
+        "steps:\n"
+        "  - bash: |\n"
+        "      pip install \\\n"
+        "        --index-url http://internal-pypi.example.com/simple \\\n"
+        "        --trusted-host internal-pypi.example.com \\\n"
+        "        -r requirements.txt\n"
+        "\n"
+        "# Safe: HTTPS with the index's certificate validated.\n"
+        "# Internal CA installed in the agent's trust store.\n"
+        "steps:\n"
+        "  - bash: |\n"
+        "      pip install \\\n"
+        "        --index-url https://internal-pypi.example.com/simple \\\n"
+        "        --require-hashes -r requirements.txt"
+    ),
 )
 
 
-def check(path: str, doc: dict[str, Any]) -> Finding:
-    blob = blob_lower(doc)
-    matches = PKG_INSECURE_RE.findall(blob)
-    passed = not matches
-    desc = (
-        "No insecure package install patterns detected in this pipeline."
-        if passed else
+check = yaml_blob_check(
+    RULE,
+    scanner=PKG_INSECURE_RE.findall,
+    pass_desc="No insecure package install patterns detected in this pipeline.",
+    fail_desc=lambda matches: (
         f"Insecure package install detected: {', '.join(matches[:3])}"
-    )
-    return Finding(
-        check_id=RULE.id, title=RULE.title, severity=RULE.severity,
-        resource=path, description=desc,
-        recommendation=RULE.recommendation, passed=passed,
-    )
+    ),
+)

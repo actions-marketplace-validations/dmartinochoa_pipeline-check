@@ -14,7 +14,7 @@ attack paths. Fix any one leg and the chain breaks.
 
 ## Registered chains
 
-Two families:
+Three families:
 
 - **`AC-NNN`** chains are single-provider correlations. They fire on
   a normal `--pipeline <name>` scan.
@@ -24,6 +24,9 @@ Two families:
   `--pipelines github,oci` (plural, comma-separated) instead of
   single-valued `--pipeline`. A single-provider run never sees both
   legs, so the `XPC-*` rules stay quiet there.
+- **`CXPC-NNN`** chains are cross-repo correlations. They fire only
+  during fleet scans (`pipeline_check fleet`), composing findings
+  from different repos in the same fleet corpus.
 
 Run `pipeline_check --list-chains` to see the current set at any
 time. Run `pipeline_check --explain-chain AC-001` for the full
@@ -61,6 +64,21 @@ references, recommendation).
 | [`AC-025`](#ac-025) | Argo param injection lands in a privileged or root step | <span class="pg-sev pg-sev--critical">CRITICAL</span> | argo | [`ARGO-002`](providers/argo.md#argo-002) + [`ARGO-005`](providers/argo.md#argo-005) |
 | [`AC-026`](#ac-026) | Buildkite injection lands on auto-deploy step with no manual gate | <span class="pg-sev pg-sev--critical">CRITICAL</span> | buildkite | [`BK-003`](providers/buildkite.md#bk-003) + [`BK-007`](providers/buildkite.md#bk-007) |
 | [`AC-027`](#ac-027) | Image bakes a credential file AND exposes a remote-access port | <span class="pg-sev pg-sev--critical">CRITICAL</span> | dockerfile | [`DF-013`](providers/dockerfile.md#df-013) + [`DF-019`](providers/dockerfile.md#df-019) |
+| [`AC-028`](#ac-028) | npm worm propagation primitive co-located | <span class="pg-sev pg-sev--critical">CRITICAL</span> | github / npm | [`NPM-004`](providers/npm.md#npm-004) + ([`GHA-048`](providers/github.md#gha-048) or [`GHA-049`](providers/github.md#gha-049)) |
+| [`AC-029`](#ac-029) | Untrusted trigger reaches a long-lived publish credential | <span class="pg-sev pg-sev--critical">CRITICAL</span> | github | ([`GHA-002`](providers/github.md#gha-002) or [`GHA-009`](providers/github.md#gha-009) or [`GHA-013`](providers/github.md#gha-013)) + ([`GHA-050`](providers/github.md#gha-050) or [`GHA-005`](providers/github.md#gha-005)) + ([`GHA-021`](providers/github.md#gha-021) or [`GHA-029`](providers/github.md#gha-029)) |
+| [`AC-030`](#ac-030) | Argo CD anonymous access meets wildcard RBAC | <span class="pg-sev pg-sev--critical">CRITICAL</span> | argocd | [`ARGOCD-009`](providers/argocd.md#argocd-009) + [`ARGOCD-004`](providers/argocd.md#argocd-004) |
+| [`AC-031`](#ac-031) | Argo CD untrusted PR generator meets wildcard source repos | <span class="pg-sev pg-sev--critical">CRITICAL</span> | argocd | [`ARGOCD-006`](providers/argocd.md#argocd-006) + [`ARGOCD-001`](providers/argocd.md#argocd-001) |
+| [`AC-032`](#ac-032) | Cosign-verified-but-not-bound artifact to production deploy | <span class="pg-sev pg-sev--critical">CRITICAL</span> | github | [`GHA-100`](providers/github.md#gha-100) + [`GHA-098`](providers/github.md#gha-098) |
+| [`AC-033`](#ac-033) | Environment-secret laundering to unprotected deploy job | <span class="pg-sev pg-sev--critical">CRITICAL</span> | github | [`TAINT-009`](providers/github.md#taint-009) + [`GHA-098`](providers/github.md#gha-098) |
+| [`AC-034`](#ac-034) | Submodule-poisoned PR to credential exfiltration | <span class="pg-sev pg-sev--critical">CRITICAL</span> | github | [`GHA-102`](providers/github.md#gha-102) + ([`GHA-037`](providers/github.md#gha-037) or [`GHA-004`](providers/github.md#gha-004)) |
+| [`AC-035`](#ac-035) | AI agent is both reviewer and committer | <span class="pg-sev pg-sev--critical">CRITICAL</span> | github | [`GHA-103`](providers/github.md#gha-103) + ([`GHA-104`](providers/github.md#gha-104) or [`GHA-106`](providers/github.md#gha-106)) |
+| [`AC-036`](#ac-036) | Untrusted-code execution with no runtime egress containment | <span class="pg-sev pg-sev--high">HIGH</span> | github | ([`GHA-003`](providers/github.md#gha-003) or [`GHA-016`](providers/github.md#gha-016) or [`GHA-035`](providers/github.md#gha-035) or [`GHA-044`](providers/github.md#gha-044)) + ([`GHA-107`](providers/github.md#gha-107) or [`GHA-108`](providers/github.md#gha-108)) |
+| [`AC-037`](#ac-037) | AI agent applies attacker-influenced IaC to the cloud | <span class="pg-sev pg-sev--critical">CRITICAL</span> | github | ([`GHA-058`](providers/github.md#gha-058) or [`GHA-103`](providers/github.md#gha-103)) + [`GHA-111`](providers/github.md#gha-111) |
+| [`AC-038`](#ac-038) | Untrusted branch reaches OIDC trusted publish | <span class="pg-sev pg-sev--critical">CRITICAL</span> | github | [`GHA-113`](providers/github.md#gha-113) + [`GHA-114`](providers/github.md#gha-114) |
+| [`AC-039`](#ac-039) | Untrusted trigger reaches a bulk-secrets serialization | <span class="pg-sev pg-sev--critical">CRITICAL</span> | github | ([`GHA-002`](providers/github.md#gha-002) or [`GHA-009`](providers/github.md#gha-009) or [`GHA-013`](providers/github.md#gha-013)) + [`GHA-116`](providers/github.md#gha-116) |
+| [`AC-040`](#ac-040) | Prompt-injected agent commits its output with no human review | <span class="pg-sev pg-sev--critical">CRITICAL</span> | github, gitlab, bitbucket, azure, jenkins, harness | ([`GHA-119`](providers/github.md#gha-119) + [`GHA-123`](providers/github.md#gha-123)) or ([`GL-048`](providers/gitlab.md#gl-048) + [`GL-049`](providers/gitlab.md#gl-049)) or ([`BB-036`](providers/bitbucket.md#bb-036) + [`BB-039`](providers/bitbucket.md#bb-039)) or ([`ADO-035`](providers/azure.md#ado-035) + [`ADO-038`](providers/azure.md#ado-038)) or ([`JF-037`](providers/jenkins.md#jf-037) + [`JF-038`](providers/jenkins.md#jf-038)) or ([`HARNESS-008`](providers/harness.md#harness-008) + [`HARNESS-009`](providers/harness.md#harness-009)) |
+| [`AC-041`](#ac-041) | Compromised action executed and exfiltrated credentials in the same run | <span class="pg-sev pg-sev--critical">CRITICAL</span> | runs | [`RUN-006`](providers/runs.md#run-006) + ([`RUN-003`](providers/runs.md#run-003) or [`RUN-004`](providers/runs.md#run-004)) |
+| [`AC-042`](#ac-042) | Fork pipeline executed and exfiltrated credentials in the same pipeline | <span class="pg-sev pg-sev--critical">CRITICAL</span> | gitlab_runs | [`GLRUN-002`](providers/gitlab_runs.md#glrun-002) + ([`GLRUN-003`](providers/gitlab_runs.md#glrun-003) or [`GLRUN-004`](providers/gitlab_runs.md#glrun-004)) |
 
 ### Cross-provider chains (`XPC-NNN`)
 
@@ -74,11 +92,25 @@ one scan.
 | [`XPC-002`](#xpc-002) | Tag mutability across pipeline + runtime (Dockerfile + K8s) | <span class="pg-sev pg-sev--high">HIGH</span> | dockerfile / kubernetes | [`DF-001`](providers/dockerfile.md#df-001) + [`K8S-001`](providers/kubernetes.md#k8s-001) |
 | [`XPC-003`](#xpc-003) | Unverified Helm release flow (chart + image) | <span class="pg-sev pg-sev--high">HIGH</span> | helm / oci | [`HELM-002`](providers/helm.md#helm-002) + [`OCI-002`](providers/oci.md#oci-002) |
 | [`XPC-004`](#xpc-004) | Token persistence on an unprotected default branch | <span class="pg-sev pg-sev--critical">CRITICAL</span> | scm / github | (`SCM-001` &or; `SCM-007`) + [`GHA-019`](providers/github.md#gha-019) |
-| [`XPC-005`](#xpc-005) | End-to-end provenance gap: source unsigned, artifact unsigned | <span class="pg-sev pg-sev--high">HIGH</span> | scm / github | [`SCM-006`](providers/scm.md#scm-006) + [`GHA-006`](providers/github.md#gha-006) |
-| [`XPC-006`](#xpc-006) | Unreviewed fork-PR privilege escalation | <span class="pg-sev pg-sev--critical">CRITICAL</span> | scm / github | [`SCM-002`](providers/scm.md#scm-002) + [`GHA-002`](providers/github.md#gha-002) |
-| [`XPC-007`](#xpc-007) | Unpinned actions with no automated remediation | <span class="pg-sev pg-sev--high">HIGH</span> | scm / github | [`SCM-005`](providers/scm.md#scm-005) + [`GHA-001`](providers/github.md#gha-001) |
+| [`XPC-005`](#xpc-005) | End-to-end provenance gap: source unsigned, artifact unsigned | <span class="pg-sev pg-sev--high">HIGH</span> | scm / github | [`SCM-006`](providers/scm_github.md#scm-006) + [`GHA-006`](providers/github.md#gha-006) |
+| [`XPC-006`](#xpc-006) | Unreviewed fork-PR privilege escalation | <span class="pg-sev pg-sev--critical">CRITICAL</span> | scm / github | [`SCM-002`](providers/scm_github.md#scm-002) + [`GHA-002`](providers/github.md#gha-002) |
+| [`XPC-007`](#xpc-007) | Unpinned actions with no automated remediation | <span class="pg-sev pg-sev--high">HIGH</span> | scm / github | [`SCM-005`](providers/scm_github.md#scm-005) + [`GHA-001`](providers/github.md#gha-001) |
 | [`XPC-008`](#xpc-008) | Unreviewed source ships a mutable runtime image | <span class="pg-sev pg-sev--high">HIGH</span> | scm / dockerfile | (`SCM-001` &or; `SCM-007`) + [`DF-001`](providers/dockerfile.md#df-001) |
 | [`XPC-009`](#xpc-009) | Ingested CVE finding plus mutable runtime image reference | <span class="pg-sev pg-sev--high">HIGH</span> | ingest / dockerfile | `INGEST-trivy-*` / `INGEST-grype-*` / `INGEST-snyk-*` + [`DF-001`](providers/dockerfile.md#df-001) |
+| [`XPC-010`](#xpc-010) | npm cooldown miss meets Dockerfile lifecycle execution | <span class="pg-sev pg-sev--high">HIGH</span> | npm / dockerfile | [`NPM-008`](providers/npm.md#npm-008) + [`DF-024`](providers/dockerfile.md#df-024) |
+
+### Cross-repo chains (`CXPC-NNN`)
+
+These fire only during fleet scans when findings from multiple repos
+are correlated. Each chain pairs a finding in one repo with a finding
+in a different repo in the same fleet corpus.
+
+| ID | Title | Severity | Providers | Triggering checks |
+|----|-------|----------|-----------|-------------------|
+| [`CXPC-001`](#cxpc-001) | npm publish-side cooldown + floating consumer in partner repo | <span class="pg-sev pg-sev--high">HIGH</span> | npm | [`NPM-008`](providers/npm.md#npm-008) + [`NPM-001`](providers/npm.md#npm-001) / [`NPM-002`](providers/npm.md#npm-002) |
+| [`CXPC-002`](#cxpc-002) | Argo CD wildcard sourceRepos + weakened CI gate in partner repo | <span class="pg-sev pg-sev--critical">CRITICAL</span> | argocd / github | [`ARGOCD-001`](providers/argocd.md#argocd-001) + [`GHA-002`](providers/github.md#gha-002) / `TAINT-001` / `TAINT-002` |
+| [`CXPC-003`](#cxpc-003) | Unscoped App token + credential exposure in partner repo | <span class="pg-sev pg-sev--high">HIGH</span> | github | [`GHA-061`](providers/github.md#gha-061) + [`GHA-005`](providers/github.md#gha-005) / [`GHA-008`](providers/github.md#gha-008) |
+| [`CXPC-004`](#cxpc-004) | Tainted reusable workflow producer + consumer in partner repo | <span class="pg-sev pg-sev--high">HIGH</span> | github | `TAINT-001` / `TAINT-002` / `TAINT-003` + `GHA-*` |
 
 ## How chains surface in output
 
@@ -143,14 +175,32 @@ Chains that have opted in to the model expose two extra fields:
   `job_anchors` intersect (or a `TAINT-001` / `TAINT-002` dataflow
   path bridges them). `false` is the default for chains that haven't
   been migrated yet.
+- `via_dataflow: bool` — `true` only when reachability was established
+  by a proven source-to-sink taint path, as opposed to the weaker
+  shared-job co-location fallback. A chain can be `confirmed_reachable`
+  (co-located) without being `via_dataflow` (a proven executable path).
+  CI consumers can gate on the stronger tier with
+  `--chains-require-dataflow`.
+- `via_structural: bool` — `true` when reachability rests on a shared
+  structural identity (the two legs reference the same build artifact /
+  image digest, IAM role, ServiceAccount, or repo) rather than job
+  co-location. Like `via_dataflow` this is a confirmed tier (the rule
+  sets `confirmed_reachable=true` at `HIGH`), but the link is
+  established by identity-matching, not a traced taint path, so it is
+  reported separately. A chain sets at most one of `via_dataflow` /
+  `via_structural`.
 - `reachability_note: str` — a short rationale, e.g.
-  `"injection and ungated deploy share job `release`"`. Empty when
+  `"injection and ungated deploy share job 'release'"`. Empty when
   the chain isn't confirmed reachable.
 
-Confirmed-reachable chains are promoted to `HIGH` confidence
-regardless of their constituent legs and rendered with a
-`✓ Reachability confirmed` badge in the terminal / Markdown / HTML
-outputs.
+Confirmed-reachable chains are promoted to `HIGH` confidence regardless
+of their constituent legs. The reporters render the three tiers
+differently in the terminal / Markdown / HTML outputs: a proven
+dataflow path shows a green `✓ Reachability confirmed (dataflow)` badge
+and a structural-identity link shows a green `✓ Reachability confirmed
+(structural)` badge, while the shared-job fallback shows a weaker
+caution `≈ Co-located (unverified)` badge so a reader is not told
+co-location is a proven path.
 
 Migrated chains:
 
@@ -215,12 +265,22 @@ pipeline_check -p github --chains-require-reachability \
 
 ## Confidence inheritance
 
-A chain is only as trustworthy as its weakest leg. `Chain.confidence`
-is set to the minimum confidence among the triggering findings, if
-one leg comes from a LOW-confidence blob heuristic, the chain is
-reported at LOW confidence even when every other leg is HIGH. The
-`--min-confidence` filter applies the same way to chains as to
-findings.
+An *unconfirmed* chain is only as trustworthy as its weakest leg.
+`Chain.confidence` is set to the minimum confidence among the triggering
+findings, so if one leg comes from a LOW-confidence blob heuristic the
+chain is reported at LOW confidence even when every other leg is HIGH.
+
+A *confirmed-reachable* chain is the exception (see "Confirmed-reachable
+chains are promoted to `HIGH`" above): the reachability evidence (a
+proven dataflow path, or shared-job co-location) is what the chain
+asserts, so its `Chain.confidence` is set to `HIGH` regardless of the
+legs rather than inheriting the minimum.
+
+The `--min-confidence` filter applies the same way to chains as to
+findings, comparing against the resolved `Chain.confidence`: a
+confirmed-reachable chain (HIGH) survives any threshold, while an
+unconfirmed chain carrying a LOW-confidence leg is dropped by
+`--min-confidence MEDIUM`.
 
 ## Adding a new chain
 
@@ -446,7 +506,7 @@ Use lockfile-enforcing install commands (`npm ci`, `pip install -r requirements.
 <span class="pg-sev pg-sev--critical">CRITICAL</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1195.002</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1078.004</span> <span class="pg-tag" title="kill-chain phase">initial-access -> credential-access</span> <span class="pg-tag pg-tag--owasp">github</span>
 </div>
 
-A workflow uses unpinned third-party actions (GHA-001), interpolates untrusted PR context into a shell ``run:`` block (GHA-002), and carries literal secrets in the YAML (GHA-008). Any one of those is exploitable; the combination gives a fork-PR attacker two independent code-execution paths to the same plaintext credentials.
+A workflow uses unpinned third-party actions (GHA-001), checks out the PR head under a ``pull_request_target`` trigger (GHA-002), and carries literal secrets in the YAML (GHA-008). Any one of those is exploitable; the combination gives a fork-PR attacker two independent code-execution paths to the same plaintext credentials.
 
 **References**
 
@@ -985,6 +1045,460 @@ Break the lane at any one leg. Either: (a) re-trigger publish on tag-only / push
 
 </div>
 
+<div class="pg-rule pg-rule--critical" markdown>
+
+### AC-030: Argo CD anonymous access meets wildcard RBAC { #ac-030 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--critical">CRITICAL</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1190</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1078.001</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1098.003</span> <span class="pg-tag" title="kill-chain phase">initial-access -> privilege-escalation -> impact</span> <span class="pg-tag pg-tag--owasp">argocd</span>
+</div>
+
+``argocd-cm`` enables anonymous access (ARGOCD-009) AND ``argocd-rbac-cm`` carries at least one wildcard or ``role:admin`` grant (ARGOCD-004). The combination collapses to a zero-auth control-plane takeover, an unauthenticated caller routes through the anonymous principal into the broad RBAC grant and drives Argo CD's sync engine, the manifests it applies, and every credential its application controllers can read.
+
+**References**
+
+- <https://argo-cd.readthedocs.io/en/stable/operator-manual/rbac/>
+- <https://argo-cd.readthedocs.io/en/stable/operator-manual/security_considerations/>
+- <https://owasp.org/www-project-top-10-ci-cd-security-risks/CICD-SEC-02-Inadequate-Identity-and-Access-Management>
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Break either leg, both is best:
+  1. Disable anonymous access (ARGOCD-009). Remove the ``users.anonymous.enabled`` key from ``argocd-cm`` or set it to ``"false"``. With anonymous off, any wildcard grant in ``argocd-rbac-cm`` still requires an authenticated subject before it can be exercised.
+  2. Scope the RBAC policy (ARGOCD-004). Replace ``p, <role>, *, *, *, allow`` and ``g, <subject>, role:admin`` with explicit per-resource per-project grants tied to a named SSO group. Set ``policy.default`` to a deny / least-privilege role rather than leaving it implicit.
+If anonymous access is a deliberate design choice (e.g. a read-only public dashboard), the RBAC matrix MUST hold no wildcard / admin grants and ``policy.default`` must be the narrowest role the dashboard's use case allows.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--critical" markdown>
+
+### AC-031: Argo CD untrusted PR generator meets wildcard source repos { #ac-031 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--critical">CRITICAL</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1195.002</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1199</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1078.004</span> <span class="pg-tag" title="kill-chain phase">initial-access (fork / contributor PR) -> execution (manifest render) -> impact</span> <span class="pg-tag pg-tag--owasp">argocd</span>
+</div>
+
+An ApplicationSet uses a ``pullRequest`` / ``scmProvider`` generator without a project allowlist (ARGOCD-006) AND at least one AppProject has ``sourceRepos: ['*']`` (ARGOCD-001). Any PR in the matched organization materializes a fresh ``Application`` that inherits the wildcard source-repo allowlist; the attacker's manifests render into the cluster on the next sync. The default out-of-the-box AppProject ships with ``sourceRepos: ['*']``, so the chain fires on most unconfigured Argo CD installs where a PR generator is introduced without a tightened project.
+
+**References**
+
+- <https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/Generators-Pull-Request/>
+- <https://argo-cd.readthedocs.io/en/stable/user-guide/projects/>
+- <https://owasp.org/www-project-top-10-ci-cd-security-risks/CICD-SEC-04-Poisoned-Pipeline-Execution-PPE>
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Break either leg, both is best:
+  1. Tighten the AppProject's ``sourceRepos`` (ARGOCD-001). Replace ``['*']`` with the explicit list of repository URLs the project is allowed to render. Set ``spec.sourceRepos: ['https://github.com/org/payments-*']`` and keep ``sourceNamespaces`` / ``destinations`` similarly scoped.
+  2. Scope the ApplicationSet generator (ARGOCD-006). Pin ``template.spec.project`` to a single static project name (not ``default``, not a ``{{...}}`` placeholder) and constrain the generator with ``filters:`` / ``labels: ['preview']`` / ``branchMatch:`` so PRs from untrusted authors do not synthesize Applications.
+If PR-driven preview environments are a deliberate design, the AppProject the PR-driven Applications resolve to MUST carry an explicit ``sourceRepos`` allowlist and a narrow destination, the chain's premise is unbounded authority, not the PR-preview pattern itself.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--critical" markdown>
+
+### AC-032: Cosign-verified-but-not-bound artifact to production deploy { #ac-032 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--critical">CRITICAL</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1195.002</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1036.005</span> <span class="pg-tag" title="kill-chain phase">initial-access (artifact replacement) -> defense-evasion (unbound cosign verify passes) -> impact (production deploy)</span> <span class="pg-tag pg-tag--owasp">github</span>
+</div>
+
+A ``cosign verify`` invocation lacks certificate identity binding (GHA-100) AND the same workflow deploys without a security-scan gate (GHA-098) or environment protection (GHA-014). An attacker who replaces the artifact can mint their own valid Sigstore signature, pass the unbound verification, and reach production through the unguarded deploy step.
+
+**References**
+
+- <https://docs.sigstore.dev/cosign/verifying/verify/>
+- <https://blog.sigstore.dev/cosign-2-0-released/>
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Break either leg:
+  1. Bind the ``cosign verify`` identity (GHA-100): add ``--certificate-identity(-regexp)`` AND ``--certificate-oidc-issuer(-regexp)`` pinned to the expected build workflow.
+  2. Gate the deploy step (GHA-098): require a security scan or manual approval environment before the deploy job runs.
+Both fixes together give defense-in-depth: even if a future signing key compromise occurs, the deploy gate catches unsigned or unexpected artifacts.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--critical" markdown>
+
+### AC-033: Environment-secret laundering to unprotected deploy job { #ac-033 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--critical">CRITICAL</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1078.004</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1548</span> <span class="pg-tag" title="kill-chain phase">privilege-escalation (environment gate bypass) -> lateral-movement (secret in unprotected job) -> impact (ungated deploy)</span> <span class="pg-tag pg-tag--owasp">github</span>
+</div>
+
+A protected environment secret flows through ``jobs.<id>.outputs:`` to a consumer job without ``environment:`` binding (TAINT-009) AND the workflow deploys without a security-scan gate (GHA-098). The environment's review gates are bypassed: the secret reaches an unprotected job that performs a production deploy.
+
+**References**
+
+- <https://docs.github.com/en/actions/deployment/targeting-different-environments/managing-environments-for-deployment>
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Break either leg:
+  1. Add an ``environment:`` binding to the consuming job (TAINT-009): every job that touches the secret must go through the same protection gate.
+  2. Add a security-scan gate before the deploy step (GHA-098): a scan dependency ensures the deploy job doesn't run without validation.
+Best: restructure the workflow so the secret never leaves the environment-bound job's boundary. Perform the deploy operation in the same protected job.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--critical" markdown>
+
+### AC-034: Submodule-poisoned PR to credential exfiltration { #ac-034 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--critical">CRITICAL</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1195.002</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1078.004</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1059</span> <span class="pg-tag" title="kill-chain phase">initial-access (PR with modified .gitmodules) -> execution (submodule lifecycle scripts) -> credential-access (persisted GITHUB_TOKEN) -> impact (repo write / secret exfiltration)</span> <span class="pg-tag pg-tag--owasp">github</span>
+</div>
+
+A PR-triggered workflow clones submodules from an attacker-controllable ``.gitmodules`` (GHA-102) AND persists credentials or runs with overly broad permissions (GHA-037 / GHA-004). The attacker's submodule code executes with access to the GITHUB_TOKEN at write scope, enabling pushes to the base repo, release creation, or secret exfiltration.
+
+**References**
+
+- <https://github.com/nicksrandall/supply-chain-attack-demo>
+- <https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions>
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Break either leg:
+  1. Remove ``submodules: recursive`` from PR-triggered checkout steps (GHA-102). If submodules are required, validate submodule origins before the build step.
+  2. Set ``persist-credentials: false`` on the checkout step (GHA-037) AND scope ``permissions:`` to the minimum needed (GHA-004). Without a persisted token or write scope, the attacker's code can't push or exfiltrate.
+Both fixes together are best: no submodule clone means no attacker code; no credentials means no blast radius.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--critical" markdown>
+
+### AC-035: AI agent is both reviewer and committer { #ac-035 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--critical">CRITICAL</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1195.002</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1059</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1078.004</span> <span class="pg-tag" title="kill-chain phase">initial-access (prompt injection via untrusted PR / comment) -> execution (AI agent follows the injected instruction) -> defense-evasion (the AI is its own reviewer) -> impact (agent commits / pushes without human review)</span> <span class="pg-tag pg-tag--owasp">github</span>
+</div>
+
+An AI review bot runs on an untrusted trigger without an environment gate (GHA-103) AND the same workflow lets the agent write back, by pushing commits directly (GHA-104) or by holding a write-scoped GITHUB_TOKEN (GHA-106). A prompt-injection payload in the PR or comment makes the AI approve and commit its own malicious change with no human review in the loop.
+
+**References**
+
+- <https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions>
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Break either leg:
+  1. Don't run the AI bot on an untrusted trigger with write scope (GHA-103): move review to ``pull_request`` with a read-only token, or gate the privileged job behind a protected ``environment:``.
+  2. Take away the agent's write path: route its output through a reviewable PR instead of a direct push (GHA-104), and scope the job to ``contents: read`` (GHA-106).
+Best: never let one workflow both feed an agent untrusted input and grant it the ability to write back. Split review (read-only) from any apply step (human-approved).
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+### AC-036: Untrusted-code execution with no runtime egress containment { #ac-036 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1059</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1552</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1041</span> <span class="pg-tag" title="kill-chain phase">execution (attacker-influenced code runs on the runner) -> credential-access (reads the OIDC token / GITHUB_TOKEN / secrets) -> exfiltration (no egress allowlist blocks the outbound connection)</span> <span class="pg-tag pg-tag--owasp">github</span>
+</div>
+
+A workflow runs attacker-influenced or remotely-fetched code (script injection, github-script injection, `curl | bash`, or build-tool lifecycle scripts on an untrusted trigger) AND has no enforced egress allowlist: harden-runner is absent on an OIDC/deploy workflow (GHA-108) or present but in audit mode (GHA-107). The executing code can read the runner's OIDC token, GITHUB_TOKEN, or secrets and exfiltrate them with nothing at the network layer to stop it.
+
+**References**
+
+- <https://www.stepsecurity.io/blog/popular-github-action-tj-actions-changed-files-is-compromised>
+- <https://owasp.org/www-project-top-10-ci-cd-security-risks/CICD-SEC-04-Poisoned-Pipeline-Execution-PPE>
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Break either leg:
+  1. Close the execution primitive: route untrusted input through an `env:` var instead of inlining `${{ github.event.* }}` (GHA-003 / GHA-035), pin and verify actions, and replace `curl | bash` (GHA-016) / untrusted build-tool scripts (GHA-044) with pinned, checksummed installs.
+  2. Add an enforced egress allowlist: run `step-security/harden-runner` as the first step with `egress-policy: block` and an `allowed-endpoints` list (GHA-107 / GHA-108).
+Either fix narrows the chain; do both. Egress blocking is the defense-in-depth layer that contains an execution primitive you missed.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--critical" markdown>
+
+### AC-037: AI agent applies attacker-influenced IaC to the cloud { #ac-037 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--critical">CRITICAL</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1195.002</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1059</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1078.004</span> <span class="pg-tag" title="kill-chain phase">initial-access (prompt injection via untrusted PR / comment) -> execution (AI agent follows the injected instruction and edits the IaC) -> impact (unattended apply realizes the malicious infrastructure in the cloud account, no human review)</span> <span class="pg-tag pg-tag--owasp">github</span>
+</div>
+
+An agentic CLI reads attacker-controlled input, via permission-bypass flags or a PR-checkout topology (GHA-058) or an AI review bot on an untrusted trigger (GHA-103), AND the same workflow runs an agent alongside an unattended IaC apply (GHA-111). A prompt-injection payload in the PR or comment makes the agent write malicious Terraform / CloudFormation that the apply pushes straight to the cloud account, no human reviewing the plan.
+
+**References**
+
+- <https://owasp.org/www-project-top-10-ci-cd-security-risks/CICD-SEC-04-Poisoned-Pipeline-Execution-PPE>
+- <https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions>
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Break either leg:
+  1. Cut the untrusted-input path: don't run an agentic CLI on an untrusted trigger or over a checked-out fork PR, and don't pass attacker-authored text into the prompt (GHA-058 / GHA-103).
+  2. Take the apply away from the agent's job: have the agent only propose changes into a reviewable PR, and run ``terraform apply`` / ``cloudformation deploy`` from a separate job on the merged, human-reviewed plan behind a protected ``environment:`` (GHA-111).
+Best: never let one workflow both feed an agent untrusted input and apply that agent's infrastructure changes unattended.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--critical" markdown>
+
+### AC-038: Untrusted branch reaches OIDC trusted publish { #ac-038 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--critical">CRITICAL</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1195.002</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1199</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1606</span> <span class="pg-tag" title="kill-chain phase">initial-access (push a counterfeit publish workflow to a throwaway branch) -> credential-access (mint an OIDC token the registry accepts because it validates only org + repo + workflow filename) -> impact (publish a malicious package version as the trusted maintainer, no human or branch gate)</span> <span class="pg-tag pg-tag--owasp">github</span>
+</div>
+
+A package-publish job mints an OIDC token with no environment gate (GHA-113) AND the workflow is reachable from an unrestricted push trigger (GHA-114). The publish token mints from any branch with no human or branch gate, so a counterfeit workflow on a throwaway branch publishes a malicious version as the trusted maintainer (the Red Hat npm 'untrusted branch' compromise).
+
+**References**
+
+- <https://labs.boostsecurity.io/articles/trusted-publishing-untrusted-branch-red-hat-npm/>
+- <https://owasp.org/www-project-top-10-ci-cd-security-risks/CICD-SEC-02-Inadequate-Identity-And-Access-Management>
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Break either leg:
+  1. Gate the trigger (GHA-114): publish only from a tag (``on: push: tags:``), a ``release: published`` event, or ``workflow_dispatch``, not a branch push to any ref.
+  2. Gate the token (GHA-113): bind the publish job to a protected ``environment:`` whose deployment-branch rule pins the release ref, so the OIDC token mints only from that ref.
+Best: do both, and keep ``id-token: write`` scoped to the publish job. Either gate alone stops a throwaway branch from minting a publish token.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--critical" markdown>
+
+### AC-039: Untrusted trigger reaches a bulk-secrets serialization { #ac-039 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--critical">CRITICAL</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1195.002</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1552</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1567.002</span> <span class="pg-tag" title="kill-chain phase">initial-access -> credential-access -> exfiltration</span> <span class="pg-tag pg-tag--owasp">github</span>
+</div>
+
+A single workflow combines an attacker-influenced trigger (GHA-002 / GHA-009 / GHA-013) with a step that serializes the whole secrets context via ``toJSON(secrets)`` (GHA-116). An external attacker who opens a fork PR or posts a comment triggers a run that dumps every secret the workflow can read into a world-readable log, the reachable form of the 2025 tj-actions / GhostAction secret-harvesting attacks.
+
+**References**
+
+- <https://blog.gitguardian.com/ghostaction-campaign-3-325-secrets-stolen/>
+- <https://github.com/advisories/ghsa-mrrh-fwg8-r2c3>
+- <https://owasp.org/www-project-top-10-ci-cd-security-risks/CICD-SEC-06-Insufficient-Credential-Hygiene>
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Break the lane at either leg. Either: (a) drop the untrusted trigger from this workflow (re-trigger on ``push`` to the default branch / a tag, or gate ``pull_request_target`` / ``issue_comment`` / ``workflow_run`` behind an environment with required reviewers), or (b) stop serializing the whole secrets context, reference only the specific secrets each step needs by name and prefer short-lived OIDC tokens. Doing (b) is the stronger fix because ``toJSON(secrets)`` is dangerous on any trigger; removing the untrusted trigger alone still leaves the full-secret dump a push away.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--critical" markdown>
+
+### AC-040: Prompt-injected agent commits its output with no human review { #ac-040 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--critical">CRITICAL</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1195.002</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1059</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1078.004</span> <span class="pg-tag" title="kill-chain phase">initial-access (prompt injection via untrusted PR / branch / commit) -> execution (the agent follows the injected instruction and edits the tree) -> defense-evasion (no human reviews the diff) -> impact (the autoland step pushes or merges the agent's change to a branch)</span> <span class="pg-tag pg-tag--owasp">github</span> <span class="pg-tag pg-tag--owasp">gitlab</span> <span class="pg-tag pg-tag--owasp">bitbucket</span> <span class="pg-tag pg-tag--owasp">azure</span> <span class="pg-tag pg-tag--owasp">jenkins</span> <span class="pg-tag pg-tag--owasp">harness</span> <span class="pg-tag pg-tag--owasp">circleci</span>
+</div>
+
+Untrusted PR / branch / commit context reaches an agentic CLI's prompt (GHA-119 / GL-048 / BB-036 / ADO-035 / JF-037 / HARNESS-008 / CC-037) AND the same pipeline lands that agent's output with no review gate (GHA-123 / GL-049 / BB-039 / ADO-038 / JF-038 / HARNESS-009 / CC-038): a git push, an auto-merge, or a push-action. A prompt-injection line in the PR or commit makes the agent write a malicious change that the autoland step commits or merges, with no human between the untrusted input and the push.
+
+**References**
+
+- <https://owasp.org/www-project-top-10-ci-cd-security-risks/CICD-SEC-04-Poisoned-Pipeline-Execution-PPE>
+- <https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions>
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Break either leg:
+  1. Cut the untrusted-input path: don't pass attacker-authored text (a PR title / branch name / commit message) into an agentic CLI's prompt; if the agent must see PR content, run it on a job with no write credentials and no tool / shell access (GHA-119 / GL-048 / BB-036 / ADO-035 / JF-037 / HARNESS-008 / CC-037).
+  2. Take away the no-review landing: have the agent only open a pull request for human review, and drop the in-job ``git push`` / auto-merge / push-action (GHA-123 / GL-049 / BB-039 / ADO-038 / JF-038 / HARNESS-009 / CC-038).
+Best: never let one pipeline both feed an agent untrusted input and land that agent's output without a human reviewing the diff.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--critical" markdown>
+
+### AC-041: Compromised action executed and exfiltrated credentials in the same run { #ac-041 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--critical">CRITICAL</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1195.002</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1552</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1567</span> <span class="pg-tag" title="kill-chain phase">initial-access (a compromised third-party action is pulled into the run) -> execution (the malicious action runs) -> credential-access (a secret is exposed in the run, or an OIDC token is minted) -> exfiltration (the compromised action ships the credential out, the leak / mint is the evidence)</span> <span class="pg-tag pg-tag--owasp">runs</span>
+</div>
+
+A known-compromised action actually executed in a workflow run (RUN-006) AND the same run exposed a credential: a secret-shaped string leaked in its logs (RUN-003) or it minted a cloud OIDC token (RUN-004). Both legs on one run is the run-history confirmation that the supply-chain attack succeeded, the malicious action ran and a credential left the run in the same execution (the tj-actions/changed-files pattern).
+
+**References**
+
+- <https://www.cve.org/CVERecord?id=CVE-2025-30066>
+- <https://owasp.org/www-project-top-10-ci-cd-security-risks/CICD-SEC-04-Poisoned-Pipeline-Execution-PPE>
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Respond as to a confirmed breach: rotate every credential and token the affected run could reach (the leaked secret, the federated cloud role for an OIDC mint, the GITHUB_TOKEN), review the run's outbound network and any pushes / deployments it made, and audit downstream systems the credential can reach. Then close the entry point: pin the action to a known-good commit SHA (GHA-040 / RUN-006) and stop the credential reaching the log (RUN-003) or scope the OIDC role's trust policy (RUN-004).
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--critical" markdown>
+
+### AC-042: Fork pipeline executed and exfiltrated credentials in the same pipeline { #ac-042 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--critical">CRITICAL</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1199</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1552</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1078.004</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1567</span> <span class="pg-tag" title="kill-chain phase">initial-access (a fork merge request opens, untrusted contributor code) -> execution (its pipeline runs in the project's CI) -> credential-access (a secret leaks in the job trace, or the pipeline mints a cloud OIDC token) -> exfiltration (the untrusted code ships the credential out, the leak / mint is the evidence)</span> <span class="pg-tag pg-tag--owasp">gitlab_runs</span>
+</div>
+
+A fork merge-request pipeline actually executed in the project's CI (GLRUN-002) AND the same pipeline exposed a credential: a secret-shaped string leaked in its job trace past GitLab's masking (GLRUN-003) or it minted a cloud OIDC token (GLRUN-004). Both legs on one pipeline is the run-history confirmation that untrusted fork code reached a credential in a single execution, the GitLab face of the poisoned-pipeline-execution class confirmed to have succeeded.
+
+**References**
+
+- <https://owasp.org/www-project-top-10-ci-cd-security-risks/CICD-SEC-04-Poisoned-Pipeline-Execution-PPE>
+- <https://docs.gitlab.com/ee/ci/pipelines/merge_request_pipelines.html#run-pipelines-in-the-parent-project-for-merge-requests-from-a-forked-project>
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Respond as to a confirmed breach: rotate every credential and token the affected pipeline could reach (the leaked secret, the federated cloud role for an OIDC mint, the CI job token), review the pipeline's outbound network and any pushes / deployments it made, and audit downstream systems the credential can reach. Then close the entry point: keep protected CI/CD variables and runners away from fork merge-request pipelines and require approval before they run (GLRUN-002), stop the credential reaching the trace (GLRUN-003) or scope the cloud trust policy so a fork ref cannot assume the role (GLRUN-004).
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+### CXPC-001: npm publish-side cooldown + floating consumer in partner repo { #cxpc-001 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1195.002</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1078.004</span> <span class="pg-tag" title="kill-chain phase">initial-access -> lateral-movement</span> <span class="pg-tag pg-tag--owasp">npm</span>
+</div>
+
+One repo recently published an npm package (NPM-008) and another repo in the fleet consumes npm packages with a floating version range (NPM-001) or without integrity hashes (NPM-002). If the publish-side repo is compromised, the floating consumer pulls the poisoned version on the next install.
+
+**References**
+
+- <https://docs.npmjs.com/cli/v10/configuring-npm/package-lock-json>
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Pin exact versions in the consumer repo's package.json and commit a lock file with integrity hashes (NPM-002). On the publish side, enforce 2FA-on-publish and review the cooldown window flagged by NPM-008.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--critical" markdown>
+
+### CXPC-002: Argo CD wildcard sourceRepos + weakened CI gate in partner repo { #cxpc-002 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--critical">CRITICAL</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1195.002</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1199</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1078.004</span> <span class="pg-tag" title="kill-chain phase">initial-access -> execution -> persistence</span> <span class="pg-tag pg-tag--owasp">argocd</span> <span class="pg-tag pg-tag--owasp">github</span>
+</div>
+
+An Argo CD AppProject accepts any source repo (ARGOCD-001) and a partner repo has a weakened CI gate (GHA-002 / TAINT-001 / TAINT-002) that allows PR-level code injection. An attacker's PR in the weakened repo lands code that Argo CD's wildcard trust deploys into the cluster.
+
+**References**
+
+- <https://argo-cd.readthedocs.io/en/stable/user-guide/projects/>
+- <https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/>
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Restrict the AppProject's ``sourceRepos`` to an explicit allowlist of trusted repositories. In the partner repo, fix the CI gate: avoid checking out PR-head code in ``pull_request_target`` workflows (GHA-002) and remediate tainted dataflows (TAINT-001 / TAINT-002).
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+### CXPC-003: Unscoped App token + credential exposure in partner repo { #cxpc-003 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1078.004</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1098.001</span> <span class="pg-tag" title="kill-chain phase">credential-access -> lateral-movement</span> <span class="pg-tag pg-tag--owasp">github</span>
+</div>
+
+One repo mints an unscoped GitHub App token (GHA-061) whose installation likely covers other repos in the same org. A partner repo exposes credentials (GHA-005 / GHA-008). The App token from the first repo can reach the second; credential exposure in the second gives the attacker a lateral-movement foothold.
+
+**References**
+
+- <https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app>
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Scope the App token in repo A by passing an explicit ``permissions`` map to the token-mint action (GHA-061). In repo B, rotate and remove plaintext credentials (GHA-005) and hardcoded secrets (GHA-008), replacing them with GitHub Actions secrets or OIDC federation.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+### CXPC-004: Tainted reusable workflow producer + GitHub Actions consumer in partner repo { #cxpc-004 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1195.002</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1199</span> <span class="pg-tag" title="kill-chain phase">initial-access -> execution</span> <span class="pg-tag pg-tag--owasp">github</span>
+</div>
+
+One repo has a workflow with an exploitable taint path (TAINT-001 / TAINT-002 / TAINT-003) and another repo in the fleet uses GitHub Actions. If the consumer calls the producer's reusable workflows, it inherits the taint. The cross-repo split means the consumer's maintainers may not see the vulnerability.
+
+**References**
+
+- <https://docs.github.com/en/actions/sharing-automations/reusing-workflows>
+- <https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/>
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Remediate the taint path in the producer repo's workflow (TAINT-001 / TAINT-002 / TAINT-003). Consumer repos should pin reusable workflow references to a specific commit SHA and review the producer's workflow for untrusted-input interpolation before calling it.
+
+</div>
+
+</div>
+
 <div class="pg-rule pg-rule--high" markdown>
 
 ### XPC-001: Deploy without verifiable provenance (workflow + image) { #xpc-001 }
@@ -1226,6 +1740,34 @@ Two fixes; both are needed to close the chain:
   1. Pin the Dockerfile's ``FROM`` to a digest (``FROM python:3.12@sha256:<hex>``) (DF-001). The build then uses the exact bytes the digest names; no upstream tag-rewrite changes the vulnerability set.
   2. Update the digest to a known-clean upstream version the SARIF scanner clears. Capture the digest with ``crane digest`` or ``docker buildx imagetools inspect`` and update the ``FROM`` line in version control. The next build then uses the patched image AND keeps the snapshot consistent across subsequent runs.
 Optional but valuable: wire Dependabot or Renovate to auto-PR the digest update when a new clean version publishes (SCM-005 + this chain together close the loop).
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+### XPC-010: npm cooldown miss meets Dockerfile lifecycle execution { #xpc-010 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1195.002</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1078.004</span> <span class="pg-tag" title="MITRE ATT&CK technique">MITRE T1546</span> <span class="pg-tag" title="kill-chain phase">supply-chain (fresh upstream release) -> execution (lifecycle script in build container)</span> <span class="pg-tag pg-tag--owasp">npm</span> <span class="pg-tag pg-tag--owasp">dockerfile</span>
+</div>
+
+A ``package.json`` pinned a freshly published exact dependency version (NPM-008) AND the Dockerfile's install step runs lifecycle scripts (DF-024). The next image build executes the new release's ``postinstall`` with the builder's NPM_TOKEN / GH_TOKEN / AWS_* in scope, the consumer-side Shai-Hulud / TanStack blast radius. Either leg alone is hygiene debt; together they are the execution primitive lined up with a time window the registry has not yet had a chance to close.
+
+**References**
+
+- <https://www.wiz.io/blog/shai-hulud-npm-supply-chain-attack>
+- <https://owasp.org/www-project-top-10-ci-cd-security-risks/CICD-SEC-03-Dependency-Chain-Abuse>
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Two fixes; either alone narrows the chain, both close it:
+  1. Hold back the bump, pin the dependency to the most recent release older than the cooldown window (NPM-008). ``pipeline_check --pipeline npm --resolve-remote`` will surface the publish dates so the team can choose a safe anchor.
+  2. Disable lifecycle scripts in the Dockerfile install (DF-024). Pass ``--ignore-scripts`` on every ``npm`` / ``yarn`` / ``pnpm install`` line, or set ``ENV NPM_CONFIG_IGNORE_SCRIPTS=true`` / ``ENV YARN_ENABLE_SCRIPTS=false`` before the install. Re-enable per package via a scoped ``RUN npm rebuild <pkg>`` line only when a native-module build genuinely needs it.
+Best to fix both, the cooldown gate is a default-safe policy applied at bump time, and ``--ignore-scripts`` is the durable execution-primitive control that protects every other dep too.
 
 </div>
 

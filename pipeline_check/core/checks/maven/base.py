@@ -155,6 +155,7 @@ class MavenContext:
         #: dict is empty so the rule's absence isn't a CI failure
         #: for users on the default no-network path.
         self.publish_times: dict[str, dict[str, _dt.datetime]] = {}
+        self.osv_advisories: dict[tuple[str, str], list[Any]] = {}
 
     @classmethod
     def from_path(cls, path: str | Path) -> MavenContext:
@@ -193,6 +194,14 @@ class MavenContext:
                 cross_file = _discover_gradle_cross_file_properties(
                     f, scan_dir,
                 )
+                # rootProject.ext.X / rootProject.X accessors used by
+                # subprojects in a multi-project layout. Keys are
+                # disjoint from the bare-name space gradle.properties
+                # populates, so the merge order is irrelevant here,
+                # both maps contribute non-overlapping namespaces.
+                cross_file.update(
+                    _discover_gradle_root_project_properties(f, scan_dir),
+                )
                 catalog = _discover_gradle_version_catalog(f, scan_dir)
                 pf = _parse_gradle(
                     str(f),
@@ -213,7 +222,7 @@ class MavenContext:
         return ctx
 
 
-class MavenBaseCheck(BaseCheck):
+class MavenBaseCheck(BaseCheck[MavenContext]):
     """Base class for maven rule modules."""
 
     PROVIDER = "maven"
@@ -262,17 +271,37 @@ def _line_of(text: str, needle: str, start: int = 0) -> int:
     return text[:idx].count("\n") + 1
 
 
+#: Reject POM/settings bodies above this size before handing them to
+#: the XML parser. Measured in characters, not bytes: ``_parse_pom``
+#: already holds the decoded ``str`` and ``ElementTree`` parses that, so
+#: character count is what bounds the parser's work (the NuGet loader's
+#: ``_MAX_XML_BYTES`` checks on-disk size because it guards before read).
+_MAX_POM_CHARS = 10 * 1024 * 1024  # ~10 MB
+
+#: A ``pom.xml`` / ``settings.xml`` never legitimately carries a DTD.
+#: stdlib ``ElementTree`` expands internal entities, so a crafted
+#: ``<!DOCTYPE ...>`` with nested ``<!ENTITY>`` definitions is a
+#: "billion laughs" memory-exhaustion vector. Refuse to parse it.
+_DOCTYPE_RE = re.compile(r"<!(?:DOCTYPE|ENTITY)\b", re.IGNORECASE)
+
+
 def _parse_pom(path: str, text: str) -> PomFile:
     """Parse a ``pom.xml`` / ``settings.xml`` body into a :class:`PomFile`.
 
-    On a parse error returns a ``PomFile(parsed_ok=False)`` so the
-    caller can skip with a warning. The text is preserved on the
-    returned object so rules can run line-number lookups against the
-    original source.
+    On a parse error (or a body that is oversized or carries a DTD)
+    returns a ``PomFile(parsed_ok=False)`` so the caller can skip with a
+    warning. The text is preserved on the returned object so rules can
+    run line-number lookups against the original source.
     """
+    if len(text) > _MAX_POM_CHARS or _DOCTYPE_RE.search(text):
+        return PomFile(path=path, text=text, parsed_ok=False)
     try:
         root = ET.fromstring(text)
-    except ET.ParseError:
+    except (ET.ParseError, RecursionError, MemoryError):
+        # ``ET.ParseError`` is the normal malformed-XML signal;
+        # ``RecursionError`` / ``MemoryError`` guard a pathological tree
+        # (deep nesting / expansion) from escaping as an uncaught crash,
+        # the same degrade-don't-raise contract the YAML / JSON loaders hold.
         return PomFile(path=path, text=text, parsed_ok=False)
 
     root_tag = _strip_ns(root.tag)
@@ -716,7 +745,7 @@ def _parse_versions_catalog(text: str) -> VersionCatalog:
     out: VersionCatalog = {}
     try:
         raw = tomllib.loads(text)
-    except tomllib.TOMLDecodeError:
+    except (tomllib.TOMLDecodeError, RecursionError, MemoryError):
         return out
     if not isinstance(raw, dict):
         return out
@@ -891,6 +920,100 @@ def _discover_gradle_cross_file_properties(
         except (OSError, UnicodeDecodeError):
             continue
         out.update(_parse_gradle_properties(text))
+    return out
+
+
+#: Settings-script filenames Gradle uses to mark the root of a
+#: multi-project build. Their presence alone identifies the root dir,
+#: subprojects never carry a settings script of their own.
+_SETTINGS_GRADLE_NAMES: tuple[str, ...] = (
+    "settings.gradle", "settings.gradle.kts",
+)
+
+
+def _find_gradle_root_dir(
+    gradle_path: Path, scan_root: Path,
+) -> Path | None:
+    """Walk upward from *gradle_path*'s parent to *scan_root* looking
+    for a ``settings.gradle`` / ``settings.gradle.kts`` file. The
+    closest ancestor (or self) that contains one is the multi-project
+    root directory in Gradle's sense.
+
+    Returns ``None`` when no settings script is found within the
+    scanned tree, the project is single-project or the scan root is
+    inside a subproject and the settings file lives outside it.
+    """
+    try:
+        scan_resolved = scan_root.resolve()
+        cur = gradle_path.resolve().parent
+    except OSError:
+        return None
+    seen: set[Path] = set()
+    while True:
+        if cur in seen:
+            return None
+        seen.add(cur)
+        if any((cur / name).is_file() for name in _SETTINGS_GRADLE_NAMES):
+            return cur
+        if cur == scan_resolved:
+            return None
+        parent = cur.parent
+        if parent == cur:
+            return None
+        try:
+            cur.relative_to(scan_resolved)
+        except ValueError:
+            return None
+        cur = parent
+
+
+def _discover_gradle_root_project_properties(
+    gradle_path: Path, scan_root: Path,
+) -> dict[str, str]:
+    """Extract ``ext.X`` properties from the multi-project root's
+    ``build.gradle`` / ``build.gradle.kts`` and return them keyed
+    under both ``rootProject.ext.<X>`` and ``rootProject.<X>``.
+
+    A Gradle subproject reads root-defined properties through the
+    ``rootProject`` accessor. The two key shapes are both common
+    in the wild, ``${rootProject.ext.foo}`` is the spec-compliant
+    Groovy/Kotlin form, ``${rootProject.foo}`` is the shortened form
+    Gradle exposes once an ``ext`` property is defined. We populate
+    both so a subproject's version-spec interpolation resolves
+    regardless of which accessor the author wrote.
+
+    Returns an empty dict when:
+      * no settings.gradle* is found upward from *gradle_path*
+        (single-project layout, or scan rooted inside a subproject),
+      * the root's directory carries no build.gradle*,
+      * the root's build script declares no ext properties, or
+      * *gradle_path* itself IS the root's build script — in that
+        case ``_parse_gradle``'s in-file extraction already covers
+        the same properties under their bare names, and adding the
+        ``rootProject.*`` aliases would just shadow them with the
+        same value.
+    """
+    root_dir = _find_gradle_root_dir(gradle_path, scan_root)
+    if root_dir is None:
+        return {}
+    try:
+        gradle_dir = gradle_path.resolve().parent
+    except OSError:
+        return {}
+    if gradle_dir == root_dir:
+        return {}
+    out: dict[str, str] = {}
+    for name in ("build.gradle", "build.gradle.kts"):
+        root_build = root_dir / name
+        if not root_build.is_file():
+            continue
+        try:
+            text = root_build.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for prop_name, value in _extract_gradle_properties(text).items():
+            out[f"rootProject.ext.{prop_name}"] = value
+            out[f"rootProject.{prop_name}"] = value
     return out
 
 

@@ -64,6 +64,39 @@ RULE = Rule(
         "the specific step with a rationale that documents the "
         "namespacing.",
     ),
+    exploit_example=(
+        "# Vulnerable: ``actions/cache`` keys on a PR-controllable\n"
+        "# value (``github.event.pull_request.title`` /\n"
+        "# ``github.head_ref`` / similar). A fork PR sets the\n"
+        "# title (or branch name) to match a key that a trusted-\n"
+        "# context build writes; the trusted build reads the PR's\n"
+        "# poisoned cache and ingests attacker-controlled bytes.\n"
+        "jobs:\n"
+        "  build:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - uses: actions/checkout@<sha>\n"
+        "      - uses: actions/cache@<sha>\n"
+        "        with:\n"
+        "          path: ~/.npm\n"
+        "          key: npm-${{ github.head_ref }}   # PR-controllable\n"
+        "      - run: npm ci\n"
+        "\n"
+        "# Safe: key on commit-stable inputs only — a hash of the\n"
+        "# lockfile is unique enough and not attacker-controllable\n"
+        "# across PR boundaries. Fork PR caches are namespaced\n"
+        "# separately and never read by trusted-context builds.\n"
+        "jobs:\n"
+        "  build:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - uses: actions/checkout@<sha>\n"
+        "      - uses: actions/cache@<sha>\n"
+        "        with:\n"
+        "          path: ~/.npm\n"
+        "          key: npm-${{ hashFiles('package-lock.json') }}\n"
+        "      - run: npm ci"
+    ),
 )
 
 
@@ -95,15 +128,17 @@ def _uses_cache(uses: Any) -> bool:
     return bool(_CACHE_USES_RE.match(uses.strip()))
 
 
+_UNTRUSTED_BOUNDARY_RE = {
+    token: re.compile(re.escape(token) + r"(?![A-Za-z0-9_])")
+    for token in _UNTRUSTED_CONTEXTS
+}
+
+
 def _matches_untrusted(value: Any) -> list[str]:
     """Return the list of untrusted-context tokens in *value*."""
     if not isinstance(value, str):
         return []
-    hits: list[str] = []
-    for token in _UNTRUSTED_CONTEXTS:
-        if token in value:
-            hits.append(token)
-    return hits
+    return [token for token, pat in _UNTRUSTED_BOUNDARY_RE.items() if pat.search(value)]
 
 
 def check(path: str, doc: dict[str, Any]) -> Finding:

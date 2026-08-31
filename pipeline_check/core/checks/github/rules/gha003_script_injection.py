@@ -1,12 +1,14 @@
 """GHA-003, `run:` blocks must not interpolate attacker-controllable context."""
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from ..._primitives.tainted_variables import (
     has_direct_taint,
     has_unsafe_reference,
 )
+from ..._yaml_lines import line_of as _line_of
 from ...base import Finding, Location, Severity
 from ...rule import Rule
 from ..base import iter_jobs, iter_steps, step_location
@@ -96,8 +98,58 @@ def _tainted_env_vars(env_block: Any) -> set[str]:
 
 def _gha_ref_pattern(name: str) -> str:
     """Match every GHA reference syntax for *name*: ``$VAR``, ``${VAR}``,
-    or ``${{ env.VAR }}``."""
-    return rf"(?:\$\{{{name}\}}|\${name}\b|\${{{{[\s]*env\.{name}[\s]*}}}})"
+    or ``${{ env.VAR }}``.
+
+    ``name`` is a user-authored env-var key and can contain regex
+    metacharacters (``(``, ``[``, ``|``, ...). It must be escaped before
+    interpolation, otherwise an env var like ``"A("`` compiles to an
+    invalid pattern and raises ``re.error``, aborting the scan. The
+    sibling provider rules (GL-002, BB-002, ADO-002, GHA-072) all
+    escape; this one is matched to them.
+    """
+    safe = re.escape(name)
+    return rf"(?:\$\{{{safe}\}}|\${safe}\b|\${{{{[\s]*env\.{safe}[\s]*}}}})"
+
+
+def _service_sink_taints(
+    job_id: str, job: dict[str, Any],
+) -> list[str]:
+    """Return offender labels for ``services.<name>.options`` and
+    ``services.<name>.env.<key>`` values that directly interpolate an
+    untrusted context expression.
+
+    GitHub passes ``services.<name>.options`` straight to the
+    runner's ``docker create`` argv, and ``services.<name>.env``
+    entries become container env vars at create time. Both surfaces
+    are docker-shell sinks for untrusted ``${{ ... }}`` expansions
+    (mirrors zizmor proposal #1128). Indirect taint via workflow
+    env vars doesn't apply, the runner doesn't expand ``$NAME`` in
+    these positions.
+    """
+    services = job.get("services")
+    if not isinstance(services, dict):
+        return []
+    out: list[str] = []
+    for svc_name, svc in services.items():
+        if not isinstance(svc, dict):
+            continue
+        options = svc.get("options")
+        if (
+            isinstance(options, str)
+            and UNTRUSTED_CONTEXT_RE.search(options)
+        ):
+            out.append(f"{job_id}.services.{svc_name}.options")
+        env_block = svc.get("env")
+        if isinstance(env_block, dict):
+            for env_key, env_val in env_block.items():
+                if (
+                    isinstance(env_val, str)
+                    and UNTRUSTED_CONTEXT_RE.search(env_val)
+                ):
+                    out.append(
+                        f"{job_id}.services.{svc_name}.env.{env_key}"
+                    )
+    return out
 
 
 def check(path: str, doc: dict[str, Any]) -> Finding:
@@ -112,6 +164,18 @@ def check(path: str, doc: dict[str, Any]) -> Finding:
     for job_id, job in iter_jobs(doc):
         # Job-level env inherits workflow-level taint.
         job_tainted = wf_tainted | _tainted_env_vars(job.get("env"))
+        # services.<name>.options and services.<name>.env.<key> are
+        # docker-shell sinks. Same direct-taint shape as a ``run:``
+        # block; no env-var indirection (the runner doesn't expand
+        # ``$NAME`` in these positions).
+        for service_label in _service_sink_taints(job_id, job):
+            offenders.append(service_label)
+            line = _line_of(job.get("services"))
+            if line is not None:
+                locations.append(Location(
+                    path=path, start_line=line, end_line=line,
+                ))
+            anchor_jobs[job_id] = None
         for idx, step in enumerate(iter_steps(job)):
             run = step.get("run")
             if not isinstance(run, str):
@@ -120,12 +184,7 @@ def check(path: str, doc: dict[str, Any]) -> Finding:
             # Step-level env inherits job + workflow taint.
             step_tainted = job_tainted | _tainted_env_vars(step.get("env"))
             # 1. Direct interpolation of untrusted context expressions.
-            if has_direct_taint(lines, UNTRUSTED_CONTEXT_RE):
-                offenders.append(f"{job_id}[{idx}]")
-                locations.append(step_location(path, step))
-                anchor_jobs[job_id] = None
-            # 2. Indirect: tainted env var referenced in run block.
-            elif step_tainted and has_unsafe_reference(
+            if has_direct_taint(lines, UNTRUSTED_CONTEXT_RE) or step_tainted and has_unsafe_reference(
                 lines, step_tainted, ref_pattern=_gha_ref_pattern
             ):
                 offenders.append(f"{job_id}[{idx}]")

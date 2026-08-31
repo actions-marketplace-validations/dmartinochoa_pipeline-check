@@ -5,10 +5,11 @@ from ...base import (
     PKG_INSECURE_RE,
     PKG_NO_LOCKFILE_RE,
     Finding,
+    Location,
     Severity,
 )
 from ...rule import Rule
-from ..base import TektonContext, iter_step_scripts
+from ..base import TektonContext, doc_location, iter_step_scripts
 
 RULE = Rule(
     id="TKN-014",
@@ -33,8 +34,8 @@ RULE = Rule(
         "``PKG_INSECURE_RE`` and ``PKG_NO_LOCKFILE_RE`` from "
         "``checks/base.py``. Same rule pack already exists for "
         "GHA (``GHA-021`` / ``GHA-022``), GitLab (``GL-021`` / "
-        "``GL-022``), Bitbucket / Azure DevOps / Jenkins / "
-        "CircleCI / Cloud Build / Buildkite / Drone. Tekton "
+        "``GL-022``), Bitbucket Pipelines / Azure DevOps / Jenkins / "
+        "CircleCI / Google Cloud Build / Buildkite / Drone. Tekton "
         "was a gap; this closes it. Only ``Task`` and "
         "``ClusterTask`` documents are scanned because that's "
         "where Tekton step scripts live."
@@ -46,11 +47,37 @@ RULE = Rule(
         "lockfile. Suppress via ignore-file scoped to the "
         "specific step name.",
     ),
+    exploit_example=(
+        "# Vulnerable: a Task step script with an unpinned install.\n"
+        "apiVersion: tekton.dev/v1\n"
+        "kind: Task\n"
+        "metadata:\n"
+        "  name: build\n"
+        "spec:\n"
+        "  steps:\n"
+        "    - name: deps\n"
+        "      image: node:20\n"
+        "      script: |\n"
+        "        npm install\n"
+        "        npm run build\n"
+        "\n"
+        "# Attack: `npm install` resolves dependencies fresh against the\n"
+        "# registry instead of honoring the committed lockfile, so a\n"
+        "# newly published malicious version (typosquat, dependency-\n"
+        "# confusion, or a compromised maintainer) is pulled into the\n"
+        "# build and runs in the step's pod with its mounted\n"
+        "# credentials.\n"
+        "\n"
+        "# Safe: install from the lockfile exactly.\n"
+        "        npm ci\n"
+        "        npm run build"
+    ),
 )
 
 
 def check(ctx: TektonContext) -> Finding:
     offenders: list[str] = []
+    locations: list[Location] = []
     examined = 0
     for doc in ctx.docs:
         if doc.kind not in ("Task", "ClusterTask"):
@@ -66,6 +93,7 @@ def check(ctx: TektonContext) -> Finding:
                     f"{doc.kind}/{doc.name} {sname}: [{kind}] "
                     f"{hit.group(0)[:50].strip()}"
                 )
+                locations.append(doc_location(doc))
     if examined == 0:
         return Finding(
             check_id=RULE.id, title=RULE.title, severity=RULE.severity,
@@ -87,4 +115,5 @@ def check(ctx: TektonContext) -> Finding:
         check_id=RULE.id, title=RULE.title, severity=RULE.severity,
         resource="tekton", description=desc,
         recommendation=RULE.recommendation, passed=passed,
+        locations=locations,
     )

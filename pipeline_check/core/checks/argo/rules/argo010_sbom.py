@@ -1,9 +1,9 @@
 """ARGO-010. Argo workflow should emit an SBOM for produced artifacts."""
 from __future__ import annotations
 
-from ...base import Finding, Severity, has_sbom, produces_artifacts
+from ...base import NO_ARTIFACT_DESC, Finding, Severity, has_sbom, produces_artifacts
 from ...rule import Rule
-from ..base import ArgoContext
+from ..base import ArgoContext, doc_location
 
 RULE = Rule(
     id="ARGO-010",
@@ -24,8 +24,8 @@ RULE = Rule(
         "into the build. Without one, post-incident triage can't "
         "answer ``did this CVE ship?`` for a given artifact. "
         "Detection uses the shared SBOM-token catalog: syft, "
-        "cyclonedx, cdxgen, spdx-tools, microsoft/sbom-tool. Fires "
-        "only on artifact-producing Workflows."
+        "cyclonedx, cdxgen, anchore/sbom-action, spdx-sbom-generator, "
+        "microsoft/sbom-tool. Fires only on artifact-producing Workflows."
     ),
 )
 
@@ -43,7 +43,7 @@ def check(ctx: ArgoContext) -> Finding:
         return Finding(
             check_id=RULE.id, title=RULE.title, severity=RULE.severity,
             resource="argo",
-            description="No artifact production detected, check not applicable.",
+            description=NO_ARTIFACT_DESC,
             recommendation=RULE.recommendation, passed=True,
         )
     no_sbom = [d for d in artifact_producers if not has_sbom(d.data)]
@@ -60,4 +60,5 @@ def check(ctx: ArgoContext) -> Finding:
         check_id=RULE.id, title=RULE.title, severity=RULE.severity,
         resource="argo", description=desc,
         recommendation=RULE.recommendation, passed=passed,
+        locations=[doc_location(d) for d in no_sbom],
     )

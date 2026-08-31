@@ -35,7 +35,7 @@ RULE = Rule(
         "``True`` is the fail signal; ``False`` (or absent) passes. "
         "Requires admin scope on the repo. Complements SCM-002 / "
         "SCM-011 / SCM-014 — without SCM-021, those rules document "
-        "intent rather than enforcement, because Actions can fulfil "
+        "intent rather than enforcement, because Actions can fulfill "
         "the review requirement itself."
     ),
     known_fp=(
@@ -45,6 +45,27 @@ RULE = Rule(
         "pattern is to grant the bot a dedicated PAT scoped to "
         "PR-create-and-approve, not the repo-wide GITHUB_TOKEN. "
         "Suppress only when the trade-off has been documented.",
+    ),
+    exploit_example=(
+        "# Vulnerable: ``can_approve_pull_request_reviews: true``\n"
+        "# means a workflow's ``GITHUB_TOKEN`` (or an installation\n"
+        "# token) can approve a pull request. Combined with the\n"
+        "# required-reviews protection, a malicious workflow self-\n"
+        "# approves its own PR and lands code into ``main`` without\n"
+        "# a human reviewer.\n"
+        "# GET /repos/myorg/myrepo/actions/permissions/workflow:\n"
+        "{\n"
+        "  \"can_approve_pull_request_reviews\": true\n"
+        "}\n"
+        "\n"
+        "# Safe: actions cannot approve PRs. Human approval is\n"
+        "# the gating signal; automation can comment / label /\n"
+        "# trigger checks but cannot satisfy the review\n"
+        "# requirement.\n"
+        "# PUT /repos/myorg/myrepo/actions/permissions/workflow:\n"
+        "{\n"
+        "  \"can_approve_pull_request_reviews\": false\n"
+        "}"
     ),
 )
 

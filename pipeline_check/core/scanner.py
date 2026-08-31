@@ -22,8 +22,16 @@ from . import standards as _standards
 from .chains import Chain
 from .checks import _secrets as _secret_registry
 from .checks._confidence import confidence_for
-from .checks.base import Finding, Severity, clear_blob_cache
+from .checks._primitives.secret_verifiers import (
+    VerifyOutcome,
+    VerifyResult,
+    has_verifier,
+    redact_identity,
+    verify_token,
+)
+from .checks.base import Confidence, Finding, Severity, clear_blob_cache
 from .checks.custom.loader import LoadedCustomRules, load_custom_rules
+from .checks.custom.rego_loader import load_rego_rules
 from .checks.custom.runner import make_custom_rules_check
 from .fp_annotations import (
     annotation_index,
@@ -31,6 +39,9 @@ from .fp_annotations import (
     load_annotations,
 )
 from .inventory import Component
+from .pipeline_graph import PipelineGraph
+from .pipeline_graph_builders import build_graphs_for
+from .sbom import BuildDependency
 
 logger = logging.getLogger(__name__)
 
@@ -74,12 +85,17 @@ class Scanner:
         chains_enabled: bool = True,
         overrides: dict[str, dict[str, str]] | None = None,
         custom_rules: list[str] | tuple[str, ...] | None = None,
+        rego_rules: list[str] | tuple[str, ...] | None = None,
         fp_annotations_path: str | None = None,
+        verify_secrets: bool = False,
+        verify_secrets_show_identity: bool = False,
         log: Any = None,
         **provider_kwargs: Any,
     ) -> None:
         self._log = log
         self._chains_enabled = chains_enabled
+        self._verify_secrets = verify_secrets
+        self._verify_secrets_show_identity = verify_secrets_show_identity
         # Per-repo false-positive annotation store. ``None`` means
         # "use the default path if it exists at cwd". The Scanner
         # reads this once per run() and demotes matching findings'
@@ -100,6 +116,10 @@ class Scanner:
         #: run, so consumers always want both together. Empty list when
         #: chains are disabled or no chains matched.
         self.chains: list[Chain] = []
+        #: Step-level pipeline graphs built by the most recent ``run()``,
+        #: one per pipeline file (empty for IaC / SCA / cloud providers
+        #: with no jobs/steps DAG). Consumed by the HTML reporter.
+        self.pipeline_graphs: list[PipelineGraph] = []
         provider = _providers.get(pipeline)
         if provider is None:
             available = ", ".join(_providers.available()) or "none registered"
@@ -113,10 +133,12 @@ class Scanner:
         # place. Loading defers ID-collision checks to the loader,
         # which uses the union of every built-in registry.
         self._custom_rules: LoadedCustomRules = self._load_custom_rules(
-            custom_rules,
+            custom_rules, rego_rules,
         )
         check_classes = list(provider.check_classes)
-        if self._custom_rules.by_provider.get(self.pipeline):
+        has_yaml = bool(self._custom_rules.by_provider.get(self.pipeline))
+        has_rego = bool(self._custom_rules.rego_by_provider.get(self.pipeline))
+        if has_yaml or has_rego:
             check_classes.append(
                 make_custom_rules_check(self.pipeline, self._custom_rules),
             )
@@ -195,24 +217,19 @@ class Scanner:
     @staticmethod
     def _load_custom_rules(
         paths: list[str] | tuple[str, ...] | None,
+        rego_paths: list[str] | tuple[str, ...] | None = None,
     ) -> LoadedCustomRules:
         """Load custom rules and reject IDs that collide with built-ins.
 
         Built-in IDs come from the union of every provider's rule
-        registry. We deliberately don't filter by the active pipeline
-       , a custom rule with id ``GHA-001`` is rejected even when the
+        registry. We deliberately don't filter by the active pipeline;
+        a custom rule with id ``GHA-001`` is rejected even when the
         current scan is ``--pipeline kubernetes``, because the same
         rule file should round-trip across providers without surprise.
         """
-        if not paths:
+        if not paths and not rego_paths:
             return LoadedCustomRules()
         builtin_ids: set[str] = set()
-        # Discover rule packages from the filesystem. Adding a new
-        # provider under ``pipeline_check/core/checks/<name>/rules/``
-        # automatically participates in collision detection, no
-        # registry edit required. The same import is also used by the
-        # CLI's ``--list-checks`` / completion path, so the source of
-        # truth stays singular.
         from pathlib import Path as _Path
 
         from .checks.rule import discover_rules
@@ -226,13 +243,17 @@ class Scanner:
                 for rule, _ in discover_rules(pkg):
                     builtin_ids.add(rule.id)
             except (ImportError, AttributeError):
-                # A misconfigured package shouldn't block custom-rule
-                # loading. Worst case: a built-in ID isn't in the
-                # collision set and a clashing custom rule loads;
-                # the collision will still surface as duplicate
-                # findings at scan time.
                 continue
-        return load_custom_rules(paths, builtin_ids=builtin_ids)
+        loaded = load_custom_rules(paths, builtin_ids=builtin_ids)
+        if rego_paths:
+            yaml_custom_ids = {r.id for r in loaded.rules}
+            rego = load_rego_rules(
+                list(rego_paths),
+                builtin_ids=builtin_ids,
+                yaml_custom_ids=yaml_custom_ids,
+            )
+            loaded.merge_rego(rego)
+        return loaded
 
     def inventory(
         self,
@@ -274,6 +295,15 @@ class Scanner:
             ]
         return components
 
+    def sbom(self) -> list[BuildDependency]:
+        """Return the build-time dependencies the active provider found."""
+        provider = getattr(self, "_provider", None)
+        if provider is None:
+            provider = _providers.get(self.pipeline)
+        if provider is None:
+            return []
+        return provider.build_dependencies(self._context)
+
     def run(
         self,
         checks: list[str] | None = None,
@@ -310,8 +340,26 @@ class Scanner:
 
         findings: list[Finding] = []
         for check_class in self._check_classes:
-            checker = check_class(self._context, target=target)
-            batch = checker.run()
+            try:
+                checker = check_class(self._context, target=target)
+                batch = checker.run()
+            except Exception:
+                # Per-rule crashes are already contained inside
+                # ``discover_rules``; this guards the surface around them,
+                # context construction (e.g. a malformed plan that breaks
+                # ``TerraformContext.__init__``) and any orchestrator-level
+                # code. One provider tripping over bad input must not drop
+                # the other providers in a multi-provider scan.
+                logger.warning(
+                    "%s crashed and was skipped", check_class.__name__,
+                    exc_info=True,
+                )
+                if log:
+                    log(
+                        f"running {check_class.__name__}... "
+                        "skipped (internal error)"
+                    )
+                continue
             if log:
                 log(f"running {check_class.__name__}... {len(batch)} finding(s)")
             findings.extend(batch)
@@ -326,6 +374,19 @@ class Scanner:
                 if any(fnmatch.fnmatchcase(f.check_id.upper(), p) for p in patterns)
             ]
 
+        # Live-verify secret findings when opted in. Runs before the
+        # confidence/override pass so verified findings lock their own
+        # confidence and overrides can still override the result.
+        if getattr(self, "_verify_secrets", False):
+            _verify_and_enrich_findings(
+                findings,
+                self._context,
+                show_identity=getattr(
+                    self, "_verify_secrets_show_identity", False,
+                ),
+                log=log,
+            )
+
         # Build the FP-annotation index once per scan; the lookup is
         # ``O(1)`` per finding. ``getattr`` guards against callers that
         # bypass ``__init__`` (legacy tests construct via ``__new__``).
@@ -336,8 +397,20 @@ class Scanner:
         ))
 
         active_standards = _standards.resolve(standards)
+        # A scan emits many findings sharing a check_id, and
+        # resolve_for_check rebuilds an identical ControlRef list for
+        # each one. Cache by check_id so the work runs once per distinct
+        # check. The ControlRef list is read-only downstream, so findings
+        # with the same check_id can share one instance.
+        controls_by_check: dict[str, list[_standards.ControlRef]] = {}
         for f in findings:
-            f.controls = _standards.resolve_for_check(f.check_id, active_standards)
+            controls = controls_by_check.get(f.check_id)
+            if controls is None:
+                controls = _standards.resolve_for_check(
+                    f.check_id, active_standards,
+                )
+                controls_by_check[f.check_id] = controls
+            f.controls = controls
             # Apply the centralized confidence default unless the rule
             # opted out by setting ``confidence_locked=True`` on the
             # Finding. Rules that want per-finding control (e.g. CB-005
@@ -375,7 +448,7 @@ class Scanner:
                         # pass anything.
                         pass
 
-        # Attack-chain correlation runs after confidence is finalised so
+        # Attack-chain correlation runs after confidence is finalized so
         # ``min_confidence(triggers)`` reflects the post-demotion value.
         # A chain rule that crashes never aborts the scan, chains are
         # an additive signal, not a gate. ``getattr`` guards against
@@ -386,6 +459,16 @@ class Scanner:
             self.chains = _chains.evaluate(findings)
         else:
             self.chains = []
+
+        # Build the step-level pipeline graphs from the retained context.
+        # Additive visual signal only; build_graphs_for swallows failures.
+        pipeline = getattr(self, "pipeline", None)
+        context = getattr(self, "_context", None)
+        self.pipeline_graphs = (
+            build_graphs_for(pipeline, context)
+            if isinstance(pipeline, str) and context is not None
+            else []
+        )
 
         self.metadata.elapsed_seconds = time.monotonic() - t0
 
@@ -463,6 +546,9 @@ class MultiScanner:
         #: matches the :class:`Scanner.chains` shape so reporters
         #: can use either type interchangeably.
         self.chains: list[Chain] = []
+        #: Union of every sub-scan's pipeline graphs (one per pipeline
+        #: file across all providers). Populated by :meth:`run`.
+        self.pipeline_graphs: list[PipelineGraph] = []
 
     def run(
         self,
@@ -489,10 +575,12 @@ class MultiScanner:
         sequence.
         """
         findings: list[Finding] = []
+        self.pipeline_graphs = []
         for scanner in self._scanners:
             findings.extend(scanner.run(
                 checks=checks, target=target, standards=standards,
             ))
+            self.pipeline_graphs.extend(scanner.pipeline_graphs)
         # Single chain-engine pass over the unified findings so
         # cross-provider chain rules (XPC-NNN) see both providers'
         # findings at once. Single-provider chain rules still match
@@ -519,6 +607,13 @@ class MultiScanner:
         out: list[Component] = []
         for scanner in self._scanners:
             out.extend(scanner.inventory(type_patterns=type_patterns))
+        return out
+
+    def sbom(self) -> list[BuildDependency]:
+        """Aggregate build dependencies across every sub-scanner."""
+        out: list[BuildDependency] = []
+        for scanner in self._scanners:
+            out.extend(scanner.sbom())
         return out
 
     @property
@@ -563,6 +658,155 @@ class MultiScanner:
             warnings=warnings,
             elapsed_seconds=elapsed,
         )
+
+
+# ── Secret verification helpers ─────────────────────────────────────
+
+
+#: Check IDs whose findings carry raw secret hits from
+#: :func:`~pipeline_check.core.checks._secrets.find_secret_values`.
+_SECRET_CHECK_IDS: frozenset[str] = frozenset({
+    "GHA-008", "GL-008", "BB-008", "ADO-008",
+    "CC-008", "JF-008", "GCB-012", "DEV-008",
+})
+
+
+def _build_doc_map(context: Any) -> dict[str, Any]:
+    """Map resource paths to their parsed YAML documents (or text lists).
+
+    Works across every provider context type via duck-typed attribute
+    access: GitHub exposes ``.workflows`` (each with ``.path`` /
+    ``.data``), other YAML providers expose ``.pipelines``, and
+    Jenkins exposes ``.files`` (with ``.path`` / ``.text``).
+    """
+    docs: dict[str, Any] = {}
+    for attr in ("workflows", "pipelines"):
+        items = getattr(context, attr, None)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            path = getattr(item, "path", None)
+            data = getattr(item, "data", None)
+            if path and data is not None:
+                docs[path] = data
+    files = getattr(context, "files", None)
+    if isinstance(files, list):
+        for item in files:
+            path = getattr(item, "path", None)
+            if not path:
+                continue
+            # The ``devenv`` WorkspaceFile carries a parsed dict (``data``);
+            # Jenkins files carry raw text (``text``). Map each to the shape
+            # the raw-token re-extraction (``classify_tokens_raw``) accepts.
+            data = getattr(item, "data", None)
+            if isinstance(data, dict):
+                docs[path] = data
+                continue
+            text = getattr(item, "text", None)
+            if text is not None:
+                docs[path] = [text]
+    return docs
+
+
+def _verify_and_enrich_findings(
+    findings: list[Finding],
+    context: Any,
+    *,
+    show_identity: bool = False,
+    log: Any = None,
+) -> None:
+    """Run live probes on secret findings and mutate severity/description.
+
+    Operates in place. Only touches findings from the known
+    secret-detection check IDs whose ``passed`` is False (i.e.,
+    credential-shaped literals were found).
+    """
+    secret_findings = [
+        f for f in findings
+        if f.check_id in _SECRET_CHECK_IDS and not f.passed
+    ]
+    if not secret_findings:
+        return
+
+    doc_map = _build_doc_map(context)
+    if not doc_map:
+        return
+
+    verified_count = 0
+    unverified_count = 0
+
+    # Cache verification results so each unique (detector, token) is
+    # probed at most once across all findings in the scan.
+    probe_cache: dict[tuple[str, str], VerifyResult] = {}
+
+    for finding in secret_findings:
+        doc = doc_map.get(finding.resource)
+        if doc is None:
+            continue
+
+        raw_tokens = _secret_registry.classify_tokens_raw(doc)
+        if not raw_tokens:
+            continue
+
+        finding_verified: list[tuple[str, str | None]] = []
+        finding_unverified: list[str] = []
+        finding_unknown: list[str] = []
+
+        for detector, raw_value in raw_tokens:
+            if not has_verifier(detector):
+                finding_unknown.append(detector)
+                continue
+
+            cache_key = (detector, raw_value)
+            if cache_key in probe_cache:
+                result = probe_cache[cache_key]
+            else:
+                if log:
+                    log(f"verifying {detector} token...")
+                result = verify_token(detector, raw_value)
+                probe_cache[cache_key] = result
+
+            if result.outcome == VerifyOutcome.VERIFIED:
+                identity_display = (
+                    result.identity if show_identity
+                    else redact_identity(result.identity)
+                )
+                finding_verified.append((detector, identity_display))
+            elif result.outcome == VerifyOutcome.UNVERIFIED:
+                finding_unverified.append(detector)
+            else:
+                finding_unknown.append(detector)
+
+        if finding_verified:
+            verified_count += 1
+            finding.severity = Severity.CRITICAL
+            finding.confidence = Confidence.HIGH
+            finding.confidence_locked = True
+            identities = [
+                f"{det} ({ident})" if ident else det
+                for det, ident in finding_verified
+            ]
+            finding.description += (
+                f" VERIFIED ACTIVE: {', '.join(identities)}. "
+                f"The credential was confirmed active via live probe. "
+                f"Rotate immediately."
+            )
+        elif finding_unverified and not finding_unknown:
+            unverified_count += 1
+            finding.severity = Severity.LOW
+            finding.confidence = Confidence.LOW
+            finding.confidence_locked = True
+            finding.description += (
+                " Verification probe returned auth failure for all "
+                "tokens, the credential(s) appear revoked or rotated."
+            )
+
+    if log:
+        if verified_count or unverified_count:
+            log(
+                f"secret verification: {verified_count} verified, "
+                f"{unverified_count} unverified"
+            )
 
 
 def _filter_context_by_diff(context: Any, base_ref: str, provider: str) -> None:
@@ -647,6 +891,13 @@ def _filter_terraform_by_diff(context: Any, allowed: set[str]) -> None:
     if not isinstance(planned, list):
         return
 
+    # Map each module call label to its (local) source directory from the
+    # plan's configuration block. The resource address uses the call label
+    # (``module.vpc``) while the changed file lives under the source dir
+    # (``modules/networking``); without this map a module whose label
+    # differs from its source dir silently drops every changed resource.
+    label_to_dir = _tf_module_source_dirs(plan)
+
     def _keep(res: Any) -> bool:
         # Fail open on shape errors, a malformed plan with a non-dict
         # resource entry shouldn't crash the diff filter. The
@@ -660,14 +911,19 @@ def _filter_terraform_by_diff(context: Any, allowed: set[str]) -> None:
             return True
         if not addr.startswith("module."):
             return root_changed
-        # module.<name>.<type>.<...>, use <name> as a directory hint.
         parts = addr.split(".")
         if len(parts) < 2:
             return root_changed
-        mod_name = parts[1]
-        # Exact match only. Substring (``vpc in "vpc-prod"``) would
-        # keep resources from unrelated modules whose directory name
-        # happens to share a prefix.
+        # ``module.<label>[...]`` — strip any index suffix on the label.
+        mod_name = parts[1].split("[", 1)[0]
+        src_dir = label_to_dir.get(mod_name)
+        if src_dir is not None:
+            # Match the module's real source directory (handles a module
+            # whose call label differs from its source dir).
+            return any(_tf_dir_matches(src_dir, d) for d in module_dirs_changed)
+        # No source mapping (plan without a ``configuration`` block, or a
+        # registry / remote module): fall back to the call-label heuristic,
+        # exact match against a changed directory's leaf name.
         return mod_name in module_dirs_changed
 
     rm["resources"] = [r for r in planned if _keep(r)]
@@ -677,3 +933,70 @@ def _tf_dir(path: str) -> str:
     from pathlib import Path as _P
     parts = _P(path).parent.parts
     return parts[-1] if parts else ""
+
+
+def _tf_module_source_dirs(plan: dict[str, Any]) -> dict[str, str]:
+    """Map each root-module call label to its local source directory, read
+    from the plan's ``configuration`` block. ``module "vpc" { source =
+    "./modules/networking" }`` yields ``{"vpc": "modules/networking"}``.
+
+    The resource address keys on the call *label* while the changed file
+    lives under the *source directory*; this map lets the diff filter match a
+    module whose label differs from its source dir. Best-effort: returns an
+    empty map on any missing / wrong-shape node, and skips non-local sources
+    (registry address, git / http URL), so the caller falls back to the
+    label heuristic for those.
+    """
+    out: dict[str, str] = {}
+    config = plan.get("configuration")
+    if not isinstance(config, dict):
+        return out
+    rm = config.get("root_module")
+    if not isinstance(rm, dict):
+        return out
+    calls = rm.get("module_calls")
+    if not isinstance(calls, dict):
+        return out
+    for label, body in calls.items():
+        if not isinstance(label, str) or not isinstance(body, dict):
+            continue
+        source = body.get("source")
+        if not isinstance(source, str) or not source:
+            continue
+        norm = _normalize_tf_source(source)
+        if norm:
+            out[label] = norm
+    return out
+
+
+def _normalize_tf_source(source: str) -> str:
+    """Normalize a *local* module ``source`` to a forward-slash directory
+    path with no leading ``./`` or trailing slash. Terraform treats a source
+    as local only when it starts with ``./`` or ``../``; everything else
+    (registry address, git / http URL, bare name) is remote and returns ''.
+    """
+    s = source.replace("\\", "/").strip()
+    if not (s.startswith("./") or s.startswith("../")):
+        return ""
+    while s.startswith("./"):
+        s = s[2:]
+    return s.rstrip("/")
+
+
+def _tf_dir_matches(src_dir: str, changed_dir: str) -> bool:
+    """True when a module's source dir and a changed .tf file's directory
+    refer to the same place. ``changed_dir`` is a single directory-name leaf
+    (see :func:`_tf_dir`); compare on path components so a multi-segment
+    source (``modules/networking``) matches its leaf (``networking``). Leans
+    toward over-matching, the documented safe direction here."""
+    a = src_dir.replace("\\", "/").strip("/")
+    b = changed_dir.replace("\\", "/").strip("/")
+    if not a or not b:
+        return False
+    return (
+        a == b
+        or a.endswith("/" + b)
+        or b.endswith("/" + a)
+        or a.startswith(b + "/")
+        or b.startswith(a + "/")
+    )

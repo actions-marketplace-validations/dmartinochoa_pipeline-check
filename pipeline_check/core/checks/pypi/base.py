@@ -95,6 +95,25 @@ class PypiContext:
         #: the dict is empty so the rule's absence isn't a CI
         #: failure for users on the default no-network path.
         self.publish_times: dict[str, dict[str, _dt.datetime]] = {}
+        self.osv_advisories: dict[tuple[str, str], list[Any]] = {}
+        #: ``{package_name: has_provenance}`` populated by the pypi
+        #: provider's ``post_filter`` when ``--resolve-remote`` is on
+        #: (the PEP 740 attestation surface from the PyPI JSON API).
+        #: ``False`` entries are what PYPI-019 flags; empty by default
+        #: so the rule passes silently on the offline path.
+        self.provenance: dict[str, bool] = {}
+        #: ``{package_name: source_ref}`` populated by the pypi
+        #: provider's ``post_filter`` when ``--resolve-remote`` is on:
+        #: the git ref each dependency's latest PEP 740 provenance was
+        #: built from. PYPI-021 reads it and flags a ref that is a
+        #: branch other than main / master. Empty by default so the
+        #: rule passes silently offline.
+        self.provenance_ref: dict[str, str] = {}
+        #: ``{package_name: ScorecardResult}`` populated by the pypi
+        #: provider's ``post_filter`` (the dependency's GitHub repo
+        #: resolved from PyPI ``project_urls``, then the OpenSSF
+        #: Scorecard API). PYPI-020 reads it; empty by default.
+        self.scorecards: dict[str, Any] = {}
 
     @classmethod
     def from_path(cls, path: str | Path) -> PypiContext:
@@ -127,7 +146,7 @@ class PypiContext:
             if f.name == "poetry.lock":
                 try:
                     lines, options = _parse_poetry_lock(text)
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     warnings.append(
                         f"{f}: poetry.lock parse error: {exc}"
                     )
@@ -136,7 +155,7 @@ class PypiContext:
             elif f.name == "Pipfile.lock":
                 try:
                     lines, options = _parse_pipfile_lock(text)
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     warnings.append(
                         f"{f}: Pipfile.lock parse error: {exc}"
                     )
@@ -145,7 +164,7 @@ class PypiContext:
             elif f.name == "pyproject.toml":
                 try:
                     lines, options = _parse_pyproject_toml(text)
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     warnings.append(
                         f"{f}: pyproject.toml parse error: {exc}"
                     )
@@ -162,7 +181,7 @@ class PypiContext:
         return ctx
 
 
-class PypiBaseCheck(BaseCheck):
+class PypiBaseCheck(BaseCheck[PypiContext]):
     """Base class for pypi rule modules."""
 
     PROVIDER = "pypi"
@@ -188,12 +207,19 @@ _TOP_LEVEL_OPTIONS: frozenset[str] = frozenset({
     "--pre",
     "--prefer-binary",
     "--find-links", "-f",
+    # Nested-file include directives: ``-r base.txt`` / ``-c
+    # constraints.txt`` layer other requirements files and are not
+    # themselves requirements, so they carry no ``==`` pin or
+    # ``--hash=`` (PYPI-001 / PYPI-002 must not flag them).
+    "--requirement", "-r",
+    "--constraint", "-c",
 })
 
 #: ``--flag=value`` forms whose head token startswith() one of these.
 _OPTION_EQUALS_FORMS: tuple[str, ...] = (
     "--index-url=", "-i=", "--extra-index-url=",
     "--trusted-host=", "--find-links=", "-f=",
+    "--requirement=", "--constraint=",
 )
 
 
@@ -254,6 +280,30 @@ def _parse_requirements(
             line_no=head_line_no, body=body, flags=tuple(flags),
         ))
     return tuple(lines), tuple(options)
+
+
+#: VCS / URL requirement prefixes: these install from a URL, not a
+#: registry-resolved name, so they carry no ``==`` pin or ``--hash=``.
+_VCS_OR_URL_PREFIXES: tuple[str, ...] = (
+    "git+", "hg+", "svn+", "bzr+",
+    "http://", "https://", "ftp://", "file:",
+)
+
+
+def is_url_or_vcs(body: str) -> bool:
+    """Whether a requirement line installs from a URL / VCS ref."""
+    head = body.lstrip().split(maxsplit=1)
+    return bool(head) and head[0].lower().startswith(_VCS_OR_URL_PREFIXES)
+
+
+def is_editable_or_local(body: str) -> bool:
+    """Whether a requirement line is an editable (``-e``) or local-path
+    install — neither can be version- or hash-pinned."""
+    stripped = body.lstrip()
+    if stripped.startswith(("-e ", "-e\t", "--editable")):
+        return True
+    head = stripped.split(maxsplit=1)
+    return bool(head) and head[0].startswith((".", "/", "./", "../"))
 
 
 def _comment_start(line: str) -> int:
@@ -705,6 +755,36 @@ def iter_specs(rf: RequirementsFile) -> list[RequirementLine]:
     dataclass field directly so future shape changes stay local.
     """
     return list(rf.lines)
+
+
+_REQ_NAME_RE = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
+_NON_INDEX_PREFIXES = (
+    "http://", "https://", "git+", "hg+", "svn+", "bzr+", "-",
+)
+
+
+def requirement_package_name(body: str) -> str | None:
+    """Return the lowercased PyPI project name from a requirement line
+    body, or ``None`` for specs that don't resolve to a named index
+    package.
+
+    Skips option lines (``-r`` / ``--hash``), direct URL / VCS specs,
+    and the ``name @ url`` direct-reference form (those pull bytes from
+    a URL, not the PyPI index, so they carry no PyPI registry metadata
+    to query). The name is lowercased to match the registry fetcher's
+    cache-key normalization, so the provider's fetch keys and a rule's
+    lookups agree.
+    """
+    s = body.strip()
+    if not s or s.lower().startswith(_NON_INDEX_PREFIXES):
+        return None
+    if "@" in s:
+        # ``name @ url`` direct reference, not an index package.
+        return None
+    m = _REQ_NAME_RE.match(s)
+    if m is None:
+        return None
+    return m.group(1).lower()
 
 
 def has_option(rf: RequirementsFile, name: str) -> bool:

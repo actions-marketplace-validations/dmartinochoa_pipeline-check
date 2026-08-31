@@ -9,6 +9,8 @@ from click.testing import CliRunner
 from pipeline_check.cli import scan
 from pipeline_check.core.checks.base import Finding, Severity
 
+from ._check_ids import registered_ids
+
 
 def _finding(check_id="CB-001", passed=True, severity=Severity.HIGH):
     return Finding(
@@ -75,6 +77,16 @@ class TestExitCodes:
             result = runner.invoke(scan, ["--output", "json"])
         assert result.exit_code == 2
 
+    def test_exit_2_clean_error_on_missing_required_flag(self, runner):
+        # A provider whose build_context() raises ValueError on a missing
+        # required flag (scm / runs) must exit 2 with a clean message, NOT
+        # a raw traceback. Regression guard: build_context runs during
+        # Scanner construction, which used to sit outside the run() guard.
+        result = runner.invoke(scan, ["--pipeline", "scm", "--output", "json"])
+        assert result.exit_code == 2
+        assert "Traceback" not in result.output
+        assert "scm provider requires" in result.output
+
 
 class TestJsonOutput:
     def test_output_is_valid_json(self, runner):
@@ -90,7 +102,9 @@ class TestJsonOutput:
         findings = [_finding(check_id=f"CB-00{i}") for i in range(1, 4)]
         with patch("pipeline_check.cli.Scanner") as MockScanner:
             MockScanner.return_value.run.return_value = findings
-            result = runner.invoke(scan, ["--output", "json"])
+            # --show-passed: the default JSON is failures-only, but this
+            # asserts the full finding set reaches the report.
+            result = runner.invoke(scan, ["--output", "json", "--show-passed"])
         payload = json.loads(result.stdout)
         assert len(payload["findings"]) == 3
 
@@ -128,6 +142,57 @@ class TestFlagWiring:
             MockScanner.return_value.run.return_value = []
             runner.invoke(scan, ["--output", "json"])
         MockScanner.return_value.run.assert_called_once_with(checks=None, target=None, standards=None)
+
+    def test_only_known_attacked_forwards_filtered_checks(self, runner):
+        # ``--only-known-attacked`` builds the list of rules whose
+        # ``Rule.incident_refs`` is non-empty and passes it as the
+        # ``checks=`` filter to the scanner. The exact size depends on
+        # the live rule pack, so assert non-empty + all entries map to
+        # rules whose incident_refs is populated.
+        from pipeline_check.cli import _known_attacked_check_ids
+        expected_ids = set(_known_attacked_check_ids())
+        assert expected_ids, "rule pack should have known-attacked rules"
+
+        with patch("pipeline_check.cli.Scanner") as MockScanner:
+            MockScanner.return_value.run.return_value = []
+            runner.invoke(scan, ["--only-known-attacked", "--output", "json"])
+        kwargs = MockScanner.return_value.run.call_args.kwargs
+        assert kwargs["target"] is None
+        assert kwargs["standards"] is None
+        assert kwargs["checks"] is not None
+        assert set(kwargs["checks"]) == expected_ids
+
+    def test_only_known_attacked_with_checks_intersects(self, runner):
+        # When both flags are set, the rules that run are the
+        # intersection. ``--checks GHA-001 --checks NONEXISTENT-999
+        # --only-known-attacked`` runs only GHA-001 (in the
+        # known-attacked set) because NONEXISTENT-999 isn't.
+        with patch("pipeline_check.cli.Scanner") as MockScanner:
+            MockScanner.return_value.run.return_value = []
+            runner.invoke(scan, [
+                "--only-known-attacked",
+                "--checks", "GHA-001",
+                "--checks", "NONEXISTENT-999",
+                "--output", "json",
+            ])
+        kwargs = MockScanner.return_value.run.call_args.kwargs
+        assert kwargs["checks"] == ["GHA-001"]
+
+    def test_only_known_attacked_empty_intersection_warns(self, runner):
+        # ``--only-known-attacked --checks NONEXISTENT-999`` reduces
+        # the active set to empty. The scanner still runs (with an
+        # empty list) but a stderr warning surfaces the situation.
+        with patch("pipeline_check.cli.Scanner") as MockScanner:
+            MockScanner.return_value.run.return_value = []
+            result = runner.invoke(scan, [
+                "--only-known-attacked",
+                "--checks", "NONEXISTENT-999",
+                "--output", "json",
+            ])
+        assert (
+            "--only-known-attacked filtered the rule set to zero checks"
+            in result.output
+        )
 
     def test_html_output_writes_file(self, runner, tmp_path):
         out = tmp_path / "report.html"
@@ -180,7 +245,9 @@ class TestAutoDetect:
     def test_gitlab_path_autodetected(self, runner, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         (tmp_path / ".gitlab-ci.yml").write_text("build: {script: [make]}\n")
-        result = runner.invoke(scan, ["--pipeline", "gitlab", "--output", "json"])
+        result = runner.invoke(
+            scan, ["--pipeline", "gitlab", "--output", "json", "--show-passed"],
+        )
         assert result.exit_code in (0, 1), result.output
         # Auto-detection announced on stderr.
         assert "[auto] using --gitlab-path .gitlab-ci.yml" in result.output
@@ -188,22 +255,23 @@ class TestAutoDetect:
         # resolved path was actually loaded and scanned.
         payload = json.loads(result.stdout)
         emitted = {f["check_id"] for f in payload["findings"]}
-        assert emitted == (
-            {f"GL-{i:03d}" for i in range(1, 36)}
-            | {"TAINT-004", "TAINT-008"}
-        )
+        # Derived from the registry: autodetect must run every gitlab
+        # check (no hand-maintained enumeration to bump per rule).
+        assert emitted == registered_ids("gitlab")
 
     def test_bitbucket_path_autodetected(self, runner, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         (tmp_path / "bitbucket-pipelines.yml").write_text(
             "pipelines:\n  default:\n    - step: {script: [make]}\n"
         )
-        result = runner.invoke(scan, ["--pipeline", "bitbucket", "--output", "json"])
+        result = runner.invoke(
+            scan, ["--pipeline", "bitbucket", "--output", "json", "--show-passed"],
+        )
         assert result.exit_code in (0, 1), result.output
         assert "[auto] using --bitbucket-path bitbucket-pipelines.yml" in result.output
         payload = json.loads(result.stdout)
         emitted = {f["check_id"] for f in payload["findings"]}
-        assert emitted == {f"BB-{i:03d}" for i in range(1, 32)}
+        assert emitted == registered_ids("bitbucket")
 
 
     def test_github_path_autodetected(self, runner, tmp_path, monkeypatch):
@@ -213,15 +281,16 @@ class TestAutoDetect:
         (wf / "ci.yml").write_text(
             "on: push\njobs: {b: {runs-on: x, steps: [{run: echo}]}}\n"
         )
-        result = runner.invoke(scan, ["--pipeline", "github", "--output", "json"])
+        result = runner.invoke(
+            scan, ["--pipeline", "github", "--output", "json", "--show-passed"],
+        )
         assert result.exit_code in (0, 1), result.output
         assert "[auto] using --gha-path" in result.output
         payload = json.loads(result.stdout)
         emitted = {f["check_id"] for f in payload["findings"]}
-        assert emitted == (
-            {f"GHA-{i:03d}" for i in range(1, 62)}
-            | {"TAINT-001", "TAINT-002", "TAINT-003"}
-        )
+        # Derived from the registry: autodetect must run every github
+        # check on the workspace (no per-rule enumeration to maintain).
+        assert emitted == registered_ids("github")
 
     def test_gitlab_missing_file_raises_usage_error(self, tmp_path_factory, monkeypatch):
         # Uses a fresh tmp dir (not the ``runner`` fixture's, which
@@ -363,6 +432,9 @@ class TestFlagMarshallingEndToEnd:
         )
         assert result.exit_code == 2, result.output
         assert "--baseline file not found" in result.output
+        # Point the user at the one command that creates the missing file
+        # instead of leaving them to guess.
+        assert "--write-baseline" in result.output
 
     def test_diff_base_rejects_leading_dash(self, tmp_path, monkeypatch):
         # cli.py:2414 enforces "--diff-base must not start with '-'"

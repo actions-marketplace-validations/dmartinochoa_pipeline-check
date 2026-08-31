@@ -9,7 +9,7 @@ The parser is deliberately small. It does NOT execute build args, it
 does NOT resolve ``FROM <stage>`` references, and it does NOT
 validate semantics. Its job is to surface the directive shape so
 per-rule regexes don't each reimplement comment-stripping, line-
-continuation handling, and tokenisation.
+continuation handling, and tokenization.
 
 Behavior notes:
 
@@ -76,7 +76,7 @@ def parse_dockerfile(text: str) -> tuple[Instruction, ...]:
     """Return the list of directives in *text*.
 
     Joins line continuations (``\\`` at end of physical line),
-    discards full-line comments, and normalises directive names to
+    discards full-line comments, and normalizes directive names to
     upper case. Lines that don't match a known directive are silently
     skipped, the goal is best-effort detection, not strict parsing.
     """
@@ -151,10 +151,10 @@ class DockerfileContext:
             files = sorted(
                 p for p in root.rglob("*")
                 if p.is_file() and (
-                    p.name in {"Dockerfile", "Containerfile"}
-                    or p.name.startswith("Dockerfile.")
-                    or p.name.endswith(".Dockerfile")
-                    or p.name.startswith("Containerfile.")
+                    p.name.lower() in {"dockerfile", "containerfile"}
+                    or p.name.lower().startswith("dockerfile.")
+                    or p.name.lower().endswith(".dockerfile")
+                    or p.name.lower().startswith("containerfile.")
                 )
             )
         dockerfiles: list[Dockerfile] = []
@@ -184,7 +184,7 @@ class DockerfileContext:
         return ctx
 
 
-class DockerfileBaseCheck(BaseCheck):
+class DockerfileBaseCheck(BaseCheck[DockerfileContext]):
     """Base class for Dockerfile rule modules."""
 
     PROVIDER = "dockerfile"

@@ -16,6 +16,16 @@ same check can evidence controls in multiple standards at once.
     <p>CI/CD-relevant subset of the CIS AWS benchmark. IAM, S3, CloudTrail, KMS hardening.</p>
     <span class="pg-doc-card__meta">{{ standards.cis_aws_foundations.controls }} controls · {{ standards.cis_aws_foundations.checks }} checks evidenced</span>
   </a>
+  <a class="pg-doc-card" href="cis_azure_foundations/">
+    <h3>CIS Azure Foundations</h3>
+    <p>CI/CD-relevant subset of the CIS Microsoft Azure benchmark. Entra ID, storage, Key Vault, container registry, monitoring.</p>
+    <span class="pg-doc-card__meta">{{ standards.cis_azure_foundations.controls }} controls · {{ standards.cis_azure_foundations.checks }} checks evidenced</span>
+  </a>
+  <a class="pg-doc-card" href="cis_gcp_foundations/">
+    <h3>CIS GCP Foundations</h3>
+    <p>CI/CD-relevant subset of the CIS Google Cloud Platform benchmark. IAM, Cloud Storage, Cloud KMS, Artifact Registry, logging.</p>
+    <span class="pg-doc-card__meta">{{ standards.cis_gcp_foundations.controls }} controls · {{ standards.cis_gcp_foundations.checks }} checks evidenced</span>
+  </a>
   <a class="pg-doc-card" href="cis_github/">
     <h3>CIS GitHub Benchmark</h3>
     <p>Platform-side posture for a GitHub org or repo. Sections 1.1 (Code Changes), 1.4 (Third-Party), 1.5 (Code Risks).</p>
@@ -75,6 +85,11 @@ same check can evidence controls in multiple standards at once.
     <h3>S2C2F</h3>
     <p>Secure Supply Chain Consumption Framework, ingest, inventory, scan, rebuild, fix.</p>
     <span class="pg-doc-card__meta">{{ standards.s2c2f.controls }} controls · {{ standards.s2c2f.checks }} checks evidenced</span>
+  </a>
+  <a class="pg-doc-card" href="oscr/">
+    <h3>OSC&amp;R</h3>
+    <p>Open Software Supply Chain Attack Reference. MITRE ATT&amp;CK-style matrix for software supply chain attacks: 12 tactics, 86 techniques.</p>
+    <span class="pg-doc-card__meta">{{ standards.oscr.controls }} controls · {{ standards.oscr.checks }} checks evidenced</span>
   </a>
   <a class="pg-doc-card" href="soc2/">
     <h3>SOC 2</h3>

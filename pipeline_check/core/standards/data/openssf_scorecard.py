@@ -56,11 +56,22 @@ STANDARD = Standard(
         "ECR-006":  ["Pinned-Dependencies"],                           # ECR pull-through untrusted upstream
         "CA-002":   ["Pinned-Dependencies"],                           # CodeArtifact public upstream
         "GHA-001":  ["Pinned-Dependencies"],
+        "GHA-110": ["Pinned-Dependencies"],  # CI env disables Go module verification
         "GHA-040":  ["Pinned-Dependencies"],                           # known-compromised action ref
         "GHA-018":  ["Pinned-Dependencies"],                           # insecure package registry
         "GHA-025":  ["Pinned-Dependencies"],
+        "GHA-088":  ["Pinned-Dependencies"],                           # typosquat uses
+        "GHA-089":  ["Pinned-Dependencies"],                           # archived upstream
+        "GHA-090":  ["Pinned-Dependencies"],                           # impostor-commit
+        "GHA-091":  ["Pinned-Dependencies"],                           # repojacking
+        "GHA-092":  ["Dangerous-Workflow"],                            # TOCTOU PR head SHA
+        "GHA-093":  ["Dangerous-Workflow"],                            # LOTP indicators (workflow-command abuse)
+        "GHA-094":  ["Pinned-Dependencies"],                           # stale-action-refs
+        "GHA-096":  ["Pinned-Dependencies"],                           # known-vulnerable action ref (GHSA)
         "GL-001":   ["Pinned-Dependencies"],
+        "GL-037": ["Pinned-Dependencies"],  # CI env disables Go module verification
         "GL-005":   ["Pinned-Dependencies"],
+        "GL-042":   ["Pinned-Dependencies"],    # include: component unpinned
         "GL-009":   ["Pinned-Dependencies"],
         "GL-018":   ["Pinned-Dependencies"],
         "GL-028":   ["Pinned-Dependencies"],
@@ -77,6 +88,7 @@ STANDARD = Standard(
         "JF-009":   ["Pinned-Dependencies"],
         "JF-018":   ["Pinned-Dependencies"],
         "CC-001":   ["Pinned-Dependencies"],
+        "CC-033": ["Pinned-Dependencies"],  # CI env disables Go module verification
         "CC-003":   ["Pinned-Dependencies"],
         "CC-018":   ["Pinned-Dependencies"],
         "CC-029":   ["Pinned-Dependencies"],
@@ -112,8 +124,12 @@ STANDARD = Standard(
         "PYPI-001": ["Pinned-Dependencies"],                           # requirements lacks ==pin
         "PYPI-002": ["Pinned-Dependencies"],                           # hash pinning missing
         "PYPI-003": ["Pinned-Dependencies"],                           # http index / --trusted-host
+        "PYPI-018": ["Pinned-Dependencies"],  # --no-binary forces sdist build
         "PYPI-004": ["Pinned-Dependencies"],                           # VCS dep without commit SHA
+        "PYPI-015": ["Pinned-Dependencies"],  # direct artifact URL
         "PYPI-005": ["Pinned-Dependencies"],                           # --extra-index-url (dep confusion)
+        "PYPI-017": ["Pinned-Dependencies"],  # remote --find-links
+        "PYPI-016": ["Pinned-Dependencies"],  # primary index repointed
         "PYPI-006": ["Pinned-Dependencies", "Vulnerabilities"],        # compromised PyPI version
         "MVN-001":  ["Pinned-Dependencies"],                           # floating Maven range
         "MVN-002":  ["Pinned-Dependencies"],                           # mutable SNAPSHOT dep
@@ -122,6 +138,63 @@ STANDARD = Standard(
         "MVN-005":  ["Pinned-Dependencies"],                           # lax checksumPolicy
         "MVN-006":  ["Pinned-Dependencies", "Vulnerabilities"],        # compromised Maven version
         "MVN-007":  ["Pinned-Dependencies"],                           # settings.xml wildcard mirror
+        "MVN-008":  ["Pinned-Dependencies", "Vulnerabilities"],        # cooldown gate (--resolve-remote)
+        "MVN-009":  ["Pinned-Dependencies", "Vulnerabilities"],        # OSV advisory (--resolve-remote)
+        # ── Maven extended pack ──
+        "MVN-010":  ["Token-Permissions"],                             # plaintext server password
+        "MVN-011":  ["Token-Permissions"],                             # repo URL credentials
+        "MVN-012":  ["Pinned-Dependencies"],                           # build plugin floating
+        "MVN-013":  ["Pinned-Dependencies"],                           # build extension floating
+        "MVN-014":  ["Pinned-Dependencies"],                           # wrapper sha256 missing
+        "MVN-015": ["Pinned-Dependencies"],  # build-time plugin exec bound to lifecycle
+        "MVN-016": ["Pinned-Dependencies"],  # gradle allowInsecureProtocol
+        "MVN-017": ["Token-Permissions"],  # settings.xml privateKey + plaintext passphrase
+        "MVN-018": ["Pinned-Dependencies"],  # distributionManagement release accepts snapshots
+        "NPM-008":  ["Pinned-Dependencies", "Vulnerabilities"],        # cooldown gate (--resolve-remote)
+        "NPM-009":  ["Pinned-Dependencies"],                           # new-transitive-dep diff gate
+        "NPM-010":  ["Pinned-Dependencies", "Vulnerabilities"],        # OSV advisory (--resolve-remote)
+        "PYPI-008": ["Pinned-Dependencies", "Vulnerabilities"],        # cooldown gate (--resolve-remote)
+        "PYPI-009": ["Pinned-Dependencies", "Vulnerabilities"],        # OSV advisory (--resolve-remote)
+        # ── nuget (dep supply-chain) ─────────────────────────────
+        "NUGET-001": ["Pinned-Dependencies"],                          # floating NuGet version range
+        "NUGET-002": ["Pinned-Dependencies"],                          # wildcard prerelease version
+        "NUGET-003": ["Pinned-Dependencies"],                          # missing explicit version
+        "NUGET-004": ["Pinned-Dependencies"],                          # HTTP-only package source
+        "NUGET-005": ["Pinned-Dependencies", "Vulnerabilities"],       # known-compromised package version
+        "NUGET-006": ["Pinned-Dependencies"],                          # no lock file for reproducible restores
+        "NUGET-007": ["Pinned-Dependencies"],                          # multiple sources without packageSourceMapping
+        "NUGET-008": ["Pinned-Dependencies", "Vulnerabilities"],       # cooldown gate (--resolve-remote)
+        "NUGET-009": ["Pinned-Dependencies", "Vulnerabilities"],       # OSV advisory (--resolve-remote)
+        "NUGET-010": ["Token-Permissions"],                            # NuGet.config cleartext feed credential
+        # ── NuGet extended pack ──
+        "NUGET-011": ["Pinned-Dependencies"],
+        "NUGET-013": ["Pinned-Dependencies"],
+        "NUGET-014": ["Token-Permissions"],
+        "NUGET-015": ["Pinned-Dependencies"],
+        "NUGET-016": ["Pinned-Dependencies"],
+        "NUGET-017": ["Pinned-Dependencies"],  # public gallery active alongside private feed, not disabled
+        "NUGET-018": ["Dangerous-Workflow"],
+        # ── Composer / PHP ──
+        "COMPOSER-001": ["Pinned-Dependencies"],
+        "COMPOSER-002": ["Pinned-Dependencies"],
+        "COMPOSER-004": ["Token-Permissions"],
+        "COMPOSER-007": ["Pinned-Dependencies", "Vulnerabilities"],
+        "COMPOSER-008": ["Pinned-Dependencies"],
+        "COMPOSER-009": ["Token-Permissions"],
+        "COMPOSER-010": ["Pinned-Dependencies"],
+        "COMPOSER-013": ["Pinned-Dependencies"],  # config.disable-tls
+        # ── RubyGems / Bundler ──
+        "GEM-001": ["Pinned-Dependencies"],
+        "GEM-002": ["Pinned-Dependencies"],
+        "GEM-004": ["Token-Permissions"],
+        "GEM-005": ["Pinned-Dependencies"],
+        "GEM-006": ["Pinned-Dependencies", "Vulnerabilities"],
+        "GEM-008": ["Pinned-Dependencies"],
+        "GEM-009": ["Token-Permissions"],
+        "GEM-010": ["Pinned-Dependencies"],
+        "GEM-011": ["Pinned-Dependencies"],  # Bundler plugin install-time exec
+        "GEM-012": ["Pinned-Dependencies"],  # per-gem :source override
+        "GEM-013": ["Pinned-Dependencies"],  # insecure git transport
         # Reusable workflow / services-image / cross-step pinning
         "GHA-017":  ["Pinned-Dependencies"],                           # package install insecure source
         "GHA-051":  ["Pinned-Dependencies"],                           # services / container image unpinned
@@ -151,17 +224,41 @@ STANDARD = Standard(
         "CP-003":   ["Dangerous-Workflow"],                            # polling source = source poisoning window
         "CP-007":   ["Dangerous-Workflow"],                            # v2 PR trigger all branches
         "GHA-002":  ["Dangerous-Workflow"],
+        "RUN-001":  ["Dangerous-Workflow"],
+        "RUN-002":  ["Dangerous-Workflow"],
+        "GLRUN-001": ["Dangerous-Workflow"],  # gitlab forensics: merge-request pipeline executed
+        "GLRUN-002": ["Dangerous-Workflow"],  # gitlab forensics: fork merge-request pipeline executed
+        "GLRUN-003": ["Dangerous-Workflow"],  # gitlab forensics: secret leaked in fork pipeline trace
+        "GLRUN-004": ["Dangerous-Workflow"],  # gitlab forensics: fork pipeline minted a cloud OIDC token
+        "GLRUN-005": ["Dangerous-Workflow"],  # gitlab forensics: fork pipeline ran on a self-managed runner
+        "RUN-003":  ["Dangerous-Workflow"],
+        "RUN-004":  ["Dangerous-Workflow"],
+        "RUN-005":  ["Dangerous-Workflow"],
+        "RUN-006":  ["Pinned-Dependencies"],
+        "RUN-007":  ["Pinned-Dependencies"],
         "GHA-003":  ["Dangerous-Workflow"],
+        "GHA-119":  ["Dangerous-Workflow"],# untrusted context into an agentic AI CLI
+        "GHA-120":  ["Dangerous-Workflow"],# trust_remote_code model load = code exec
+        "GHA-122":  ["Dangerous-Workflow"],# unsafe pickle deser of fetched artifact = code exec
+        "GHA-117":  ["Dangerous-Workflow"],# IaC apply on untrusted PR trigger
+        "GHA-118":  ["Dangerous-Workflow"],# untrusted content into $GITHUB_ENV / $GITHUB_PATH
         "GHA-009":  ["Dangerous-Workflow"],
         "GHA-010":  ["Dangerous-Workflow"],
         "GHA-011":  ["Dangerous-Workflow"],
         "GHA-013":  ["Dangerous-Workflow"],
         "GHA-023":  ["Dangerous-Workflow"],
         "GHA-026":  ["Dangerous-Workflow"],
+        "GHA-107":  ["Dangerous-Workflow"],   # harden-runner in audit mode (egress not blocked)
+        "GHA-108":  ["Dangerous-Workflow"],   # no runtime egress control on OIDC/deploy workflow
+        "GHA-109":  ["Dangerous-Workflow"],   # harden-runner not the first step
         "GHA-027":  ["Dangerous-Workflow"],
         "GHA-028":  ["Dangerous-Workflow"],
         "GHA-038":  ["Dangerous-Workflow"],                            # ACTIONS_ALLOW_UNSECURE_COMMANDS
         "GL-002":   ["Dangerous-Workflow"],
+        "GL-045":   ["Dangerous-Workflow"],# trust_remote_code model load = code exec
+        "GL-047":   ["Dangerous-Workflow"],# unsafe pickle deser of fetched artifact = code exec
+        "GL-048":   ["Dangerous-Workflow"],# untrusted MR context into agentic CLI = prompt injection
+        "GL-049":   ["Code-Review"],# agentic CLI output lands without review
         "GL-011":   ["Dangerous-Workflow"],
         "GL-012":   ["Dangerous-Workflow"],
         "GL-023":   ["Dangerous-Workflow"],
@@ -171,11 +268,22 @@ STANDARD = Standard(
         "GL-034":   ["Signed-Releases", "Pinned-Dependencies"],        # npm install without audit signatures
         "GL-035":   ["Pinned-Dependencies"],                           # pip install without --require-hashes
         "BB-002":   ["Dangerous-Workflow"],
+        "BB-035":   ["Dangerous-Workflow"],   # trust_remote_code model load = code exec
+        "BB-036":   ["Dangerous-Workflow"],   # untrusted PR context into agentic CLI = prompt injection
+        "BB-037":   ["Dangerous-Workflow"],   # unsafe pickle deser of fetched artifact = code exec
+        "BB-039":   ["Code-Review"],   # agentic CLI output lands without review
+        "JF-038":   ["Code-Review"],   # agentic CLI output lands without review
+        "JF-039":   ["Dangerous-Workflow"],   # trust_remote_code model load = code exec
+        "JF-041":   ["Dangerous-Workflow"],   # unsafe pickle deser of fetched artifact = code exec
         "BB-018":   ["Dangerous-Workflow"],
         "BB-023":   ["Dangerous-Workflow"],
         "BB-025":   ["Dangerous-Workflow"],                            # malicious activity
         "BB-026":   ["Dangerous-Workflow"],
         "ADO-002":  ["Dangerous-Workflow"],
+        "ADO-034":  ["Dangerous-Workflow"],   # trust_remote_code model load = code exec
+        "ADO-035":  ["Dangerous-Workflow"],   # untrusted PR context into agentic CLI = prompt injection
+        "ADO-036":  ["Dangerous-Workflow"],   # unsafe pickle deser of fetched artifact = code exec
+        "ADO-038":  ["Code-Review"],   # agentic CLI output lands without review
         "ADO-011":  ["Dangerous-Workflow"],
         "ADO-012":  ["Dangerous-Workflow"],
         "ADO-019":  ["Dangerous-Workflow"],
@@ -183,6 +291,7 @@ STANDARD = Standard(
         "ADO-026":  ["Dangerous-Workflow"],                            # malicious activity
         "ADO-027":  ["Dangerous-Workflow"],
         "JF-002":   ["Dangerous-Workflow"],
+        "JF-037":   ["Dangerous-Workflow"],   # agentic CLI ingests untrusted context (prompt injection)
         "JF-012":   ["Dangerous-Workflow"],
         "JF-013":   ["Dangerous-Workflow"],
         "JF-019":   ["Dangerous-Workflow"],
@@ -196,6 +305,11 @@ STANDARD = Standard(
         "CC-025":   ["Dangerous-Workflow"],
         "CC-026":   ["Dangerous-Workflow"],                            # malicious activity
         "CC-027":   ["Dangerous-Workflow"],
+        "DR-017":  ["Dangerous-Workflow"],  # Drone dangerous shell idiom
+        "BK-016":  ["Dangerous-Workflow"],  # Buildkite dangerous shell idiom
+        "ARGO-019":  ["Dangerous-Workflow"],  # Argo dangerous shell idiom
+        "TKN-018":  ["Dangerous-Workflow"],  # Tekton dangerous shell idiom
+        "HARNESS-014":  ["Dangerous-Workflow"],  # Harness dangerous shell idiom
         "GCB-004":  ["Dangerous-Workflow"],
         "GCB-006":  ["Dangerous-Workflow"],
         # curl|bash is classic Dangerous-Workflow territory
@@ -221,6 +335,7 @@ STANDARD = Standard(
         "GHA-032":  ["Dangerous-Workflow"],                            # local script on untrusted trigger
         "GHA-033":  ["Token-Permissions"],                             # secret echoed in run:
         "GHA-034":  ["Token-Permissions"],                             # secrets: inherit (broad cred surface)
+        "GHA-116":  ["Token-Permissions"],                             # bulk secrets serialization
         "GHA-035":  ["Dangerous-Workflow"],                            # github-script untrusted context
         "GHA-036":  ["Dangerous-Workflow"],                            # runs-on untrusted context
         "GHA-041":  ["Dangerous-Workflow"],                            # single-maintainer action (reputation)
@@ -243,6 +358,12 @@ STANDARD = Standard(
         "GHA-059":  ["Signed-Releases", "Pinned-Dependencies"],        # npm install without audit signatures
         "GHA-060":  ["Pinned-Dependencies"],                           # pip install without --require-hashes
         "GHA-061":  ["Token-Permissions"],                             # App token minted without permissions filter
+        "GHA-106":  ["Token-Permissions"],                             # AI agent with write-scoped token
+        "GHA-111":  ["Dangerous-Workflow"],  # AI agent edits IaC applied in the same job
+        "GHA-112":  ["Code-Review"],  # self-hosted deploy with no environment gate
+        "GHA-113":  ["Dangerous-Workflow", "Token-Permissions"],  # OIDC trusted-publish w/o env gate
+        "GHA-114":  ["Dangerous-Workflow", "Token-Permissions"],  # publish workflow on an unrestricted push trigger
+        "GHA-062":  ["Token-Permissions"],                             # OIDC trust subject in sibling IaC overly broad
         # Cross-pipeline / cross-project artifact ingestion = same
         # source-poisoning shape as the GHA workflow_run rule
         "ADO-010":  ["Dangerous-Workflow"],                            # cross-pipeline download
@@ -264,7 +385,11 @@ STANDARD = Standard(
         "DR-004":   ["Token-Permissions"],                             # literal credential
         "GL-010":   ["Dangerous-Workflow"],                            # multi-project artifact unverified
         "GL-017":   ["Dangerous-Workflow"],                            # docker run privileged
+        "GL-039":   ["Dangerous-Workflow"],                            # dind daemon TLS disabled / exposed on 2375
         "GL-031":   ["Token-Permissions"],                             # id_tokens missing audience
+        "GL-040":   ["Token-Permissions"],                             # CI_JOB_TOKEN used for cross-project access
+        "GL-041":   ["Dangerous-Workflow"],                            # IaC apply on an untrusted MR trigger
+        "GL-050":   ["Token-Permissions"],  # publish job long-lived registry token (GHA-050 analog)
         "GL-032":   ["Dangerous-Workflow"],                            # tags interpolates untrusted
         "JF-017":   ["Dangerous-Workflow"],                            # docker run privileged/host
         "JF-025":   ["Dangerous-Workflow"],                            # K8s agent privileged / hostPath
@@ -276,6 +401,18 @@ STANDARD = Standard(
         "TKN-015":  ["Dangerous-Workflow"],                            # workspace subPath param injection
         "ARGO-013": ["Token-Permissions"],                             # SA token automount default
         "ARGO-015": ["Pinned-Dependencies"],                           # insecure (non-HTTPS) artifact URL
+        # ── Argo CD (GitOps deployment) ──
+        "ARGOCD-010": ["Pinned-Dependencies"],                         # mutable targetRevision
+        "ARGOCD-017": ["Pinned-Dependencies"],  # in-cluster mutable source
+        "ARGOCD-016": ["Pinned-Dependencies"],  # Helm valueFiles from a remote URL
+        "ARGOCD-018": ["Pinned-Dependencies"],  # custom resource health / action Lua
+        "ARGOCD-011": ["Token-Permissions"],                           # cluster-resource wildcard
+        # ── Helm extended pack ──
+        "HELM-011": ["Token-Permissions"],                             # dependency URL embedded creds
+        "HELM-014": ["Pinned-Dependencies"],                           # known-compromised dep
+        "HELM-015": ["Pinned-Dependencies"],  # oci:// dependency not digest-pinned
+        "HELM-016": ["Token-Permissions"],  # default secret in values.yaml
+        "HELM-017": ["Pinned-Dependencies"],  # tpl of an untrusted .Values value
         "BK-013":   ["Code-Review"],                                   # deploy step no branches filter
         # Cloud Build tainted-substitution / shell pack
         "GCB-012":  ["Token-Permissions"],                             # credential-shaped literal
@@ -295,6 +432,7 @@ STANDARD = Standard(
         "NPM-004":  ["Dangerous-Workflow"],                            # install-time lifecycle script
         "NPM-007":  ["Dangerous-Workflow"],                            # .npmrc ignore-scripts enforcement
         "NPM-011":  ["Token-Permissions"],                             # secret-shaped paths in files field
+        "NPM-013":  ["Token-Permissions"],                             # broad files-field publishes everything
 
         # ── Token-Permissions ────────────────────────────────────────
         # Scorecard's check targets GITHUB_TOKEN scope, but applies in
@@ -307,6 +445,7 @@ STANDARD = Standard(
         "GHA-039":  ["Token-Permissions"],          # services / container creds literal
         "GL-003":   ["Token-Permissions"],
         "GL-008":   ["Token-Permissions"],
+        "DEV-008":   ["Token-Permissions"],   # literal secret in a devenv config
         "GL-013":   ["Token-Permissions"],
         "GL-020":   ["Token-Permissions"],
         "BB-003":   ["Token-Permissions"],
@@ -324,6 +463,10 @@ STANDARD = Standard(
         "CC-008":   ["Token-Permissions"],
         "CC-019":   ["Token-Permissions"],
         "CC-030":   ["Token-Permissions"],
+        "CC-034":   ["Dangerous-Workflow"],   # trust_remote_code model load = code exec
+        "CC-036":   ["Dangerous-Workflow"],   # unsafe pickle deser of fetched artifact = code exec
+        "CC-037":   ["Dangerous-Workflow"],   # agentic CLI ingests untrusted context (prompt injection)
+        "CC-038":   ["Code-Review"],   # agentic CLI output lands without review
         "GCB-002":  ["Token-Permissions"],
         "GCB-003":  ["Token-Permissions"],
         "GCB-007":  ["Token-Permissions"],
@@ -340,6 +483,8 @@ STANDARD = Standard(
         "IAM-006":  ["Token-Permissions"],
         "IAM-007":  ["Token-Permissions"],
         "IAM-008":  ["Token-Permissions"],                             # OIDC audience not pinned
+        "IAM-009":  ["Token-Permissions"],                             # Azure WIF broad subject
+        "IAM-010":  ["Token-Permissions"],                             # GCP WIF no repo condition
         "KMS-001":  ["Token-Permissions"],                             # CMK rotation disabled
         "KMS-002":  ["Token-Permissions"],                             # KMS policy wildcard
         "LMB-002":  ["Token-Permissions"],                             # public Lambda function URL
@@ -429,6 +574,7 @@ STANDARD = Standard(
         "CD-002":   ["Code-Review"],
         "CCM-001":  ["Code-Review"],                                   # CodeCommit approval rule template
         "GHA-014":  ["Code-Review"],
+        "GHA-123":  ["Code-Review"],# agentic CLI output lands without review
         "GL-004":   ["Code-Review"],
         "GL-029":   ["Code-Review"],
         "BB-004":   ["Code-Review"],
@@ -448,11 +594,20 @@ STANDARD = Standard(
         "BK-007":   ["Code-Review"],                                   # deploy not gated
         "BK-008":   ["Pinned-Dependencies"],                           # TLS bypass
         "BK-009":   ["Signed-Releases"],                               # artifact signing
+        "HARNESS-015":  ["Signed-Releases"],  # Harness artifacts not signed
+        "DR-019":  ["Signed-Releases"],  # Drone artifacts not signed
         "BK-010":   ["SBOM"],                                          # SBOM
+        "HARNESS-016":  ["SBOM"],  # Harness no SBOM
+        "DR-020":  ["SBOM"],  # Drone no SBOM
         "BK-011":   ["Signed-Releases", "SBOM"],                       # SLSA provenance
+        "HARNESS-017":  ["Signed-Releases", "SBOM"],  # Harness no SLSA provenance
+        "DR-021":  ["Signed-Releases", "SBOM"],  # Drone no SLSA provenance
         "BK-012":   ["Vulnerabilities", "SAST"],                       # vuln scanning
+        "HARNESS-018":  ["Vulnerabilities", "SAST"],  # Harness no vuln scan
+        "DR-022":  ["Vulnerabilities", "SAST"],  # Drone no vuln scan
         # ── Tekton ───────────────────────────────────────────────────
         "TKN-001":  ["Pinned-Dependencies"],                           # step image not digest-pinned
+        "TKN-016": ["Pinned-Dependencies"],  # remote resolver / bundle task body not pinned
         "TKN-002":  ["Dangerous-Workflow"],                            # step privileged
         "TKN-003":  ["Dangerous-Workflow"],                            # param injection
         "TKN-004":  ["Dangerous-Workflow"],                            # hostPath / namespaces
@@ -467,8 +622,10 @@ STANDARD = Standard(
         "ARGO-001": ["Pinned-Dependencies"],                           # template image not pinned
         "ARGO-002": ["Dangerous-Workflow"],                            # template privileged
         "ARGO-003": ["Token-Permissions"],                             # default SA
+        "ARGO-016": ["Token-Permissions"],                             # cluster-admin / over-privileged ServiceAccount
         "ARGO-004": ["Dangerous-Workflow"],                            # hostPath / namespaces
         "ARGO-005": ["Dangerous-Workflow"],                            # parameter injection
+        "ARGO-017": ["Dangerous-Workflow"],                            # resource template manifest injection
         "ARGO-006": ["Token-Permissions"],                             # leaked creds
         "ARGO-008": ["Dangerous-Workflow", "Pinned-Dependencies"],     # remote install / TLS
         "ARGO-009": ["Signed-Releases"],                               # artifact signing
@@ -477,6 +634,17 @@ STANDARD = Standard(
         "ARGO-012": ["Vulnerabilities", "SAST"],                       # vuln scanning
         # ── Drone CI ─────────────────────────────────────────────────
         "DR-001":   ["Pinned-Dependencies"],                           # step image not digest-pinned
+        "HARNESS-001":   ["Pinned-Dependencies"],  # Harness step image not digest-pinned
+        "HARNESS-002":   ["Dangerous-Workflow"],  # Harness expression injection in step command
+        "HARNESS-003":   ["Dangerous-Workflow"],  # Harness privileged step
+        "HARNESS-004":   ["Token-Permissions"],  # Harness literal credential in variable
+        "HARNESS-005":   ["Pinned-Dependencies"],  # Harness pipe-to-shell
+        "HARNESS-006":   ["Dangerous-Workflow", "Pinned-Dependencies"],  # Harness TLS bypass in commands
+        "HARNESS-007":   ["Dangerous-Workflow"],  # Harness sensitive host-path mount
+        "HARNESS-008":   ["Dangerous-Workflow"],  # Harness agentic-CLI prompt injection
+        "HARNESS-010":   ["Dangerous-Workflow"],  # Harness model trust_remote_code (code exec)
+        "HARNESS-011":   ["Dangerous-Workflow"],  # Harness unsafe model deser (pickle RCE)
+        "HARNESS-009":   ["Code-Review"],  # Harness agentic-CLI output autolands without review
         "DR-002":   ["Dangerous-Workflow"],                            # privileged step
         "DR-003":   ["Dangerous-Workflow"],                            # ${DRONE_*} parameter injection
         "DR-005":   ["Pinned-Dependencies"],                           # plugin floating tag
@@ -485,12 +653,18 @@ STANDARD = Standard(
         "DR-008":   ["Pinned-Dependencies"],                           # ``pull: never`` skips registry verify
         "DR-009":   ["Dangerous-Workflow"],                            # tainted cache key
         "DR-011":   ["Dangerous-Workflow"],                            # node map runner targeting
+        # ── Drone extended pack ──
+        "DR-012":   ["Pinned-Dependencies"],                           # service image not pinned
+        "DR-014":   ["Pinned-Dependencies"],                           # pipe-to-shell
+        "DR-015":   ["Dangerous-Workflow"],                            # clone recursive
+        "DR-016":   ["Dangerous-Workflow"],                            # image field interpolation
         # ── OCI image manifest ───────────────────────────────────────
         "OCI-001":  ["SBOM"],                                          # provenance annotations
         "OCI-002":  ["Signed-Releases", "SBOM"],                       # build attestation manifest
         "OCI-004":  ["Pinned-Dependencies"],                           # foreign-URL layer = no content pin
         "OCI-007":  ["Pinned-Dependencies"],                           # legacy schemaVersion 1
         "OCI-008":  ["Pinned-Dependencies"],                           # non-sha256 digest
+        "OCI-009":  ["SBOM"],                                          # missing base-image annotations
         # ── Helm chart-supply-chain ──────────────────────────────────
         # Chart deps ARE pinned dependencies in the Scorecard sense —
         # an unlocked Chart.lock is a Pinned-Dependencies failure.
@@ -505,6 +679,13 @@ STANDARD = Standard(
         # includes, and packages. ``FROM image:tag`` without a
         # digest is the canonical image-not-pinned failure.
         "DF-001": ["Pinned-Dependencies"],                              # FROM not digest-pinned
+        "MODEL-001": ["Pinned-Dependencies"],                           # unpinned base model
+        "MODEL-002": ["Pinned-Dependencies"],                           # third-party hub base model
+        "MODEL-003": ["Pinned-Dependencies"],                           # local unverified weights blob
+        "MODEL-006": ["Pinned-Dependencies"],                           # committed unsafe-serialization model artifact
+        "MODEL-004": ["Pinned-Dependencies"],                           # remote LoRA adapter
+        "MODEL-005": ["Pinned-Dependencies"],                           # config auto_map = custom loader code
+        "DF-031": ["Pinned-Dependencies"],                              # COPY --from external image not digest-pinned
         "DF-003": ["Pinned-Dependencies"],                              # ADD remote no integrity
         "DF-004": ["Pinned-Dependencies", "Dangerous-Workflow"],        # curl-pipe
         "DF-005": ["Dangerous-Workflow"],                               # shell-eval
@@ -577,5 +758,109 @@ STANDARD = Standard(
         "TF-002":  ["Token-Permissions"],          # hard-coded secret in resource attr
         "CF-001":  ["Token-Permissions"],          # AWS::IAM::AccessKey declared as code
         "CF-002":  ["Token-Permissions"],          # hard-coded secret in resource property
+        # ── Azure Cloud (Entra ID / Storage / Key Vault / ACR / Monitor) ──
+        "ENTRA-001": ["Token-Permissions"],                # SP assigned Global Administrator
+        "ENTRA-002": ["Token-Permissions"],                # app credential beyond 180 days
+        "ENTRA-003": ["Token-Permissions"],                # SP uses password credential
+        "AZST-001":  ["Token-Permissions"],                # public blob access
+        "AZST-002":  ["Pinned-Dependencies"],              # non-HTTPS traffic
+        "AZST-003":  ["Token-Permissions"],                # no CMK encryption
+        "AKV-001":   ["Token-Permissions"],                # soft delete not enabled
+        "AKV-002":   ["Token-Permissions"],                # purge protection not enabled
+        "AKV-003":   ["Token-Permissions"],                # network ACLs allow all
+        "ACR-001":   ["Token-Permissions"],                # admin user enabled
+        "ACR-002":   ["Token-Permissions"],                # public network access
+        "ACR-003":   ["Signed-Releases"],                  # content trust not enabled
+        "AZMON-001": ["Branch-Protection"],                # no diagnostic setting
+        "AZMON-002": ["Branch-Protection"],                # log retention < 365 days
+        "AZMON-003": ["Branch-Protection"],                # no alert rule
+        # ── GCP (IAM / GCS / KMS / Artifact Registry / Cloud Logging) ────
+        "GCIAM-001": ["Token-Permissions"],                # SA has Owner/Editor role
+        "GCIAM-002": ["Token-Permissions"],                # user-managed SA key
+        "GCIAM-003": ["Token-Permissions"],                # token creator without condition
+        "GCS-001":   ["Token-Permissions"],                # public bucket
+        "GCS-002":   ["Token-Permissions"],                # no uniform access
+        "GCS-003":   ["Token-Permissions"],                # versioning not enabled
+        "GCKMS-001": ["Token-Permissions"],                # key rotation > 365 days
+        "GCKMS-002": ["Token-Permissions"],                # public KMS key access
+        "GCKMS-003": ["Token-Permissions"],                # no HSM protection
+        "GAR-001":   ["Vulnerabilities", "SAST"],          # no vulnerability scanning
+        "GAR-002":   ["Token-Permissions"],                # publicly readable repo
+        "GAR-003":   ["Pinned-Dependencies"],              # no cleanup policy
+        "GCLOG-001": ["Branch-Protection"],                # audit logs not enabled
+        "GCLOG-002": ["Branch-Protection"],                # no log sink
+        "GCLOG-003": ["Branch-Protection"],                # log retention < 365 days
+        # ── Azure Cloud phase-2 ──────────────────────────────────────
+        "ENTRA-004": ["Token-Permissions"],                # cond access MFA
+        "ENTRA-005": ["Token-Permissions"],                # ext user restrict
+        "ENTRA-006": ["Branch-Protection"],                # risky signin
+        "AZST-004":  ["Pinned-Dependencies"],              # min TLS
+        "AZST-005":  ["Pinned-Dependencies"],              # lifecycle
+        "AZST-006":  ["Token-Permissions"],                # key rotation
+        "AKV-004":   ["Token-Permissions"],                # key expiry
+        "AKV-005":   ["Token-Permissions"],                # secret expiry
+        "AKV-006":   ["Token-Permissions"],                # RBAC
+        "ACR-004":   ["Vulnerabilities", "SAST"],          # defender scan
+        "ACR-005":   ["Signed-Releases"],                  # tag immutability
+        "AZMON-004": ["Branch-Protection"],                # KV diagnostics
+        "AZMON-005": ["Branch-Protection"],                # NSG flow retention
+        "AZMON-006": ["Branch-Protection"],                # LAW retention
+        "AZMON-007": ["Branch-Protection"],                # svc health alert
+        "AZNW-001":  ["Dangerous-Workflow"],               # SSH/RDP internet (CRITICAL)
+        "AZNW-002":  ["Branch-Protection"],                # flow logs
+        "AZNW-003":  ["Dangerous-Workflow"],               # WAF
+        "AZNW-004":  ["Dangerous-Workflow"],               # deny-all
+        "AZNW-005":  ["Dangerous-Workflow"],               # public IP VM
+        "AZAPP-001": ["Pinned-Dependencies"],              # HTTPS
+        "AZAPP-002": ["Pinned-Dependencies"],              # TLS
+        "AZAPP-003": ["Token-Permissions"],                # managed identity
+        "AZAPP-004": ["Dangerous-Workflow"],               # remote debug
+        "AZAPP-005": ["Dangerous-Workflow"],               # FTP
+        "AZSQL-001": ["Token-Permissions"],                # TDE CMK
+        "AZSQL-002": ["Branch-Protection"],                # auditing
+        "AZSQL-003": ["Dangerous-Workflow"],               # public access
+        "AZSQL-004": ["Token-Permissions"],                # AAD admin
+        "AZSQL-005": ["Vulnerabilities"],                  # threat detect
+        "AZVM-001":  ["Token-Permissions"],                # disk encrypt
+        "AZVM-002":  ["Dangerous-Workflow"],               # public IP
+        "AZVM-003":  ["Dangerous-Workflow"],               # JIT
+        "AZVM-004":  ["Vulnerabilities"],                  # OS patch
+        "AZVM-005":  ["Token-Permissions"],                # managed identity
+        # ── GCP phase-2 ──────────────────────────────────────────────
+        "GCIAM-004": ["Token-Permissions"],                # default SA
+        "GCIAM-005": ["Token-Permissions"],                # domain restrict
+        "GCIAM-006": ["Token-Permissions"],                # SA key age
+        "GCS-004":   ["Token-Permissions"],                # CMEK
+        "GCS-005":   ["Branch-Protection"],                # access logging
+        "GCLOG-004": ["Branch-Protection"],                # VPC flow logs
+        "GCLOG-005": ["Branch-Protection"],                # firewall logging
+        "GCLOG-006": ["Branch-Protection"],                # data access
+        "GCLOG-007": ["Branch-Protection"],                # metric filter IAM
+        "GCLOG-008": ["Branch-Protection"],                # metric filter firewall
+        "GCLOG-009": ["Branch-Protection"],                # metric filter route
+        "GCLOG-010": ["Branch-Protection"],                # metric filter SQL
+        "GCLOG-011": ["Branch-Protection"],                # metric filter custom role
+        "GCNET-001": ["Dangerous-Workflow"],               # default network
+        "GCNET-002": ["Dangerous-Workflow"],               # deny-all
+        "GCNET-003": ["Dangerous-Workflow"],               # SSH/RDP (CRITICAL)
+        "GCNET-004": ["Dangerous-Workflow"],               # private access
+        "GCNET-005": ["Dangerous-Workflow"],               # Cloud NAT
+        "GCCE-001":  ["Dangerous-Workflow"],               # shielded VM
+        "GCCE-002":  ["Token-Permissions"],                # OS Login
+        "GCCE-003":  ["Dangerous-Workflow"],               # serial port
+        "GCCE-004":  ["Dangerous-Workflow"],               # public IP
+        "GCCE-005":  ["Dangerous-Workflow"],               # project SSH keys
+        "GCSQL-001": ["Dangerous-Workflow"],               # public IP
+        "GCSQL-002": ["Pinned-Dependencies"],              # backups
+        "GCSQL-003": ["Pinned-Dependencies"],              # SSL
+        "GCSQL-004": ["Token-Permissions"],                # IAM auth
+        "GCSQL-005": ["Pinned-Dependencies"],              # PITR
+        "GCRUN-001": ["Dangerous-Workflow"],               # unauth
+        "GCRUN-002": ["Token-Permissions"],                # custom SA
+        "GCRUN-003": ["Pinned-Dependencies"],              # min instances
+        "GCRUN-004": ["Dangerous-Workflow"],               # VPC connector
+        "GCKMS-004": ["Token-Permissions"],                # keyring IAM
+        "GCKMS-005": ["Token-Permissions"],                # destroy sched
+        "GCKMS-006": ["Token-Permissions"],                # imported key
     },
 )

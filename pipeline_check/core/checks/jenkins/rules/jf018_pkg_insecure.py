@@ -23,11 +23,44 @@ RULE = Rule(
         "in a Jenkinsfile. These patterns allow man-in-the-middle "
         "injection of malicious packages."
     ),
+    exploit_example=(
+        "// Vulnerable: pip uses a plaintext-HTTP index and\n"
+        "// ``--trusted-host`` silences hash verification.\n"
+        "pipeline {\n"
+        "  agent { docker { image 'python@sha256:abc123...' } }\n"
+        "  stages {\n"
+        "    stage('install') {\n"
+        "      steps {\n"
+        "        sh '''\n"
+        "          pip install --index-url http://internal-pypi.example.com/simple \\\n"
+        "            --trusted-host internal-pypi.example.com -r requirements.txt\n"
+        "        '''\n"
+        "      }\n"
+        "    }\n"
+        "  }\n"
+        "}\n"
+        "\n"
+        "// Safe: HTTPS + ``--require-hashes``. Internal CA\n"
+        "// installed in the agent image's trust store.\n"
+        "pipeline {\n"
+        "  agent { docker { image 'python@sha256:abc123...' } }\n"
+        "  stages {\n"
+        "    stage('install') {\n"
+        "      steps {\n"
+        "        sh '''\n"
+        "          pip install --index-url https://internal-pypi.example.com/simple \\\n"
+        "            --require-hashes -r requirements.txt\n"
+        "        '''\n"
+        "      }\n"
+        "    }\n"
+        "  }\n"
+        "}"
+    ),
 )
 
 
 def check(jf: Jenkinsfile) -> Finding:
-    matches = PKG_INSECURE_RE.findall(jf.text.lower())
+    matches = PKG_INSECURE_RE.findall(jf.text_no_comments.lower())
     passed = not matches
     desc = (
         "No insecure package install patterns detected in this Jenkinsfile."

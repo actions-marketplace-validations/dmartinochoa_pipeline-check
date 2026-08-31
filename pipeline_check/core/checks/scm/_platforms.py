@@ -33,7 +33,12 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-from .base import SCMContext, SCMFetcher, SCMRepoSnapshot
+from .base import (
+    SCMContext,
+    SCMFetcher,
+    SCMRepoSnapshot,
+    _build_fan_out_context,
+)
 
 _DEFAULT_TIMEOUT = 10.0
 _MAX_RESPONSE_BYTES = 5 * 1024 * 1024
@@ -69,13 +74,13 @@ class HttpGitLabSCMFetcher:
 
     def fetch(self, path: str) -> dict[str, Any] | list[Any] | None:
         url = f"{self.base_url}/{path.lstrip('/')}"
-        req = urllib.request.Request(url)  # noqa: S310, fixed scheme + host
+        req = urllib.request.Request(url)
         req.add_header("Accept", "application/json")
         req.add_header("User-Agent", "pipeline-check-scm")
         if self.token:
             req.add_header("PRIVATE-TOKEN", self.token)
         try:
-            with urllib.request.urlopen(  # noqa: S310, fixed scheme + host
+            with urllib.request.urlopen(
                 req, timeout=self.timeout,
             ) as resp:
                 body = resp.read(_MAX_RESPONSE_BYTES + 1)
@@ -126,17 +131,46 @@ def gitlab_context_for_repo(
     if not isinstance(default_branch, str) or not default_branch:
         default_branch = "main"
 
+    push_rule_raw = fetcher.fetch(f"projects/{encoded}/push_rule")
+    # Merge-request approval settings live on their own endpoint, NOT
+    # on the project payload. ``merge_requests_author_approval`` (the
+    # field SCM-053 reads) is here, not on ``GET /projects/:id``.
+    approvals_raw = fetcher.fetch(f"projects/{encoded}/approvals")
+
+    stats = project.get("statistics")
+    raw_size = stats.get("repository_size") if isinstance(stats, dict) else None
+    try:
+        # A self-hosted / proxied GitLab can return a null or non-numeric
+        # ``repository_size``; don't let ``int()`` abort the SCM scan.
+        repo_size = int(raw_size)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        repo_size = 1024
+
     repo_meta: dict[str, Any] = {
         "default_branch": default_branch,
-        "size": int(project.get("statistics", {}).get("repository_size", 1024))
-        if isinstance(project.get("statistics"), dict) else 1024,
+        "size": repo_size,
         "private": project.get("visibility") == "private",
         "visibility": project.get("visibility"),
         "archived": bool(project.get("archived")),
+        # Raw payloads so platform-specific rules (SCM-050..053) can
+        # read GitLab-shaped fields without re-issuing the API call.
+        # Keys are underscore-prefixed so they don't collide with the
+        # normalized GitHub-shaped slots above.
+        "_gitlab_project": project,
+        "_gitlab_push_rule": (
+            push_rule_raw if isinstance(push_rule_raw, dict) else None
+        ),
+        "_gitlab_approvals": (
+            approvals_raw if isinstance(approvals_raw, dict) else None
+        ),
     }
 
     protection = _gitlab_protected_branch(
         fetcher, encoded, default_branch,
+        project=project,
+        push_rules=(
+            push_rule_raw if isinstance(push_rule_raw, dict) else None
+        ),
     )
 
     codeowners_path = _gitlab_codeowners_path(
@@ -158,6 +192,57 @@ def gitlab_context_for_repo(
     return ctx
 
 
+def gitlab_context_for_org(
+    group: str,
+    fetcher: SCMFetcher,
+    include: tuple[str, ...] = (),
+    exclude: tuple[str, ...] = (),
+    max_repos: int = 0,
+) -> SCMContext:
+    """Fan the universal SCM pack out across a whole GitLab group.
+
+    Paginates ``GET /groups/{group}/projects`` (subgroups included) to
+    enumerate the group's projects, then builds a per-project snapshot for
+    each via :func:`gitlab_context_for_repo`. ``include`` / ``exclude``
+    globs match the short project name; ``max_repos`` caps the count. The
+    GitLab analog of :meth:`SCMContext.for_org`; only the 7-rule universal
+    subset runs (the GitHub-only rules pass with a "not applicable" note).
+    """
+    encoded = urllib.parse.quote(group, safe="")
+    pairs: list[tuple[str, str]] = []
+    page = 1
+    while True:
+        result = fetcher.fetch(
+            f"groups/{encoded}/projects"
+            f"?per_page=100&page={page}&include_subgroups=true"
+        )
+        if not isinstance(result, list) or not result:
+            break
+        for r in result:
+            if not isinstance(r, dict) or r.get("archived"):
+                continue
+            path_ns = r.get("path_with_namespace")
+            if not isinstance(path_ns, str) or "/" not in path_ns:
+                continue
+            pairs.append((path_ns.rsplit("/", 1)[1], path_ns))
+        if len(result) < 100:
+            break
+        page += 1
+    return _build_fan_out_context(
+        pairs,
+        lambda path: gitlab_context_for_repo(path, fetcher),
+        org_label=group,
+        enumerate_empty_warning=(
+            f"[scm] enumerated no projects for GitLab group {group} — check "
+            "the token's ``read_api`` scope, or the group has no "
+            "(non-archived) projects."
+        ),
+        include=include,
+        exclude=exclude,
+        max_repos=max_repos,
+    )
+
+
 def _split_owner(project_path: str) -> tuple[str, str]:
     """Split a GitLab project path into ``(owner_or_group, name)``.
 
@@ -172,7 +257,12 @@ def _split_owner(project_path: str) -> tuple[str, str]:
 
 
 def _gitlab_protected_branch(
-    fetcher: SCMFetcher, encoded_path: str, default_branch: str,
+    fetcher: SCMFetcher,
+    encoded_path: str,
+    default_branch: str,
+    *,
+    project: dict[str, Any] | None = None,
+    push_rules: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Fetch the protection rule for the default branch (if any) and
     translate into GitHub-shaped slots.
@@ -216,12 +306,17 @@ def _gitlab_protected_branch(
     # SCM-019 compatibility (kept GitHub-only at the rule layer).
     allow_force = bool(target.get("allow_force_push"))
 
-    # Project-level metadata for the cross-cutting knobs.
-    proj = fetcher.fetch(f"projects/{encoded_path}")
-    push_rules = (
-        fetcher.fetch(f"projects/{encoded_path}/push_rule")
-        if isinstance(proj, dict) else None
-    )
+    # Project-level metadata for the cross-cutting knobs. Caller
+    # (``gitlab_context_for_repo``) passes already-fetched payloads;
+    # falling back to a fresh fetch keeps the helper callable from
+    # any future code path that doesn't pre-fetch.
+    proj = project
+    if proj is None:
+        raw_proj = fetcher.fetch(f"projects/{encoded_path}")
+        proj = raw_proj if isinstance(raw_proj, dict) else None
+    if push_rules is None and proj is not None:
+        raw_pr = fetcher.fetch(f"projects/{encoded_path}/push_rule")
+        push_rules = raw_pr if isinstance(raw_pr, dict) else None
 
     approvals: int = 0
     if isinstance(proj, dict):
@@ -304,7 +399,7 @@ class HttpBitbucketSCMFetcher:
 
     def fetch(self, path: str) -> dict[str, Any] | list[Any] | None:
         url = f"{self.BASE_URL}/{path.lstrip('/')}"
-        req = urllib.request.Request(url)  # noqa: S310, fixed scheme + host
+        req = urllib.request.Request(url)
         req.add_header("Accept", "application/json")
         req.add_header("User-Agent", "pipeline-check-scm")
         if self.token:
@@ -320,7 +415,7 @@ class HttpBitbucketSCMFetcher:
                 ).decode("ascii")
                 req.add_header("Authorization", f"Basic {encoded}")
         try:
-            with urllib.request.urlopen(  # noqa: S310, fixed scheme + host
+            with urllib.request.urlopen(
                 req, timeout=self.timeout,
             ) as resp:
                 body = resp.read(_MAX_RESPONSE_BYTES + 1)
@@ -379,6 +474,12 @@ def bitbucket_context_for_repo(
         # Bitbucket Cloud doesn't expose an explicit ``archived``
         # field via 2.0; treat unset as False.
         "archived": False,
+        # Raw payload so platform-specific rules (SCM-054..055) can
+        # read Bitbucket-shaped fields (``fork_policy``,
+        # ``project.is_private``, ``has_issues``) without re-issuing
+        # the API call. Underscore-prefixed to avoid colliding with
+        # the normalized GitHub-shaped slots above.
+        "_bitbucket_repo": repo,
     }
 
     protection = _bitbucket_protection(
@@ -448,12 +549,7 @@ def _bitbucket_protection(
         pattern = entry.get("pattern")
         if not isinstance(pattern, str):
             continue
-        if (
-            pattern == default_branch
-            or pattern == "*"
-            or pattern == "master"
-            and default_branch == "master"
-        ):
+        if pattern == default_branch or pattern == "*":
             on_default.append(entry)
     if not on_default:
         return None
@@ -478,6 +574,13 @@ def _bitbucket_protection(
         },
         "allow_force_pushes": {"enabled": allow_force},
         "allow_deletions": {"enabled": allow_delete},
+        # The ``push`` kind (Bitbucket's "Prevent push" / Write-access
+        # restriction) has no GitHub-shaped slot, but it's the primary
+        # write-side control. Surface the raw restriction kinds present
+        # on the default branch so SCM-055 can count it.
+        "_bitbucket_restriction_kinds": [
+            k for k in by_kind if isinstance(k, str)
+        ],
         "required_status_checks": (
             {"strict": True, "contexts": ["pipeline"]}
             if pipeline_required else {}
@@ -524,3 +627,60 @@ def _bitbucket_codeowners_path(
         if isinstance(raw, dict) and raw.get("path") == path:
             return path
     return None
+
+
+def bitbucket_context_for_org(
+    workspace: str,
+    fetcher: SCMFetcher,
+    include: tuple[str, ...] = (),
+    exclude: tuple[str, ...] = (),
+    max_repos: int = 0,
+) -> SCMContext:
+    """Fan the universal SCM pack out across a whole Bitbucket workspace.
+
+    Paginates ``GET /repositories/{workspace}`` (cursor-based ``next``) to
+    enumerate the workspace's repos, then builds a per-repo snapshot for
+    each via :func:`bitbucket_context_for_repo`. ``include`` / ``exclude``
+    globs match the repo slug; ``max_repos`` caps the count. The Bitbucket
+    analog of :meth:`SCMContext.for_org`; only the 7-rule universal subset
+    runs.
+    """
+    pairs: list[tuple[str, str]] = []
+    path = f"repositories/{workspace}?pagelen=100"
+    while path:
+        result = fetcher.fetch(path)
+        if not isinstance(result, dict):
+            break
+        values = result.get("values")
+        if not isinstance(values, list) or not values:
+            break
+        for r in values:
+            if not isinstance(r, dict):
+                continue
+            full_name = r.get("full_name")
+            if not isinstance(full_name, str) or "/" not in full_name:
+                continue
+            pairs.append((full_name.split("/", 1)[1],
+                          full_name.split("/", 1)[1]))
+        next_url = result.get("next")
+        if isinstance(next_url, str) and next_url:
+            base = "https://api.bitbucket.org/2.0/"
+            path = (
+                next_url[len(base):]
+                if next_url.startswith(base)
+                else next_url
+            )
+        else:
+            path = ""
+    return _build_fan_out_context(
+        pairs,
+        lambda slug: bitbucket_context_for_repo(workspace, slug, fetcher),
+        org_label=workspace,
+        enumerate_empty_warning=(
+            f"[scm] enumerated no repositories for Bitbucket workspace "
+            f"{workspace} — check the token, or the workspace has no repos."
+        ),
+        include=include,
+        exclude=exclude,
+        max_repos=max_repos,
+    )

@@ -19,9 +19,10 @@ Scanner, CLI, and the doc generator all update automatically.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import boto3
+if TYPE_CHECKING:
+    import boto3
 
 from ..checks.aws._catalog import ResourceCatalog
 from ..checks.aws.workflows import AWSRuleChecks
@@ -42,7 +43,26 @@ class AWSProvider(BaseProvider):
         **_: Any,
     ) -> boto3.Session:
         """Return a boto3 Session scoped to *region* and optional named *profile*."""
-        return boto3.Session(region_name=region, profile_name=profile)
+        # Imported lazily so a non-AWS scan (or ``--help``) doesn't pay the
+        # ~165ms boto3/s3transfer import cost. Only an actual AWS scan
+        # reaches build_context.
+        import boto3
+        from botocore.exceptions import ProfileNotFound
+
+        try:
+            return boto3.Session(region_name=region, profile_name=profile)
+        except ProfileNotFound as exc:
+            # Surface a named-profile typo as a clean error (the CLI maps
+            # ValueError from a provider's build_context to exit 2 with no
+            # traceback) instead of a raw botocore stack trace. ``str(exc)``
+            # names the actual profile, whether it came from --profile or
+            # the AWS_PROFILE environment variable.
+            raise ValueError(
+                f"{exc}. Pick an existing AWS profile (see ~/.aws/config / "
+                f"~/.aws/credentials), run `aws configure --profile <name>`, "
+                f"or drop --profile / unset AWS_PROFILE to use the default "
+                f"credential chain."
+            ) from exc
 
     @property
     def check_classes(self) -> list[type[BaseCheck]]:

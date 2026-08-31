@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 
+from ..._secrets import find_secret_values
 from ...base import Finding, Severity
 from ...rule import Rule
 from ..base import (
@@ -53,6 +54,41 @@ RULE = Rule(
         "match still catches real leaks elsewhere in the "
         "pipeline.",
     ),
+    exploit_example=(
+        "# Vulnerable: the AWS access key literal is committed to\n"
+        "# the pipeline file. Any repo reader sees it; Drone's\n"
+        "# build logs print it whenever the step echoes its\n"
+        "# environment.\n"
+        "kind: pipeline\n"
+        "type: docker\n"
+        "name: deploy\n"
+        "steps:\n"
+        "  - name: upload\n"
+        "    image: aws-cli@sha256:abc123...\n"
+        "    environment:\n"
+        "      AWS_ACCESS_KEY_ID: AKIAIOSFODNN7EXAMPLE\n"
+        "      AWS_SECRET_ACCESS_KEY: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n"
+        "    commands:\n"
+        "      - aws s3 cp build/ s3://bucket/\n"
+        "\n"
+        "# Safe: reference Drone secrets via ``from_secret``. The\n"
+        "# actual values live in Drone's secret store (per-repo or\n"
+        "# org-level), are masked in logs, and can rotate without\n"
+        "# a pipeline-file change.\n"
+        "kind: pipeline\n"
+        "type: docker\n"
+        "name: deploy\n"
+        "steps:\n"
+        "  - name: upload\n"
+        "    image: aws-cli@sha256:abc123...\n"
+        "    environment:\n"
+        "      AWS_ACCESS_KEY_ID:\n"
+        "        from_secret: aws_access_key_id\n"
+        "      AWS_SECRET_ACCESS_KEY:\n"
+        "        from_secret: aws_secret_access_key\n"
+        "    commands:\n"
+        "      - aws s3 cp build/ s3://bucket/"
+    ),
 )
 
 
@@ -76,10 +112,6 @@ _CRED_KEY_RE = re.compile(
     r"S?(?:$|[_\-.])",
     re.IGNORECASE,
 )
-
-# AKIA-prefixed AWS access key. Independent of the key-name
-# vocabulary because seeing one in source is itself the leak.
-_AWS_ACCESS_KEY_RE = re.compile(r"\bAKIA[0-9A-Z]{16}\b")
 
 # Values that are obvious non-secrets even when the key name
 # matches. Booleans / null literals end up in
@@ -123,12 +155,24 @@ def _value_looks_literal(value: str) -> bool:
     return True
 
 
+_MAX_SCAN_DEPTH = 4
+
+
 def _scan_block(
-    block: object, source_label: str, offenders: list[str],
+    block: object, source_label: str, offenders: list[str], depth: int = 0,
 ) -> None:
     """Scan one ``environment:`` / ``settings:`` block for literal
-    credential values. Matches are appended to *offenders*.
+    credential values. Recurses into nested config maps / lists (bounded
+    depth) so a credential buried in a plugin's nested ``settings:``
+    sub-map is still classified. Matches are appended to *offenders*.
     """
+    if depth > _MAX_SCAN_DEPTH:
+        return
+    if isinstance(block, list):
+        for i, item in enumerate(block):
+            if isinstance(item, (dict, list)):
+                _scan_block(item, f"{source_label}[{i}]", offenders, depth + 1)
+        return
     if not isinstance(block, dict):
         return
     for key, value in block.items():
@@ -137,16 +181,20 @@ def _scan_block(
         # ``from_secret:`` reference, the safe shape, always skip.
         if from_secret_value(value) is not None:
             continue
+        if isinstance(value, (dict, list)):
+            _scan_block(value, f"{source_label}.{key}", offenders, depth + 1)
+            continue
         if not isinstance(value, str):
             continue
         if _is_credential_key(key) and _value_looks_literal(value):
             offenders.append(f"{source_label}.{key}")
             continue
-        # AWS access key shape fires regardless of key name; the
-        # length / placeholder filters don't apply because the
-        # AKIA prefix is itself the leak signal.
-        if _AWS_ACCESS_KEY_RE.search(value):
-            offenders.append(f"{source_label}.{key} (AKIA prefix)")
+        # A recognized vendor-token shape fires regardless of key name;
+        # the length / placeholder filters don't apply because the token
+        # shape (AWS / GitHub / GitLab / cloud / AI-provider keys, JWTs,
+        # etc., via the shared 49-detector catalog) is itself the leak.
+        if find_secret_values([value]):
+            offenders.append(f"{source_label}.{key} (token shape)")
 
 
 def check(pipeline: Pipeline) -> Finding:

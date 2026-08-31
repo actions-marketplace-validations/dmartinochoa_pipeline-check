@@ -7,12 +7,48 @@ format carries the same finding set, only the rendering differs.
 |------------|------------------------------|------------------------------------------------------|
 | `terminal` | stdout (rich-formatted)      | Human reading in a local shell / CI log              |
 | `json`     | stdout                       | Machine parsing (`jq`, artifact archival)            |
+| `jsonl`    | stdout or `--output-file`    | Newline-delimited JSON, one failing finding per line (same shape as the `json` `findings` entries). Streamed / appended into log pipelines (Splunk, ELK, Datadog) or processed line by line with `jq -c` without loading the whole report |
 | `html`     | `--output-file` (required)   | Emailed / attached reports, screenshots              |
 | `sarif`    | stdout or `--output-file`    | GitHub code scanning, GitLab SAST, any SARIF UI      |
 | `markdown` | stdout or `--output-file`    | PR comments / Slack-style consumers; Attack Chains H2 sits between summary and the Failures table |
 | `junit`    | stdout or `--output-file`    | Test-runner UIs (Jenkins, Bamboo, GitLab pipelines) that natively render JUnit XML |
+| `codequality` | stdout or `--output-file` | GitLab Code Quality JSON. Annotates Merge Request diffs natively via the `codequality` artifact report |
+| `csv`      | stdout or `--output-file`    | Flat, one-row-per-location export of the failing findings for spreadsheet triage: filter by severity, assign owners, track remediation. Columns: `check_id, severity, confidence, resource, file, line, title, description, recommendation, cwe` |
+| `annotations` | stdout (in a GitHub Actions job) | GitHub Actions workflow commands (`::error` / `::warning` / `::notice file=…,line=…::message`). Printed in a job, GitHub renders them as inline annotations on the changed lines and PR — no SARIF upload step or code-scanning / Advanced Security required, so any repo gets inline feedback. CRITICAL/HIGH → `::error`, MEDIUM → `::warning`, LOW/INFO → `::notice` |
 | `threatmodel` | stdout or `--output-file` | STRIDE-mapped Markdown threat-model document. Auto-runs `--inventory`. SOC 2 / PCI / NIST SSDF evidence packages, architecture-review docs |
+| `cyclonedx` | stdout or `--output-file`  | CycloneDX 1.6 JSON SBOM of build-time dependencies (actions, base images, packages). PURL identifiers on every component |
+| `spdx` | stdout or `--output-file`  | SPDX 2.3 JSON SBOM of the same build-time dependencies. Each package carries a PURL `externalRef`; the document `DESCRIBES` every package |
+| `openvex` | stdout or `--output-file`  | OpenVEX 0.2.0 document for the OSV advisory findings (`NPM-010` / `PYPI-009` / `MVN-009` / `NUGET-009`), one `affected` statement per `(vulnerability, product-PURL)`. Feed a triaged `not_affected` / `fixed` document back with `--vex` |
 | `both`     | terminal → **stderr**, JSON → stdout | Pipe `jq` while still seeing a human report |
+
+`--pr-diff REF` is the diff-mode counterpart to the formats above: it
+runs two scans (HEAD + base) and emits Markdown shaped for a single
+PR-review comment, with introduced / resolved / preserved sections
+rather than the full failures table the `markdown` format renders.
+See [`pr_diff.md`](pr_diff.md) for the mechanism and recipes.
+
+## Inline exploit examples
+
+```bash
+pipeline_check --inline-explain
+```
+
+`--inline-explain` surfaces each failing finding's recorded
+`exploit_example` so the operator sees a concrete attacker scenario
+without piping the check ID into `pipeline_check explain`. It honors
+every text format that doesn't already carry the field:
+
+| `--output` | Where the example lands |
+|---|---|
+| `terminal` / `both` | Under the Recommendation block in the panel |
+| `sarif` | The rule's `help.text` and `help.markdown` |
+| `junit` | The `<failure>` element body |
+| `markdown` | A collapsible "Proof of exploit" section after the failures table |
+| `codequality` | The issue `description` (the fingerprint is unchanged, so dismissed MR threads don't churn) |
+
+`--output json` and `--output html` always include `exploit_example`
+as a structured attribute regardless of the flag, so it has nothing to
+add there. All surfaces share the canonical label "Proof of exploit".
 
 ## JSON
 
@@ -25,7 +61,7 @@ Shape:
 ```json
 {
   "schema_version": "1.1",
-  "tool_version": "1.0.4",
+  "tool_version": "1.13.0",
   "score": {"grade": "B", "summary": {...}, "score": 82},
   "findings": [
     {
@@ -70,6 +106,12 @@ That lets consumers distinguish "nothing matched" from "not asked
 for". See [attack_chains.md](attack_chains.md) for the full
 chain-output contract.
 
+- The **`findings`** array carries the **failing** findings only by
+  default, matching the terminal table and SARIF (a real repo runs ~100
+  checks per file, almost all passing). The per-severity `passed` /
+  `failed` tallies live in `score.summary` regardless, so the grade and
+  counts are unaffected. Pass `--show-passed` to emit every check (passed
+  and failed) as the full audit record.
 - **`schema_version`** is bumped on breaking format changes. Adding a
   new optional field does not require a bump; renaming or removing one
   does. Consumers should branch on the major component.
@@ -113,12 +155,16 @@ pipeline_check --pipeline github --gha-path .github/workflows \
     programmatic consumers.
 - Locations:
   - File-path resources (YAML paths) become `artifactLocation.uri`.
-  - For file-based findings, a best-effort `physicalLocation.region.startLine`
-    is emitted, per-check regexes grep the source for the signature line
-    so GitHub PR annotations land on the offending line, not just the file
-    header. Supported today: `GHA-001/002/003/008`, `GL-001/008`,
-    `BB-001/008`, `ADO-001/005/008`. When no pattern matches, the region
-    is omitted (GitHub falls back to file-level).
+  - For file-based findings, `physicalLocation.region` (`startLine`, and
+    `endLine` / `startColumn` / `endColumn` when known) is emitted from each
+    rule's structured `Finding.locations`, so GitHub PR annotations land on
+    the offending line, not just the file header. This is the primary path
+    and covers the providers that carry structured locations (the YAML CI
+    providers, Kubernetes, Tekton, Argo, and the rest of the retrofitted
+    pack). For findings with no structured location (AWS / Terraform /
+    CloudFormation and rules not yet retrofitted), a legacy best-effort
+    fallback regex-greps the source for the signature line. When neither
+    yields a line, the region is omitted (GitHub falls back to file-level).
   - AWS resource names (bucket names, project names) become
     `resource:///<name>` opaque URIs.
   - Both always carry a `logicalLocations` entry with the raw handle.
@@ -244,6 +290,112 @@ pure-function swap, no rule registry changes.
 - **Quarterly posture review**: regenerate against the latest
   scan, diff against the prior quarter to see which STRIDE
   buckets gained / lost open risks.
+
+## GitLab Code Quality
+
+```bash
+pipeline_check --output codequality -O gl-code-quality-report.json
+```
+
+Emits a Code Climate `gl-code-quality-report` JSON array, the format
+GitLab CI renders inline against the Merge Request diff when uploaded
+as a `reports: codequality:` artifact:
+
+```yaml
+# .gitlab-ci.yml
+pipeline-check:
+  script:
+    - pipeline_check --pipeline gitlab --output codequality
+        --output-file gl-code-quality-report.json
+  artifacts:
+    when: always
+    reports:
+      codequality: gl-code-quality-report.json
+```
+
+Shape highlights:
+
+- One entry per `(failing finding, location)` pair. A single aggregate
+  finding that lists ten offending lines becomes ten MR annotations.
+- Severity maps as `CRITICAL -> blocker`, `HIGH -> critical`,
+  `MEDIUM -> major`, `LOW -> minor`, `INFO -> info`.
+- `fingerprint` is a SHA-1 over `(check_id, normalized_path, line)`,
+  deliberately *not* over the description, so cosmetic prose tweaks
+  across releases don't churn previously-dismissed MR threads.
+- Passing findings are skipped (the format has no "passed" concept).
+
+## CycloneDX 1.6
+
+```bash
+pipeline_check --pipeline github --gha-path .github/workflows \
+    --output cyclonedx --output-file sbom.json
+```
+
+Emits a CycloneDX 1.6 JSON BOM of every build-time dependency the
+pipeline consumes. Each component carries a
+[Package URL](https://github.com/package-url/purl-spec) and
+``pipeline-check:`` namespaced properties (provider, kind, source
+file, pinned status).
+
+V1 extracts dependencies from four providers: GitHub Actions (action
+refs, reusable workflows, docker steps), Dockerfile (``FROM`` base
+images), npm (``package.json`` dependencies), and PyPI
+(``requirements.txt`` entries). Providers without a
+``build_dependencies()`` override contribute no components.
+
+The BOM format follows the
+[CycloneDX 1.6 specification](https://cyclonedx.org/docs/1.6/json/).
+No external library is required; the JSON is emitted directly.
+
+## SPDX 2.3
+
+```bash
+pipeline_check --pipeline github --gha-path .github/workflows \
+    --output spdx --output-file sbom.spdx.json
+```
+
+Emits the same build-dependency inventory as the CycloneDX output, in
+the [SPDX 2.3](https://spdx.github.io/spdx-spec/v2.3/) JSON format that
+some toolchains and procurement processes require instead of CycloneDX.
+Each dependency becomes an SPDX ``package`` with a ``purl``
+``externalRef``; a digest (when known) is emitted as a ``checksums``
+entry, and the provider / kind / source / pinned metadata goes in the
+package ``comment``. The document ``DESCRIBES`` every package via a
+relationship. No external library is required; the JSON is emitted
+directly.
+
+## OpenVEX
+
+```bash
+# Emit a VEX document for the scan's OSV advisory findings.
+pipeline_check --pipeline npm --resolve-remote \
+    --output openvex --output-file pipeline-check.openvex.json
+
+# Later: suppress the ones a maintainer has triaged away.
+pipeline_check --pipeline npm --resolve-remote --vex triaged.openvex.json
+```
+
+The `openvex` format emits an [OpenVEX](https://openvex.dev) 0.2.0
+document covering the CVE-shaped subset of the catalog: the OSV
+advisory rules (`NPM-010` / `PYPI-009` / `MVN-009` / `NUGET-009`), which
+are the only checks that attach a structured `(vulnerability, product)`
+pair. Each distinct vulnerability becomes one statement with `status:
+affected`, listing every affected product as a Package-URL (the same
+PURL the SBOM reporters emit), plus the OSV cross-reference aliases so a
+consumer keyed on either the CVE or the GHSA can match. The document
+`@id` is a content hash of the statements, so re-running on an unchanged
+finding set yields a stable id. Misconfiguration findings never appear.
+
+`--vex PATH` (repeatable) is the consume side. Hand it an OpenVEX
+document and any OSV advisory finding whose `(vulnerability, product)` a
+maintainer marked `not_affected` or `fixed` is excluded from the gate
+(but still shown in the report), the same baseline-style handling
+`--baseline` gets. Matching is by vulnerability id or any alias (either
+direction) and by product PURL (a versionless product covers every
+version). The natural loop is `--output openvex` to produce the
+worklist, triage each statement's `status` and `justification`, then
+`--vex` the result back on the next run. Feeding a document with only
+`affected` / `under_investigation` statements suppresses nothing.
 
 ## Exit codes are independent of format
 

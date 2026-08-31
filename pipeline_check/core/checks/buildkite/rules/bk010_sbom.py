@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ...base import Finding, Severity, has_sbom, produces_artifacts
+from ...base import NO_ARTIFACT_DESC, Finding, Severity, has_sbom, produces_artifacts
 from ...rule import Rule
 
 RULE = Rule(
@@ -26,7 +26,7 @@ RULE = Rule(
         "into the build. Without one, post-incident triage can't "
         "answer ``did this CVE ship?`` for a given artifact. Detection "
         "uses the shared SBOM-token catalog, syft, cyclonedx, cdxgen, "
-        "spdx-tools, microsoft/sbom-tool."
+        "spdx-sbom-generator, microsoft/sbom-tool."
     ),
 )
 
@@ -36,7 +36,7 @@ def check(path: str, doc: dict[str, Any]) -> Finding:
         return Finding(
             check_id=RULE.id, title=RULE.title, severity=RULE.severity,
             resource=path,
-            description="No artifact production detected, check not applicable.",
+            description=NO_ARTIFACT_DESC,
             recommendation=RULE.recommendation, passed=True,
         )
     passed = has_sbom(doc)

@@ -41,7 +41,7 @@ parsers and are queued for a follow-up.
 
 ## What it covers
 
-10 checks · 0 have an autofix patch (``--fix``).
+20 checks · 0 have an autofix patch (``--fix``).
 
 | Check | Title | Severity | Fix |
 |-------|-------|----------|-----|
@@ -54,7 +54,17 @@ parsers and are queued for a follow-up.
 | [NPM-007](#npm-007) | .npmrc does not disable install-time lifecycle scripts | <span class="pg-sev pg-sev--high">HIGH</span> |  |
 | [NPM-008](#npm-008) | Direct dependency was published within the cooldown window | <span class="pg-sev pg-sev--high">HIGH</span> |  |
 | [NPM-009](#npm-009) | New transitive dependency added since the base ref | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [NPM-010](#npm-010) | npm package has a known OSV advisory | <span class="pg-sev pg-sev--critical">CRITICAL</span> |  |
 | [NPM-011](#npm-011) | package.json files field includes secret-shaped paths | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [NPM-012](#npm-012) | .npmrc publish token lacks IP or readonly restriction | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [NPM-013](#npm-013) | package.json files field uses an overly broad pattern | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [NPM-014](#npm-014) | Direct dependency relies on a single npm publisher | <span class="pg-sev pg-sev--low">LOW</span> |  |
+| [NPM-015](#npm-015) | Direct dependency published without build provenance | <span class="pg-sev pg-sev--low">LOW</span> |  |
+| [NPM-016](#npm-016) | Direct dependency has a low OpenSSF Scorecard | <span class="pg-sev pg-sev--low">LOW</span> |  |
+| [NPM-017](#npm-017) | Direct dependency provenance built from a non-release ref | <span class="pg-sev pg-sev--low">LOW</span> |  |
+| [NPM-018](#npm-018) | Direct dependency's latest release published by a new npm account | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
+| [NPM-019](#npm-019) | package.json overrides / resolutions rewrites a dependency to a non-registry source | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [NPM-020](#npm-020) | .npmrc repoints the default or a scoped registry to a non-canonical host | <span class="pg-sev pg-sev--high">HIGH</span> |  |
 
 ---
 
@@ -66,7 +76,7 @@ parsers and are queued for a follow-up.
 <span class="pg-sev pg-sev--medium">MEDIUM</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--esf">ESF-S-VERIFY-DEPS</span> <span class="pg-tag pg-tag--cwe">CWE-1357</span>
 </div>
 
-Fires on every entry in ``dependencies`` / ``devDependencies`` / ``optionalDependencies`` / ``peerDependencies`` whose value starts with ``^``, ``~``, ``*``, ``>``, ``<``, ``||``, or is the dist-tag ``latest`` / ``next`` / ``beta`` / ``alpha`` / ``canary`` / ``dev``. ``workspace:*`` (Yarn / pnpm workspace protocol), ``file:`` / ``link:`` (local checkouts), ``git+`` / ``http(s)://`` (URL deps), and ``npm:`` (alias) are not version ranges and are routed to other rules. Complements NPM-002, which catches lockfile entries missing integrity hashes; NPM-001 is the manifest-side hygiene.
+Fires on every entry in ``dependencies`` / ``devDependencies`` / ``optionalDependencies`` / ``peerDependencies`` whose value starts with ``^``, ``~``, ``*``, ``>``, ``<``, ``||``, carries a wildcard token (``1.x``, ``1.2.X``, ``x``), or is the dist-tag ``latest`` / ``next`` / ``beta`` / ``alpha`` / ``canary`` / ``dev``. ``workspace:*`` (Yarn / pnpm workspace protocol), ``file:`` / ``link:`` (local checkouts), ``git+`` / ``http(s)://`` (URL deps), and ``npm:`` (alias) are not version ranges and are routed to other rules. Complements NPM-002, which catches lockfile entries missing integrity hashes; NPM-001 is the manifest-side hygiene.
 
 **Known false-positive modes**
 
@@ -301,7 +311,7 @@ Either skip the just-published version (pin to the last release older than the c
 <span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-8</span> <span class="pg-tag pg-tag--esf">ESF-S-VERIFY-DEPS</span> <span class="pg-tag pg-tag--cwe">CWE-829</span> <span class="pg-tag pg-tag--cwe">CWE-1357</span>
 </div>
 
-Needs ``--npm-base-ref <ref>`` to materialize each lockfile's contents at the base ref via ``git show``. Compares the set of package names in the current vs. base lockfile and subtracts top-level direct dependencies (those are NPM-008's territory). Fires HIGH per lockfile when any name appears in the current set that isn't in the base set, after the direct-dep subtraction. Silent-passes when ``--npm-base-ref`` isn't set, the base ref can't be resolved by git, or the lockfile is brand new to this branch (no base counterpart). Diffs by package *name* only — version bumps of an existing transitive are out of scope (NPM-006 covers known-bad version pins; NPM-008 covers fresh-publication windows). Both ``package-lock.json`` (npm 7+) and ``pnpm-lock.yaml`` / ``yarn.lock`` are covered through the shared lockfile-shape synthesizers.
+Needs ``--npm-base-ref <ref>`` to materialize each lockfile's contents at the base ref via ``git show``. Compares the set of package names in the current vs. base lockfile and subtracts top-level direct dependencies (those are NPM-008's territory). Fires HIGH per lockfile when any name appears in the current set that isn't in the base set, after the direct-dep subtraction. Silent-passes when ``--npm-base-ref`` isn't set, the base ref can't be resolved by git, or the lockfile is brand new to this branch (no base counterpart). Diffs by package *name* only — version bumps of an existing transitive are out of scope (NPM-006 covers known-bad version pins; NPM-008 covers fresh-publication windows). Both ``package-lock.json`` (npm 7+) and ``pnpm-lock.yaml`` / ``yarn.lock`` are covered through the shared lockfile-shape synthesizers, which carry each package's declared dependency edges. Every new transitive is annotated with the direct dependency that pulled it in (``<name> (via <parent>)``), traced through the edge graph to the nearest manifest dependency, so reviewers know whose changelog to read. A deep transitive with no resolvable manifest ancestor falls back to its immediate declaring parent.
 
 **Known false-positive modes**
 
@@ -318,6 +328,26 @@ Needs ``--npm-base-ref <ref>`` to materialize each lockfile's contents at the ba
 **Recommended action**
 
 Audit the new transitive dependency before letting it land. Confirm the maintainer of the parent direct dependency intentionally added it (read the changelog of the patch / minor bump that introduced it). The axios -> plain-crypto-js backdoor (March 2026) was a single new transitive sneaked into a patch release; lockfile pinning alone is no defense when the new transient *is* the malicious payload. If the new transitive is unexpected, pin the parent dep to the previous version, file a registry advisory, and rotate any secret a CI build with the lockfile had access to. Pair with NPM-006 (known-compromised package) and NPM-008 (cooldown gate) so the catch isn't reliant on a single signal.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--critical" markdown>
+
+## NPM-010: npm package has a known OSV advisory { #npm-010 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--critical">CRITICAL</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-8</span> <span class="pg-tag pg-tag--esf">ESF-S-VERIFY-DEPS</span> <span class="pg-tag pg-tag--cwe">CWE-829</span> <span class="pg-tag pg-tag--cwe">CWE-506</span>
+</div>
+
+Network-dependent: needs ``--resolve-remote`` to query the OSV advisory database (``api.osv.dev``). Passes silently when the flag is off. Complements NPM-006 (curated offline registry) with the full OSV/GHSA long-tail.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Upgrade to a patched version or remove the affected package. Consult the advisory URL for remediation guidance.
 
 </div>
 
@@ -355,6 +385,270 @@ Wildcard-broad entries (``*``, ``**``, ``./``) are NOT currently flagged — the
 **Recommended action**
 
 Remove the secret-shaped entry from ``package.json`` ``files``. If the entry is intentional (e.g., a ``.env.example`` template that ships intentionally),  rename it to a clearly-not-a-secret form (``env.example``) before shipping. Then run ``npm pack --dry-run`` and inspect the printed contents before the next ``npm publish``; the dry-run output is the ground truth for what the registry will receive. Any tarball that includes ``.env``, ``.npmrc`` with an ``_authToken`` line, an SSH private key, or an AWS credentials file effectively publishes those credentials to every consumer of the package.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## NPM-012: .npmrc publish token lacks IP or readonly restriction { #npm-012 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-6</span> <span class="pg-tag pg-tag--esf">ESF-D-SECRETS</span> <span class="pg-tag pg-tag--cwe">CWE-269</span> <span class="pg-tag pg-tag--cwe">CWE-522</span>
+</div>
+
+Fires when a ``.npmrc`` contains an ``_authToken`` entry (the standard npm registry auth mechanism) without any accompanying restriction. The rule checks for two indicators of restriction:
+
+1. An ``_authToken`` value that begins with ``npm_`` (granular access token, which carries server-side scope restrictions) vs. a legacy token (UUID-shaped or opaque hex, which has no scope boundary).
+2. Absence of a ``_password`` or ``always-auth`` key for the same registry scope (which would indicate a different auth mechanism).
+
+The rule cannot verify IP restrictions client-side (those are stored server-side on npmjs.com). It uses the token format as a proxy: granular tokens (``npm_`` prefix) support IP restrictions; legacy tokens do not.
+
+Complements NPM-011 (secret-shaped paths in ``files`` field) and the DF-025 rule (registry token baked into a Docker image layer).
+
+**Known false-positive modes**
+
+- Some organizations use a private registry (Verdaccio, GitHub Packages, GitLab Packages) whose tokens don't follow the npmjs.com format. The rule fires on any non-``npm_`` token, which may be a legitimate private-registry token. Suppress with a rationale naming the registry.
+
+**Seen in the wild**
+
+- ESLint 2018: a maintainer's stolen npm token was used to publish ``eslint-scope@3.7.2`` and ``eslint-config-eslint@5.0.2`` containing credential-harvesting code. Granular tokens with publish-only scope on specific packages and IP restrictions would have blocked the attacker's publish from outside the maintainer's network.
+- ua-parser-js 2021: a hijacked npm token published three backdoored versions (0.7.29, 0.8.0, 1.0.0) in a single session. A restricted token would have limited the damage to the specific package and IP range.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Restrict every npm auth token to the minimum required scope. For tokens used only in CI publish workflows:
+
+1. Generate an **automation** token (npmjs.com > Access Tokens > Generate New Token > Granular Access Token) with only the ``publish`` permission on the specific packages it needs to publish.
+2. Enable **IP address CIDR allowlisting** on the token to restrict usage to known CI runner IP ranges.
+3. For read-only CI installs (``npm ci``), use a **read-only** token that cannot publish at all.
+
+A leaked unrestricted publish token enables full package hijack: an attacker publishes a backdoored version under your package name.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## NPM-013: package.json files field uses an overly broad pattern { #npm-013 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-6</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--esf">ESF-D-SECRETS</span> <span class="pg-tag pg-tag--cwe">CWE-538</span> <span class="pg-tag pg-tag--cwe">CWE-200</span>
+</div>
+
+Fires when ``package.json`` declares a ``files`` field whose list includes any of these broad-include literals:
+
+* ``"*"`` — npm interprets a lone ``*`` as 'every file in   the package root' (it does NOT mean 'every direct child'   the way a shell glob does)
+* ``"**"`` / ``"**/*"`` / ``"*/**"`` — every file in   every subdirectory
+* ``"."`` / ``"./"`` — explicit current-directory   include
+
+When the broad entry is the only entry, the tarball is effectively the repo tree minus whatever ``.npmignore`` / ``.gitignore`` happens to block. Hand-maintained ignore files routinely miss new dotfiles (``.env.local``, ``.aws/``, ``.terraform/``), so the failure mode is silent credential leakage at the next ``npm publish``. The right fix is the explicit positive-list shape NPM-011 already scans; NPM-013 catches the case where there's no list to scan because everything is in.
+
+Skipped: a ``files`` field that omits broad-include entries (the safe positive-list shape), a manifest with no ``files`` field (different surface — npm falls back to ``.npmignore`` / ``.gitignore`` semantics, which has its own pitfalls but is out of scope here), and any entry that narrows the include with a subdirectory prefix (``dist/**``, ``src/**/*.js``).
+
+**Known false-positive modes**
+
+- A package that is genuinely meant to ship every file in a tightly-controlled subtree (e.g. a single-file documentation package whose entire repo IS the publishable content) may legitimately use ``"*"`` paired with a strict, audited ``.npmignore``. Suppress with a rationale that names the ``.npmignore`` file and the audit cadence; otherwise rewrite the field as a positive list.
+
+**Seen in the wild**
+
+- Socket.dev and ReversingLabs research catalogs document a long tail of npm publishes leaking ``.env`` / ``.aws/`` / ``.git/`` content via permissive ``files`` patterns paired with incomplete ``.npmignore`` files. The pattern is the single most common credential-leak vector at ``npm publish`` time.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Replace the broad-include entry (``*``, ``**``, ``./``, ``.``, ``**/*``, ``*/**``) with an explicit positive-list of the paths the package ships: typically ``dist/**`` plus ``README.md`` / ``LICENSE``. ``npm`` interprets a single ``*`` or ``**`` as 'include everything not blocked by an ignore file', which silently ships every dotfile, env file, build artifact, and CI script the repo carries unless a complete ``.npmignore`` exists. Run ``npm pack --dry-run`` after tightening the list, inspect the printed contents, and only then ``npm publish``. NPM-011 catches a small set of secret-shaped *names*; NPM-013 catches the much larger surface where the pattern itself is the leak.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--low" markdown>
+
+## NPM-014: Direct dependency relies on a single npm publisher { #npm-014 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--low">LOW</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--esf">ESF-S-VERIFY-DEPS</span> <span class="pg-tag pg-tag--cwe">CWE-1357</span>
+</div>
+
+Network-dependent: needs ``--resolve-remote`` to read each direct dependency's publisher list from ``registry.npmjs.org`` (the same packument fetch NPM-008 uses, so it adds no extra requests). Flags a package whose top-level ``maintainers`` array (the npm accounts with publish access, not the repo's contributor list) has exactly one entry. Scoped to direct dependencies in ``dependencies`` / ``devDependencies`` / ``optionalDependencies`` / ``peerDependencies``; transitive packages are out of scope. LOW severity by design: a single publisher is extremely common across the registry and is a posture signal, not an active vulnerability, so it stays below the default ``--fail-on`` gate while still surfacing in a report. When ``--resolve-remote`` is off or the registry can't be reached, the rule passes silently.
+
+**Known false-positive modes**
+
+- A single-publisher package maintained by a trusted org behind 2FA and provenance is far lower risk than the bare count implies; the rule can't see the account's hardening from the manifest. Suppress per-resource for dependencies the team has vetted.
+
+**Seen in the wild**
+
+- axios maintainer-account takeover (March 30, 2026): a single publisher account compromise let an attacker push a malicious release to roughly 99M weekly downloads before detection.
+- @ctrl/tinycolor account takeover (May 2024): single-publisher package; malicious versions stayed live for ~36 hours before coordinated removal.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Treat a single-publisher dependency as a single point of compromise: if that one npm account is phished or its token leaks, every consumer pulls malicious code on the next install (the axios / chalk / lodash class of risk). For dependencies you pull in directly, prefer packages whose publish access is shared across maintainers or an org team, pin to a reviewed version, and pair with NPM-008 (cooldown) so a compromised release has a window to be caught before it reaches your lockfile.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--low" markdown>
+
+## NPM-015: Direct dependency published without build provenance { #npm-015 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--low">LOW</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-4</span> <span class="pg-tag pg-tag--esf">ESF-S-VERIFY-DEPS</span> <span class="pg-tag pg-tag--cwe">CWE-494</span>
+</div>
+
+Network-dependent: needs ``--resolve-remote`` to read each direct dependency's latest-version `dist.attestations` from ``registry.npmjs.org`` (the same packument fetch NPM-008 and NPM-014 use, so it adds no extra requests). Flags a package whose latest version carries no build-provenance attestation. Scoped to direct dependencies; transitive packages are out of scope. LOW severity by design: provenance adoption across the registry is still low, so the absence is common and this is an informational posture signal that stays below the default ``--fail-on`` gate. When ``--resolve-remote`` is off or the registry can't be reached, the rule passes silently.
+
+**Known false-positive modes**
+
+- A package can be securely published without npm provenance (e.g. via a different attestation framework, or simply because it predates provenance support). The absence is a weaker signal than a present-but-invalid attestation would be. Suppress per-resource for dependencies whose supply chain the team has otherwise vetted.
+
+**Seen in the wild**
+
+- SLSA provenance / npm `--provenance` (GA 2023): publishing with provenance produces a signed link from the registry artifact to the exact source commit and CI run, the property an attacker who republishes a tampered tarball cannot forge.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Build provenance ties a published package back to the source commit and CI build that produced it (SLSA / npm `--provenance`), the same guarantee this project ships on its own wheel. A dependency without it can't be cryptographically traced to its source, so a registry-side tamper or a look-alike republish is harder to detect. Prefer dependencies that publish with provenance where a maintained alternative exists, and ask upstreams you rely on to adopt it (it is a one-line change to a GitHub Actions publish job). This is a posture signal, not a defect in the dependency.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--low" markdown>
+
+## NPM-016: Direct dependency has a low OpenSSF Scorecard { #npm-016 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--low">LOW</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--esf">ESF-S-VERIFY-DEPS</span> <span class="pg-tag pg-tag--cwe">CWE-1357</span>
+</div>
+
+Network-dependent: needs ``--resolve-remote``. The dependency's GitHub repo comes from its packument (the same fetch NPM-008 / NPM-014 / NPM-015 use), then each repo is looked up against the OpenSSF Scorecard API (``api.securityscorecards.dev``), which is the one extra network surface this rule adds beyond the registry. Fires when the aggregate score is below 5/10 OR the Dangerous-Workflow check failed (an exploitable workflow pattern in the dependency's own repo). Scoped to direct dependencies with a resolvable GitHub repo; packages with no GitHub repo or not indexed by Scorecard are skipped. LOW severity by design: it's an advisory upstream posture signal that stays below the default ``--fail-on`` gate. Passes silently when ``--resolve-remote`` is off or the Scorecard API can't be reached.
+
+**Known false-positive modes**
+
+- Scorecard penalizes practices that don't always apply (e.g. a single-maintainer library that doesn't use code review by policy) and its data can lag a repo's current state. A low score is a prompt to look, not proof of risk. Suppress per-resource for dependencies the team has vetted directly.
+
+**Seen in the wild**
+
+- OpenSSF Scorecard: an automated assessment of a repo's security practices (branch protection, pinned dependencies, dangerous workflows, code review, maintenance). Low-scoring upstreams are over-represented in supply-chain incident post-mortems.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+A low OpenSSF Scorecard (or a failed Dangerous-Workflow check) on a direct dependency's own repository is a weak-link signal: the project lacks the maintenance and CI-hardening practices (branch protection, pinned actions, no `pull_request_target` script injection, code review) that make a compromise less likely and more detectable. Weigh a better-scored alternative where one exists, pin to a reviewed version, and for the ones you keep, watch them more closely (cooldown, provenance). This is an upstream-posture signal, not a defect you can fix in your own repo.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--low" markdown>
+
+## NPM-017: Direct dependency provenance built from a non-release ref { #npm-017 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--low">LOW</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-4</span> <span class="pg-tag pg-tag--esf">ESF-S-VERIFY-DEPS</span> <span class="pg-tag pg-tag--cwe">CWE-494</span>
+</div>
+
+Network-dependent: needs ``--resolve-remote``. Reads each direct dependency's latest-version attestation bundle from ``registry.npmjs.org/-/npm/v1/attestations`` and parses the SLSA provenance source ref (``predicate.buildDefinition.externalParameters.workflow.ref``). Flags a ref that is a branch other than ``refs/heads/main`` / ``refs/heads/master``; a tag (``refs/tags/...``) or a default branch passes. Skips (does not flag) a package whose latest version has no provenance (NPM-015's concern), whose attestation can't be fetched or parsed, or whose ref is an unrecognized shape. Scoped to direct dependencies. Default-branch detection assumes ``main`` / ``master``; a repo whose default branch is named otherwise can be flagged (see known_fp). LOW severity / MEDIUM confidence: a posture signal below the default ``--fail-on`` gate. Passes silently offline.
+
+**Known false-positive modes**
+
+- A project whose default branch is not ``main`` / ``master`` (``develop``, ``trunk``, a ``release/*`` branch) publishes legitimately from that branch; this rule treats only ``main`` / ``master`` as the trusted default, so other branch refs are flagged. Suppress per-resource when the upstream's release branch is known-good. A monorepo or non-standard SLSA layout that doesn't expose the ref at the parsed path is skipped, not flagged.
+
+**Seen in the wild**
+
+- Red Hat npm compromise (BoostSecurity, 'Trusted Publishing, Untrusted Branch', 2026): 30+ packages shipped valid SLSA provenance recording a throwaway ``refs/heads/oidc-*`` branch. The provenance ref is the only install-side signal that would have distinguished them: https://labs.boostsecurity.io/articles/trusted-publishing-untrusted-branch-red-hat-npm/
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+A package's build provenance records the git ref the release was built from. A latest release built from a throwaway branch (``refs/heads/oidc-...``) rather than a tag or the default branch is the 'untrusted branch' signal: valid provenance, attacker ref. Confirm the upstream cuts releases only from a tag or a protected branch, and pin to a known-good version if its latest provenance ref looks unexpected. If the dependency's real default branch is not ``main`` / ``master`` (e.g. ``develop``), this is a false positive: suppress it per-resource.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--medium" markdown>
+
+## NPM-018: Direct dependency's latest release published by a new npm account { #npm-018 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--medium">MEDIUM</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--esf">ESF-S-VERIFY-DEPS</span> <span class="pg-tag pg-tag--cwe">CWE-1357</span>
+</div>
+
+Network-dependent: needs ``--resolve-remote`` to read each direct dependency's per-version publisher (the packument's ``_npmUser`` account that ran ``npm publish`` for each version, from the same fetch NPM-008 / NPM-014 use, so it adds no extra requests). Flags a package whose ``dist-tags.latest`` version was published by an account that published none of its prior versions. Requires at least three prior versions with a known publisher, so a brand-new package (one or two releases, where a "new publisher" is meaningless and NPM-008's cooldown already covers the fresh-carrier risk) is skipped. Scoped to direct dependencies in ``dependencies`` / ``devDependencies`` / ``optionalDependencies`` / ``peerDependencies``; transitive packages are out of scope. MEDIUM confidence: a legitimate new co-maintainer's first publish trips it too, so the finding is a review prompt rather than proof of compromise. When ``--resolve-remote`` is off, the registry can't be reached, or the packument doesn't expose ``_npmUser``, the rule passes silently.
+
+**Known false-positive modes**
+
+- A legitimate maintainer hand-off or a newly added co-maintainer publishing their first release flags identically to a takeover (the per-version publisher is the only static signal; intent isn't visible). When the change is verified and expected, suppress per-resource for that dependency.
+
+**Seen in the wild**
+
+- axios maintainer-account takeover (March 30, 2026): a compromised publisher account pushed a malicious release to ~99M weekly downloads, the new-publisher-on-an-established-package shape this rule surfaces.
+- @ctrl/tinycolor account takeover (May 2024): a hijacked account published malicious versions that stayed live for ~36 hours.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Treat a publisher change as the live account-takeover signal it is: the latest release of this dependency was published by an npm account that published none of its earlier versions. That is exactly the shape of a stolen-credential or freshly-added-account compromise (the axios / @ctrl/tinycolor / chalk class), where an attacker pushes one malicious release that every consumer pulls on the next install. Before upgrading into the new release: confirm the maintainer change is legitimate (a documented hand-off, a new co-maintainer the project announced), pin to the last release from the known publisher until you have, and pair with NPM-008 (cooldown) so a hijacked release has a window to be caught before it reaches your lockfile. NPM-014 (single publisher) is the standing blast-radius; this is the moment that blast radius fires.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## NPM-019: package.json overrides / resolutions rewrites a dependency to a non-registry source { #npm-019 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--esf">ESF-S-VERIFY-DEPS</span> <span class="pg-tag pg-tag--cwe">CWE-829</span> <span class="pg-tag pg-tag--cwe">CWE-494</span>
+</div>
+
+Fires when an ``overrides`` / ``resolutions`` / ``pnpm.overrides`` entry (walked recursively, so nested npm overrides are covered) resolves a package to a non-registry source: a git spec (``git+...`` / ``github:`` / ``gitlab:`` / ``bitbucket:``), an ``http(s)://`` tarball, a ``file:`` / ``link:`` / ``portal:`` local path, or an ``npm:<other>`` alias that redirects the name to a different package. A plain version / range override (the common, legitimate use, pinning a transitive to a patched version) passes. Distinct from NPM-001 / NPM-005, which only walk the ``*dependencies`` blocks via ``iter_manifest_dependencies`` and never read the override map.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Keep ``overrides`` (npm), ``resolutions`` (Yarn), and ``pnpm.overrides`` to exact registry versions. A git / URL / ``file:`` / ``npm:``-alias target in an override force-replaces the resolved source of a package anywhere in the tree, including deep transitives, ahead of the lockfile and without touching any ``dependencies`` line a reviewer reads. If you must override to a fork, pin it to a 40-character commit SHA and vendor it into a registry you control; if you must alias a name (``npm:``), confirm the target package is one you trust, since the alias silently redirects a trusted name to a different package.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## NPM-020: .npmrc repoints the default or a scoped registry to a non-canonical host { #npm-020 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--esf">ESF-S-TRUSTED-REG</span> <span class="pg-tag pg-tag--esf">ESF-S-VERIFY-DEPS</span> <span class="pg-tag pg-tag--cwe">CWE-829</span> <span class="pg-tag pg-tag--cwe">CWE-494</span>
+</div>
+
+Fires when a ``.npmrc`` sets ``registry=`` or ``@scope:registry=`` to a host other than ``registry.npmjs.org`` (``registry.yarnpkg.com`` is also accepted as canonical), or to a plaintext ``http://`` registry of any host. The default-registry repoint is the substitutive dependency-confusion vector (the npm config-layer analog of PYPI-016 / COMPOSER-012 / CARGO-012); a scoped repoint is how an internal ``@company`` scope gets hijacked to a public / attacker host. NPM-007 reads the same ``.npmrc`` but only the ``ignore-scripts`` key; NPM-003 treats any HTTPS registry host as safe, so neither sees this. Leans on suppression for legitimate internal mirrors.
+
+**Known false-positive modes**
+
+- Many organizations set ``registry=`` to an internal proxy (Artifactory / Verdaccio / GitHub Packages) that mirrors npm, and route a private ``@scope`` to it. That is a legitimate, recommended setup; the rule can't tell a vetted internal mirror from an attacker host. Suppress with ``--ignore-file`` and a one-line note naming the registry once you've confirmed it.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Point ``registry=`` (and any ``@scope:registry=``) at canonical npm (``https://registry.npmjs.org/``) or a vetted internal mirror that proxies it. ``registry=`` replaces the default index outright, so every package, direct and transitive, is fetched from that host; a ``@scope:registry=`` line silently routes one scope elsewhere. An attacker who lands a committed ``.npmrc`` repoint serves backdoored tarballs under the real names. If the host is a legitimate internal registry, suppress with a one-line rationale that names it.
 
 </div>
 

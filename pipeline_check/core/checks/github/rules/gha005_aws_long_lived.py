@@ -38,6 +38,38 @@ RULE = Rule(
         "AWS, so the rule auto-suppresses an env block that pairs a "
         "localhost endpoint with sentinel keys.",
     ),
+    exploit_example=(
+        "# Vulnerable: long-lived IAM user keys, even sourced from secrets.\n"
+        "jobs:\n"
+        "  deploy:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - uses: aws-actions/configure-aws-credentials@v4\n"
+        "        with:\n"
+        "          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}\n"
+        "          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}\n"
+        "          aws-region: us-east-1\n"
+        "\n"
+        "# Attack: the keys land in the runner environment and\n"
+        "# ~/.aws/credentials. A later step running untrusted code (a\n"
+        "# compromised third-party action, an injected `run:`, a\n"
+        "# malicious transitive dependency) reads and exfiltrates them.\n"
+        "# Because they're long-lived IAM user keys, the attacker keeps\n"
+        "# AWS access until someone notices and rotates them by hand.\n"
+        "\n"
+        "# Safe: OIDC. The assumed-role credential expires within the\n"
+        "# hour and is scoped to this run.\n"
+        "jobs:\n"
+        "  deploy:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    permissions:\n"
+        "      id-token: write\n"
+        "    steps:\n"
+        "      - uses: aws-actions/configure-aws-credentials@v4\n"
+        "        with:\n"
+        "          role-to-assume: arn:aws:iam::123456789012:role/ci-deploy\n"
+        "          aws-region: us-east-1"
+    ),
 )
 
 
@@ -62,6 +94,23 @@ def _env_has_static_key(env: Any) -> bool:
         if isinstance(value, str) and not _SECRETS_REF_RE.search(value):
             return True
     return False
+
+
+def _env_values_reference_aws_key(env: Any) -> bool:
+    """True if any env value embeds an AWS key name.
+
+    Catches the secrets-sourced shape (``AWS_ACCESS_KEY_ID: ${{
+    secrets.AWS_ACCESS_KEY_ID }}``) that ``_env_has_static_key``
+    deliberately excludes. Applied at job, step, and workflow scope so
+    the placement of the ``env:`` block doesn't change the verdict.
+    """
+    if not isinstance(env, dict):
+        return False
+    return any(
+        isinstance(value, str)
+        and ("AWS_ACCESS_KEY_ID" in value or "AWS_SECRET_ACCESS_KEY" in value)
+        for value in env.values()
+    )
 
 
 def check(path: str, doc: dict[str, Any]) -> Finding:
@@ -90,30 +139,32 @@ def check(path: str, doc: dict[str, Any]) -> Finding:
 
     for job_id, job in iter_jobs(doc):
         all_job_ids.append(job_id)
-        # Check job-level env for non-secrets AWS key assignments.
-        if _env_has_static_key(job.get("env")):
-            _flag_static(job.get("env"), job_id)
+        # Check job-level env for non-secrets AWS key assignments and
+        # for secrets-sourced keys (``AWS_ACCESS_KEY_ID: ${{ secrets.X }}``).
+        # The secrets-value substring scan runs at step and workflow
+        # scope too; job scope is the common placement and was the gap.
+        job_env = job.get("env")
+        if _env_has_static_key(job_env):
+            _flag_static(job_env, job_id)
+        if _env_values_reference_aws_key(job_env):
+            _flag_static(job_env, job_id)
         for step in iter_steps(job):
             uses = step.get("uses") or ""
             if isinstance(uses, str) and uses.startswith(
                 "aws-actions/configure-aws-credentials@"
             ):
-                w = step.get("with") or {}
+                w = step.get("with")
+                if not isinstance(w, dict):
+                    w = {}
                 if "role-to-assume" in w:
                     oidc_role = True
                 if "aws-access-key-id" in w or "aws-secret-access-key" in w:
                     static_keys = True
                     locations.append(step_location(path, step))
                     anchor_jobs[job_id] = None
-            env = step.get("env") or {}
-            if isinstance(env, dict):
-                for value in env.values():
-                    if isinstance(value, str) and (
-                        "AWS_ACCESS_KEY_ID" in value
-                        or "AWS_SECRET_ACCESS_KEY" in value
-                    ):
-                        _flag_static(env, job_id)
-                        break
+            step_env = step.get("env")
+            if _env_values_reference_aws_key(step_env):
+                _flag_static(step_env, job_id)
             # Detect `aws configure set aws_access_key_id ...` in run blocks.
             run = step.get("run")
             if isinstance(run, str) and _AWS_CONFIGURE_RE.search(run):
@@ -125,15 +176,9 @@ def check(path: str, doc: dict[str, Any]) -> Finding:
                 _flag_static(step.get("env"), job_id)
     doc_env = doc.get("env") or {}
     wf_env_static = False
-    if isinstance(doc_env, dict):
-        for value in doc_env.values():
-            if isinstance(value, str) and (
-                "AWS_ACCESS_KEY_ID" in value
-                or "AWS_SECRET_ACCESS_KEY" in value
-            ):
-                _flag_static(doc_env, None)
-                wf_env_static = True
-                break
+    if _env_values_reference_aws_key(doc_env):
+        _flag_static(doc_env, None)
+        wf_env_static = True
     if _env_has_static_key(doc_env):
         _flag_static(doc_env, None)
         wf_env_static = True

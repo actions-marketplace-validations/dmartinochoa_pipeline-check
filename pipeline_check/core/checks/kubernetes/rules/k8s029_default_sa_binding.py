@@ -4,9 +4,9 @@ from __future__ import annotations
 from typing import Any
 
 from ..._primitives.anchors import k8s_sa
-from ...base import Finding, ResourceAnchor, Severity
+from ...base import Finding, Location, ResourceAnchor, Severity
 from ...rule import Rule
-from ..base import KubernetesContext
+from ..base import KubernetesContext, manifest_location
 
 #: Namespaces whose ``default`` SA legitimately needs grants from
 #: bootstrap manifests shipped by the control plane.
@@ -45,6 +45,45 @@ RULE = Rule(
         "namespaces. Consider creating a named SA anyway. It keeps the "
         "audit log unambiguous about which workload made an API call.",
     ),
+    exploit_example=(
+        "# Vulnerable: a RoleBinding (or ClusterRoleBinding)\n"
+        "# grants permissions to the ``default`` ServiceAccount\n"
+        "# in a namespace. Every Pod in that namespace that\n"
+        "# doesn't override ``serviceAccountName`` runs with\n"
+        "# the granted permissions — a permission boundary\n"
+        "# that's invisible from the Pod manifests.\n"
+        "apiVersion: rbac.authorization.k8s.io/v1\n"
+        "kind: RoleBinding\n"
+        "metadata: { name: default-can-deploy, namespace: app }\n"
+        "subjects:\n"
+        "  - kind: ServiceAccount\n"
+        "    name: default\n"
+        "    namespace: app\n"
+        "roleRef:\n"
+        "  kind: Role\n"
+        "  name: deployer\n"
+        "  apiGroup: rbac.authorization.k8s.io\n"
+        "\n"
+        "# Safe: create a dedicated ServiceAccount per workload\n"
+        "# and bind permissions to it. Each Pod that needs the\n"
+        "# permission explicitly opts in via\n"
+        "# ``serviceAccountName: app-deployer``.\n"
+        "apiVersion: v1\n"
+        "kind: ServiceAccount\n"
+        "metadata: { name: app-deployer, namespace: app }\n"
+        "---\n"
+        "apiVersion: rbac.authorization.k8s.io/v1\n"
+        "kind: RoleBinding\n"
+        "metadata: { name: app-deployer-can-deploy, namespace: app }\n"
+        "subjects:\n"
+        "  - kind: ServiceAccount\n"
+        "    name: app-deployer\n"
+        "    namespace: app\n"
+        "roleRef:\n"
+        "  kind: Role\n"
+        "  name: deployer\n"
+        "  apiGroup: rbac.authorization.k8s.io"
+    ),
 )
 
 
@@ -61,6 +100,7 @@ def _subject_targets_default(s: Any) -> tuple[bool, str]:
 
 def check(ctx: KubernetesContext) -> Finding:
     offenders: list[str] = []
+    locations: list[Location] = []
     # ResourceAnchor phase 1: emit one k8s_sa anchor per
     # ``(namespace, default)`` pair this binding grants to. AC-021
     # intersects against ARGO-003's workflow-SA anchors (also
@@ -89,6 +129,7 @@ def check(ctx: KubernetesContext) -> Finding:
             offenders.append(
                 f"{m.kind}/{m.name} → ServiceAccount/default@{ns_disp}"
             )
+            locations.append(manifest_location(m, m.data))
             built = k8s_sa(ns if ns else None, "default")
             if built is not None:
                 anchor_set[built.identity] = built
@@ -105,5 +146,6 @@ def check(ctx: KubernetesContext) -> Finding:
         resource="kubernetes/manifests",
         description=desc,
         recommendation=RULE.recommendation, passed=passed,
+        locations=locations,
         resource_anchors=tuple(anchor_set.values()),
     )

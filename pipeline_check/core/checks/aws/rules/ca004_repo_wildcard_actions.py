@@ -31,6 +31,38 @@ RULE = Rule(
         "packages, the grant lets a compromise of that consumer "
         "rewrite every dependency the team relies on."
     ),
+    exploit_example=(
+        "# Vulnerable: ``codeartifact:*`` on ``Resource: *``. The\n"
+        "# bound principal can DeleteRepository,\n"
+        "# DisposePackageVersions, UpdatePackageVersionsStatus\n"
+        "# (mark malicious versions as Published), and PutRepository\n"
+        "# PermissionsPolicy on every repo in every domain.\n"
+        "{\n"
+        "  \"Version\": \"2012-10-17\",\n"
+        "  \"Statement\": [{\n"
+        "    \"Effect\": \"Allow\",\n"
+        "    \"Action\": \"codeartifact:*\",\n"
+        "    \"Resource\": \"*\"\n"
+        "  }]\n"
+        "}\n"
+        "\n"
+        "# Safe: enumerate the verbs the workload actually needs\n"
+        "# and scope ``Resource`` to the specific repo / domain.\n"
+        "{\n"
+        "  \"Version\": \"2012-10-17\",\n"
+        "  \"Statement\": [{\n"
+        "    \"Effect\": \"Allow\",\n"
+        "    \"Action\": [\n"
+        "      \"codeartifact:GetPackageVersionAsset\",\n"
+        "      \"codeartifact:ReadFromRepository\"\n"
+        "    ],\n"
+        "    \"Resource\": [\n"
+        "      \"arn:aws:codeartifact:us-east-1:123456789012:repository/myorg/shared\",\n"
+        "      \"arn:aws:codeartifact:us-east-1:123456789012:package/myorg/shared/*/*/*\"\n"
+        "    ]\n"
+        "  }]\n"
+        "}"
+    ),
 )
 
 

@@ -62,7 +62,8 @@ def _codebuild(ctx: CloudFormationContext) -> list[Finding]:
             inline = (
                 "\n" in buildspec
                 or buildspec.startswith((
-                    "version:", "phases:", "|", ">", "arn:aws:s3:::", "s3://",
+                    "version:", "phases:", "|", ">", "{",
+                    "arn:aws:s3:::", "s3://",
                 ))
             )
         out.append(Finding(
@@ -87,7 +88,11 @@ def _codebuild(ctx: CloudFormationContext) -> list[Finding]:
         # malicious activity. Only meaningful when a buildspec string
         # is present; repo-sourced references have nothing to scan.
         if isinstance(buildspec_raw, str) and inline:
-            hits = find_malicious_patterns(buildspec_raw.lower())
+            # A CodeBuild buildspec is confirmed-inline production config,
+            # not surrounding doc/example prose, so YAML-ancestor example
+            # suppression must not drop an IOC nested under a test/demo key.
+            hits = find_malicious_patterns(
+                buildspec_raw.lower(), suppress_examples=False)
             if hits:
                 categories = sorted({c for c, _n, _e in hits})
                 summary = "; ".join(f"{n} ({e!r})" for _c, n, e in hits[:3])
@@ -257,7 +262,20 @@ def _cw_logs(ctx: CloudFormationContext) -> list[Finding]:
         if not name.startswith("/aws/codebuild/"):
             continue
         retention = r.properties.get("RetentionInDays")
-        has_retention = isinstance(retention, (int, float)) and retention > 0
+        # CloudFormation coerces a quoted Integer property ("30"), so a
+        # numeric string is a valid retention value, not "unset".
+        if isinstance(retention, bool):
+            retention_num: float | None = None
+        elif isinstance(retention, (int, float)):
+            retention_num = float(retention)
+        elif isinstance(retention, str):
+            try:
+                retention_num = float(retention.strip())
+            except ValueError:
+                retention_num = None
+        else:
+            retention_num = None
+        has_retention = retention_num is not None and retention_num > 0
         out.append(Finding(
             check_id="CWL-001",
             title="CodeBuild log group has no retention policy",
@@ -297,6 +315,14 @@ def _secrets(ctx: CloudFormationContext) -> list[Finding]:
             rotation_targets.add(target)
         elif isinstance(target, dict) and "Ref" in target:
             rotation_targets.add(f"ref:{target['Ref']}")
+        elif isinstance(target, dict) and "Fn::GetAtt" in target:
+            # !GetAtt Secret.Id / Secret.Arn references the secret by its
+            # logical id (list form ["Secret", "Id"] or short "Secret.Id").
+            att = target["Fn::GetAtt"]
+            if isinstance(att, list) and att:
+                rotation_targets.add(f"ref:{att[0]}")
+            elif isinstance(att, str) and "." in att:
+                rotation_targets.add(f"ref:{att.split('.')[0]}")
     for secret in ctx.resources("AWS::SecretsManager::Secret"):
         name = as_str(secret.properties.get("Name")) or secret.logical_id
         has_rot = (
@@ -358,7 +384,7 @@ def _iam_oidc(ctx: CloudFormationContext) -> list[Finding]:
             if not oidc_audience_pinned(stmt):
                 offending.append(f"stmt[{idx}]({host}): missing :aud condition")
             elif not oidc_subject_pinned(stmt):
-                offending.append(f"stmt[{idx}]({host}): missing :sub condition")
+                offending.append(f"stmt[{idx}]({host}): :sub missing or too broad")
         if not matched:
             continue
         out.append(Finding(

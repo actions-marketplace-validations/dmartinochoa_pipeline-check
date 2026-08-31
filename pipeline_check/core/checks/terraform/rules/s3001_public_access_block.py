@@ -5,7 +5,11 @@ from ...base import Finding, Severity
 from ...rule import Rule
 from ..base import TerraformContext
 from ..s3 import _s3001_pab
-from ._s3_context import artifact_buckets, index_by_bucket
+from ._s3_context import (
+    artifact_buckets,
+    has_unresolved_bucket,
+    index_by_bucket,
+)
 
 RULE = Rule(
     id="S3-001",
@@ -28,10 +32,34 @@ RULE = Rule(
         "missing entirely) lets an ACL or bucket policy make build "
         "artifacts publicly readable."
     ),
+    exploit_example=(
+        "# Vulnerable: no public access block on the artifact\n"
+        "# bucket. A permissive bucket policy or ACL can make\n"
+        "# build artifacts (wheels, JARs, container layers)\n"
+        "# world-readable.\n"
+        'resource "aws_s3_bucket" "artifacts" {\n'
+        '  bucket = "my-pipeline-artifacts"\n'
+        "}\n"
+        "# (no aws_s3_bucket_public_access_block resource)\n"
+        "\n"
+        "# Safe: attach a full public access block.\n"
+        'resource "aws_s3_bucket_public_access_block" "artifacts" {\n'
+        "  bucket                  = aws_s3_bucket.artifacts.id\n"
+        "  block_public_acls       = true\n"
+        "  ignore_public_acls      = true\n"
+        "  block_public_policy     = true\n"
+        "  restrict_public_buckets = true\n"
+        "}"
+    ),
 )
 
 
 def check(ctx: TerraformContext) -> list[Finding]:
     buckets = artifact_buckets(ctx)
-    pab = index_by_bucket(ctx, "aws_s3_bucket_public_access_block")
-    return [_s3001_pab(pab.get(b), b) for b in sorted(buckets)]
+    rtype = "aws_s3_bucket_public_access_block"
+    pab = index_by_bucket(ctx, rtype)
+    unresolved = has_unresolved_bucket(ctx, rtype)
+    return [
+        _s3001_pab(pab.get(b), b, unresolved=unresolved)
+        for b in sorted(buckets)
+    ]

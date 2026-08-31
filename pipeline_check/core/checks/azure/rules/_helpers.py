@@ -8,6 +8,8 @@ from ..._primitives.image_pinning import VERSION_TAG_RE as VERSION_TAG_RE
 from ..._primitives.image_pinning import PinKind, classify
 from ..._primitives.secret_shapes import AWS_KEY_RE as AWS_KEY_RE
 from ..._primitives.secret_shapes import SECRETISH_KEY_RE as SECRETISH_KEY_RE
+from ..._primitives.secret_shapes import aws_key_in as aws_key_in
+from ..._primitives.secret_shapes import is_placeholder_value as is_placeholder_value
 
 TASK_PIN_RE = re.compile(r"@\d+\.\d+(?:\.\d+)?(?:[-.][\w\d]+)*$")
 
@@ -19,7 +21,11 @@ UNTRUSTED_VAR_RE = re.compile(
     r"|Build\.DefinitionName"
     r"|System\.PullRequest\.(?:SourceBranch|SourceRepositoryURI|SourceCommitId"
     r"|PullRequestId|PullRequestNumber)"
-    r")\s*\)"
+    r")\s*\)",
+    # ADO macro names are case-insensitive: ``$(build.sourcebranch)``
+    # expands identically to ``$(Build.SourceBranch)``, so a lowercase
+    # spelling must not evade the taint match.
+    re.IGNORECASE,
 )
 
 # Pool / agent-targeting taint regex used by ADO-030. Composed from
@@ -31,7 +37,8 @@ UNTRUSTED_VAR_RE = re.compile(
 # block are author-controlled and intentionally NOT included.
 POOL_TAINT_RE = re.compile(
     UNTRUSTED_VAR_RE.pattern
-    + r"|\$\{\{\s*parameters\.[A-Za-z_][A-Za-z0-9_]*\s*\}\}"
+    + r"|\$\{\{\s*parameters\.[A-Za-z_][A-Za-z0-9_]*\s*\}\}",
+    re.IGNORECASE,
 )
 
 # Cache-key taint regex used by ADO-012.
@@ -41,7 +48,8 @@ CACHE_TAINT_RE = re.compile(
     r"|Build\.SourceBranch(?:Name)?"
     r"|Build\.SourceVersion(?:Message)?"
     r"|Build\.RequestedFor(?:Email)?"
-    r")\s*\)"
+    r")\s*\)",
+    re.IGNORECASE,
 )
 
 # Pool names that route to Microsoft-hosted agents regardless of shape.

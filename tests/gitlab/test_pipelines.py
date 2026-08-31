@@ -175,7 +175,7 @@ class TestGL003LiteralSecrets:
         f = _run(
             """
             variables:
-              MY_KEY: AKIAIOSFODNN7EXAMPLE
+              MY_KEY: AKIAZ3MHALF2TESTHIJK
             build:
               script: [make]
             """,
@@ -201,6 +201,53 @@ class TestGL003LiteralSecrets:
             """
             variables:
               DATABASE_PASSWORD: $DB_PASS_FROM_CI
+            build:
+              script: [make]
+            """,
+            "GL-003",
+        )
+        assert f.passed
+
+    def test_vendor_example_aws_key_passes(self):
+        # Regression: AWS's documented dummy key is a doc artifact, not a
+        # real credential. The shape-based path now suppresses it like
+        # the entropy-based path already did.
+        f = _run(
+            """
+            variables:
+              MY_KEY: AKIAIOSFODNN7EXAMPLE
+            build:
+              script: [make]
+            """,
+            "GL-003",
+        )
+        assert f.passed
+
+    def test_placeholder_value_passes(self):
+        # Regression: a credential-shaped key holding a placeholder /
+        # redaction marker is a template, not a leaked secret.
+        f = _run(
+            """
+            variables:
+              DATABASE_PASSWORD: REPLACE_ME
+              API_TOKEN: <your-token-here>
+            build:
+              script: [make]
+            """,
+            "GL-003",
+        )
+        assert f.passed
+
+    def test_scanner_template_config_vars_pass(self):
+        # Regression (2026-07 audit, GL-003): GitLab analyzer/template
+        # config variables match the credential-name regex but carry
+        # configuration, not secrets.
+        f = _run(
+            """
+            variables:
+              SECRET_DETECTION_EXCLUDED_PATHS: "docs, spec"
+              SECRET_DETECTION_HISTORIC_SCAN: "true"
+              VAULT_TOKEN_PATH: /run/secrets/vault-token
             build:
               script: [make]
             """,

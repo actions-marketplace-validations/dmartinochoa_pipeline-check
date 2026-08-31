@@ -13,7 +13,7 @@ Design rules:
 - Fixers must be *idempotent* . running one whose output is already
   present returns ``None``, never a no-op patch.
 - Fixers operate on text, not the parsed YAML AST. Parsing and
-  re-serialising destroys comments, blank lines, and YAML style that
+  re-serializing destroys comments, blank lines, and YAML style that
   maintainers rely on; text patches preserve them.
 
 Package layout
@@ -33,31 +33,63 @@ module fails loudly at import time, not silently as a missing fixer.)
 """
 from __future__ import annotations
 
-import difflib
 import logging
 from collections.abc import Callable
 
 import yaml
 
+from .._yaml_strict import safe_load_all_strict
 from ..checks.base import Finding
 
 Fixer = Callable[[str, Finding], "str | None"]
 
-_FIXERS: dict[str, Fixer] = {}
+SAFE = "safe"
+UNSAFE = "unsafe"
+
+_FIXERS: dict[str, tuple[Fixer, str]] = {}
 
 _log = logging.getLogger(__name__)
 
 
-def register(check_id: str) -> Callable[[Fixer], Fixer]:
-    """Decorator used by fixers to register themselves under a check ID."""
+def register(
+    check_id: str, *, safety: str = UNSAFE,
+) -> Callable[[Fixer], Fixer]:
+    """Decorator used by fixers to register themselves under a check ID.
+
+    *safety* must be ``"safe"`` (edit is semantically equivalent or
+    strictly additive) or ``"unsafe"`` (edit relies on inference).
+    Missing labels default to ``"unsafe"`` so unlabeled fixers don't
+    run under the default ``--fix`` mode.
+    """
+    if safety not in (SAFE, UNSAFE):
+        raise ValueError(f"safety must be {SAFE!r} or {UNSAFE!r}, got {safety!r}")
+
     def _wrap(fn: Fixer) -> Fixer:
-        _FIXERS[check_id.upper()] = fn
+        _FIXERS[check_id.upper()] = (fn, safety)
         return fn
     return _wrap
 
 
 def available_fixers() -> list[str]:
     return sorted(_FIXERS.keys())
+
+
+def fixer_safety(check_id: str) -> str | None:
+    """Return the safety tier for *check_id*, or None if no fixer exists."""
+    entry = _FIXERS.get(check_id.upper())
+    return entry[1] if entry is not None else None
+
+
+def iter_fixers() -> list[tuple[str, str]]:
+    """Return ``(check_id, safety)`` for every registered fixer, sorted by ID.
+
+    Backs ``--list-fixers``. One entry per check ID, so a single
+    callable bound to several IDs (the cross-provider comment-out
+    fixers register the same function under each provider's ID)
+    contributes one row per ID. That matches the headline autofixer
+    count, which is ``len(_FIXERS)``.
+    """
+    return sorted((cid, safety) for cid, (_fn, safety) in _FIXERS.items())
 
 
 def _roundtrip_safe(before: str, after: str) -> bool:
@@ -78,7 +110,7 @@ def _roundtrip_safe(before: str, after: str) -> bool:
        and (for multi-doc streams) the same number of documents.
     """
     try:
-        before_docs = list(yaml.safe_load_all(before))
+        before_docs = safe_load_all_strict(before)
     except yaml.YAMLError:
         return True
     # Dockerfile / scalar / empty input: ``safe_load_all`` returned
@@ -86,7 +118,11 @@ def _roundtrip_safe(before: str, after: str) -> bool:
     if not any(isinstance(d, (dict, list)) for d in before_docs):
         return True
     try:
-        after_docs = list(yaml.safe_load_all(after))
+        # Strict loader: a fixer that emits a duplicate mapping key
+        # (the classic "insert a second ``with:`` / ``env:`` block"
+        # bug) must be rejected here, not silently accepted by
+        # last-wins parsing and written to disk.
+        after_docs = safe_load_all_strict(after)
     except yaml.YAMLError:
         _log.warning("autofix output failed to parse as YAML; bailing")
         return False
@@ -114,20 +150,29 @@ def _roundtrip_safe(before: str, after: str) -> bool:
     return True
 
 
-def generate_fix(finding: Finding, content: str) -> str | None:
+def generate_fix(
+    finding: Finding, content: str, *, tier: str = SAFE,
+) -> str | None:
     """Run the registered fixer for ``finding.check_id`` against ``content``.
 
-    Returns the edited text, or ``None`` if no fixer is registered, the
-    fixer decided the content already satisfies the check, or the
-    generated patch would no longer parse as the same shape of YAML
-    document.
+    *tier* controls which fixers are eligible:
 
-    Fixer exceptions propagate . the CLI catches at the call site so a
-    single broken fixer doesn't abort a batch run, but a bug in a
-    fixer surfaces instead of being silently swallowed.
+    - ``"safe"``: only run fixers registered as safe.
+    - ``"unsafe"``: run both safe and unsafe fixers.
+    - ``"unsafe-only"``: only run fixers registered as unsafe.
+
+    Returns the edited text, or ``None`` if no fixer is registered, the
+    fixer's safety doesn't match *tier*, the fixer decided the content
+    already satisfies the check, or the generated patch would no longer
+    parse as the same shape of YAML document.
     """
-    fn = _FIXERS.get(finding.check_id.upper())
-    if fn is None:
+    entry = _FIXERS.get(finding.check_id.upper())
+    if entry is None:
+        return None
+    fn, safety = entry
+    if tier == SAFE and safety != SAFE:
+        return None
+    if tier == "unsafe-only" and safety != UNSAFE:
         return None
     out = fn(content, finding)
     if out is None or out == content:
@@ -139,6 +184,10 @@ def generate_fix(finding: Finding, content: str) -> str | None:
 
 def render_patch(path: str, before: str, after: str) -> str:
     """Unified diff between ``before`` and ``after`` for *path*."""
+    # Imported here, not at module top, so ``difflib`` stays off the
+    # import path of a plain scan (autofix is pulled in by the fix
+    # engine on every CLI load, but a diff is only rendered under --fix).
+    import difflib
     return "".join(
         difflib.unified_diff(
             before.splitlines(keepends=True),
@@ -155,5 +204,5 @@ def render_patch(path: str, before: str, after: str) -> str:
 # import is "package init crashes loudly", not "fixer silently absent".
 # Provider-keyed sibling modules import the shared ``_insert_comment_above``
 # helper from ``_impl``, so ``_impl`` must come first.
-from . import _impl as _impl  # noqa: F401, E402
-from . import helm as helm  # noqa: F401, E402
+from . import _impl as _impl  # noqa: E402
+from . import helm as helm  # noqa: E402

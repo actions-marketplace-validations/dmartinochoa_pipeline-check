@@ -59,6 +59,22 @@ class TestJF001LibraryPinning:
         f = run_check(groovy, "JF-001")
         assert not f.passed
 
+    def test_fails_when_library_pinned_to_single_segment_version(self):
+        groovy = """
+        @Library('shared@1') _
+        pipeline { agent any; stages { stage('x') { steps {} } } }
+        """
+        f = run_check(groovy, "JF-001")
+        assert not f.passed
+
+    def test_passes_when_library_pinned_to_two_segment_version(self):
+        groovy = """
+        @Library('shared@1.0') _
+        pipeline { agent any; stages { stage('x') { steps {} } } }
+        """
+        f = run_check(groovy, "JF-001")
+        assert f.passed
+
     def test_passes_when_no_libraries_referenced(self):
         groovy = """
         pipeline {
@@ -79,7 +95,7 @@ class TestJF008LiteralSecrets:
         pipeline {
             agent any
             environment {
-                AWS_ACCESS_KEY_ID = 'AKIAIOSFODNN7EXAMPLE'
+                AWS_ACCESS_KEY_ID = 'AKIAZ3MHALF2TESTHIJK'
             }
             stages { stage('x') { steps { sh 'aws s3 ls' } } }
         }
@@ -119,6 +135,34 @@ class TestJF008LiteralSecrets:
         }
         """
         f = run_check(groovy, "JF-008")
+        assert f.passed
+
+    def test_fails_on_keyed_hex_in_environment_block(self):
+        groovy = """
+        pipeline {
+            agent any
+            environment {
+                API_KEY = 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef'
+            }
+            stages { stage('x') { steps { sh 'echo deploy' } } }
+        }
+        """
+        f = run_check(groovy, "JF-008")
+        assert not f.passed
+        assert "hex40_keyed" in f.description
+
+    def test_keyed_hex_passes_on_non_credential_key(self):
+        groovy = """
+        pipeline {
+            agent any
+            environment {
+                COMMIT_SHA = 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef'
+            }
+            stages { stage('x') { steps { sh 'echo deploy' } } }
+        }
+        """
+        f = run_check(groovy, "JF-008")
+        # COMMIT_SHA doesn't suggest a credential, so keyed-hex doesn't fire
         assert f.passed
 
     def test_passes_with_no_credential_shaped_strings(self):

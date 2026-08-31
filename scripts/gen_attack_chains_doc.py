@@ -30,7 +30,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from pipeline_check.core.chains import engine  # noqa: E402
+from pipeline_check.core.chains import engine
 
 DOC_PATH = REPO_ROOT / "docs" / "attack_chains.md"
 START = "<!-- chain-catalog:start -->"
@@ -48,6 +48,7 @@ _PREFIX_TO_PROVIDER: dict[str, str] = {
     "JF": "jenkins", "CC": "circleci", "GCB": "cloudbuild",
     "DF": "dockerfile", "K8S": "kubernetes",
     "TF": "terraform", "CF": "cloudformation",
+    "SCM": "scm_github",
 }
 _ANCHORED_PROVIDERS = frozenset(_PREFIX_TO_PROVIDER.values())
 
@@ -57,7 +58,7 @@ def _severity_chip(severity: str) -> str:
     return f'<span class="pg-sev pg-sev--{sev_lc}">{severity}</span>'
 
 
-def _render_chain(rule) -> str:  # noqa: ANN001  ChainRule is a dataclass
+def _render_chain(rule) -> str:
     """One ``<div class="pg-rule pg-rule--<sev>">`` card per chain."""
     sev = rule.severity.value
     sev_lc = sev.lower()

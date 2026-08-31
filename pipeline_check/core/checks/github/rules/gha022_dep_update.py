@@ -1,9 +1,8 @@
 """GHA-022, dependency update command bypasses lockfile pins."""
 from __future__ import annotations
 
-from typing import Any
-
-from ...base import Finding, Severity, blob_lower, has_dep_update
+from ..._primitives.blob_rule import yaml_blob_check
+from ...base import Severity, has_dep_update
 from ...rule import Rule
 
 RULE = Rule(
@@ -24,32 +23,31 @@ RULE = Rule(
         "`bundle update`, `cargo update`, `go get -u`, and "
         "`composer update`. These commands bypass lockfile pins and pull "
         "whatever version is currently latest. Tooling upgrades "
-        "(`pip install --upgrade pip`) are exempted."
+        "(`pip install --upgrade pip`, `pip install -U poetry`, "
+        "`pip install --upgrade black`, etc.) are exempted."
     ),
     known_fp=(
         "Common build-tool bootstrapping idioms "
         "(``pip install --upgrade pip``, "
-        "``pip install --upgrade setuptools wheel virtualenv``) "
-        "and security-tool installs (``pip install --upgrade "
-        "pip-audit / cyclonedx-bom / semgrep``) are exempted by "
-        "the ``DEP_UPDATE_RE`` tooling allowlist. Other "
+        "``pip install --upgrade setuptools wheel virtualenv``), "
+        "security-tool installs (``pip install --upgrade "
+        "pip-audit / cyclonedx-bom / semgrep``), and quality-tool "
+        "installs (``pip install --upgrade black / ruff / pytest / "
+        "pre-commit``) are exempted by the tooling allowlist. "
+        "Package-manager self-upgrades (``npm install -g npm``, "
+        "``corepack enable``) are also exempted. Other "
         "tooling-upgrade idioms not yet on the list can still "
         "trip the rule. Defaults to MEDIUM confidence so CI "
         "gates can require ``--min-confidence HIGH`` to ignore.",
     ),
 )
 
-def check(path: str, doc: dict[str, Any]) -> Finding:
-    blob = blob_lower(doc)
-    found = has_dep_update(blob)
-    passed = not found
-    desc = (
-        "No dependency-update commands detected."
-        if passed else
+
+check = yaml_blob_check(
+    RULE,
+    scanner=has_dep_update,
+    pass_desc="No dependency-update commands detected.",
+    fail_desc=lambda _: (
         "Dependency-update commands detected that bypass lockfile pins."
-    )
-    return Finding(
-        check_id=RULE.id, title=RULE.title, severity=RULE.severity,
-        resource=path, description=desc,
-        recommendation=RULE.recommendation, passed=passed,
-    )
+    ),
+)

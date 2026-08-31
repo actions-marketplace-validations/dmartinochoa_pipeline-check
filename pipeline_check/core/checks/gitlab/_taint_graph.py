@@ -1,7 +1,7 @@
 """Per-pipeline taint graph for the GitLab CI dataflow rules.
 
 The GitLab analogue of the GHA engine in
-``pipeline_check.core.checks.github._taint_graph``. Generalises
+``pipeline_check.core.checks.github._taint_graph``. Generalizes
 ``GL-002``'s single-job script-injection detection to a pipeline-
 wide reachability problem that follows the canonical GitLab cross-
 job propagation channel: ``artifacts.reports.dotenv``.
@@ -49,6 +49,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..base import TaintFlow
 from .base import iter_jobs, job_scripts
 from .rules._helpers import UNTRUSTED_VAR_RE
 
@@ -84,6 +85,24 @@ class TaintPath:
         chain.append(f"sink@{self.sink_location}({self.sink_consumer})")
         return " -> ".join(chain)
 
+    def to_flow(self) -> TaintFlow:
+        """Structured ``source_job -> sink_job`` edge for the chain engine.
+
+        GitLab job breadcrumbs are ``job_name:script[idx]`` (colon-
+        separated), so the job id is the prefix before the first ``:``.
+        The ``extends:`` analyzer locates a source in a hidden template's
+        ``variables:`` block (``tpl.variables.X``, no colon) whose taint
+        is inherited into and consumed by the same job, so when the
+        source carries no job breadcrumb the flow is a self-edge on the
+        sink (consuming) job.
+        """
+        sink_job = self.sink_location.split(":", 1)[0]
+        src_loc = self.source.location
+        source_job = src_loc.split(":", 1)[0] if ":" in src_loc else sink_job
+        return TaintFlow(
+            source_job=source_job, sink_job=sink_job, rendered=self.render(),
+        )
+
 
 # ── Dotenv write detector ─────────────────────────────────────────
 
@@ -92,12 +111,30 @@ class TaintPath:
 #   echo "KEY=value" > taint.env
 #   echo "KEY=value" >> taint.env
 # Captures the var name and the RHS value text. The redirect
+# Shell variable reference (``$NAME`` / ``${NAME}``). Static, so it's
+# compiled once at module load rather than per script line in the
+# quote-aware walker below.
+_VAR_REF_RE = re.compile(r"\$\{?(?P<name>[A-Za-z_][A-Za-z0-9_]*)\}?")
+
 # target is captured separately so downstream we can confirm the
 # job's ``artifacts.reports.dotenv`` exposes the same path.
 _DOTENV_WRITE_RE = re.compile(
     r"""
     echo\s+
     ["']?(?P<name>[A-Za-z_][A-Za-z0-9_]*)=(?P<val>[^"'\n]*?)["']?\s*
+    >>?\s*
+    (?P<file>[^\s|;&]+)
+    """,
+    re.VERBOSE,
+)
+
+# ``printf "NAME=%s" "$VAR" > file`` — the key is inside the format
+# string, the tainted value is a following argument.
+_DOTENV_PRINTF_RE = re.compile(
+    r"""
+    printf\s+
+    ["'][^"'\n]*?(?P<name>[A-Za-z_][A-Za-z0-9_]*)=[^"'\n]*["']
+    (?P<val>[^|;&>\n]*)
     >>?\s*
     (?P<file>[^\s|;&]+)
     """,
@@ -113,12 +150,13 @@ def _extract_dotenv_writes(script_line: str) -> list[tuple[str, str, str]]:
     multi-line scripts still get fully covered.
     """
     out: list[tuple[str, str, str]] = []
-    for m in _DOTENV_WRITE_RE.finditer(script_line):
-        name = m.group("name")
-        val = m.group("val")
-        target = m.group("file").strip()
-        if name and target:
-            out.append((name, val, target))
+    for pattern in (_DOTENV_WRITE_RE, _DOTENV_PRINTF_RE):
+        for m in pattern.finditer(script_line):
+            name = m.group("name")
+            val = m.group("val")
+            target = m.group("file").strip()
+            if name and target:
+                out.append((name, val, target))
     return out
 
 
@@ -140,9 +178,6 @@ def _iter_var_refs(text: str, names: set[str]) -> Iterator[tuple[str, int]]:
     in_single = False
     in_double = False
     i = 0
-    pattern = re.compile(
-        r"\$\{?(?P<name>[A-Za-z_][A-Za-z0-9_]*)\}?",
-    )
     while i < len(text):
         ch = text[i]
         if ch == "'" and not in_double:
@@ -154,7 +189,7 @@ def _iter_var_refs(text: str, names: set[str]) -> Iterator[tuple[str, int]]:
             i += 1
             continue
         if ch == "$" and not (in_single or in_double):
-            m = pattern.match(text, i)
+            m = _VAR_REF_RE.match(text, i)
             if m and m.group("name") in names:
                 yield m.group("name"), i
                 i = m.end()
@@ -442,7 +477,7 @@ def _references_unquoted_var(text: str, var_name: str) -> bool:
 
     Mirrors the quote-state walker used by the dotenv consumer
     pass: a reference inside ``"..."`` is treated as safe
-    (single-token expansion); single quotes neutralise entirely.
+    (single-token expansion); single quotes neutralize entirely.
     """
     in_single = False
     in_double = False
@@ -472,7 +507,7 @@ def _references_unquoted_var(text: str, var_name: str) -> bool:
 _NON_JOB_KEYS: frozenset[str] = frozenset({
     "variables", "default", "stages", "include", "workflow",
     "image", "services", "before_script", "after_script",
-    "script", "cache",
+    "cache", "pages",
 })
 
 

@@ -1,12 +1,14 @@
 """CB-010 (Terraform). CodeBuild webhook allows fork-PR builds."""
 from __future__ import annotations
 
-from typing import Any
-
 from ...base import Finding, Severity
 from ...rule import Rule
 from ..base import TerraformContext
-from ..extended import _cb010
+from ..extended import (
+    _cb010,
+    index_codebuild_webhooks,
+    webhook_for_project,
+)
 
 RULE = Rule(
     id="CB-010",
@@ -22,22 +24,47 @@ RULE = Rule(
     ),
     docs_note=(
         "Reads ``aws_codebuild_webhook.filter_group[*].filter[*]``. "
-        "For each group that covers a ``PULL_REQUEST_*`` event, fires "
-        "when no sibling ``ACTOR_ACCOUNT_ID`` filter constrains the "
-        "PR author."
+        "For each group that covers a pre-merge pull-request event "
+        "(``PULL_REQUEST_CREATED``, ``PULL_REQUEST_UPDATED``, or "
+        "``PULL_REQUEST_REOPENED`` — the ones a fork author triggers), "
+        "fires when no sibling ``ACTOR_ACCOUNT_ID`` filter constrains "
+        "the PR author. ``PULL_REQUEST_MERGED`` runs post-merge on the "
+        "base branch, so it isn't treated as a fork-controlled event."
+    ),
+    exploit_example=(
+        "# Vulnerable: build runs on PULL_REQUEST_CREATED or\n"
+        "# PULL_REQUEST_UPDATED from forks. A fork PR can inject\n"
+        "# arbitrary code that executes with the project's IAM role.\n"
+        'resource "aws_codebuild_project" "ci" {\n'
+        "  source {\n"
+        '    type     = "GITHUB"\n'
+        '    location = "https://github.com/org/repo.git"\n'
+        "  }\n"
+        "}\n"
+        'resource "aws_codebuild_webhook" "pr" {\n'
+        "  project_name = aws_codebuild_project.ci.name\n"
+        "  filter_group {\n"
+        '    filter { type = "EVENT" pattern = "PULL_REQUEST_CREATED" }\n'
+        "  }\n"
+        "}\n"
+        "\n"
+        "# Safe: restrict to PUSH events on the main branch.\n"
+        'resource "aws_codebuild_webhook" "push" {\n'
+        "  project_name = aws_codebuild_project.ci.name\n"
+        "  filter_group {\n"
+        '    filter { type = "EVENT"      pattern = "PUSH" }\n'
+        '    filter { type = "HEAD_REF"   pattern = "^refs/heads/main$" }\n'
+        "  }\n"
+        "}"
     ),
 )
 
 
 def check(ctx: TerraformContext) -> list[Finding]:
-    webhooks: dict[str, dict[str, Any]] = {
-        w.values.get("project_name", ""): w.values
-        for w in ctx.resources("aws_codebuild_webhook")
-    }
+    webhooks = index_codebuild_webhooks(ctx)
     findings: list[Finding] = []
     for r in ctx.resources("aws_codebuild_project"):
-        name = r.values.get("name") or r.name
-        hook = webhooks.get(name)
+        hook = webhook_for_project(webhooks, r)
         if hook is not None:
             findings.append(_cb010(hook, r.address))
     return findings

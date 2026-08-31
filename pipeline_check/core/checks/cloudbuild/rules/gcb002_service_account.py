@@ -8,7 +8,7 @@ grants more GCP APIs than a typical build needs, and a compromised
 step (or a vulnerable builder image) can reuse those credentials.
 
 Binding a dedicated, least-privilege service account is the single
-highest-leverage Cloud Build hardening step and the only durable
+highest-impact Cloud Build hardening step and the only durable
 way to scope the blast radius of a compromised build step.
 """
 from __future__ import annotations
@@ -38,10 +38,31 @@ RULE = Rule(
     docs_note=(
         "The default Cloud Build service account historically held "
         "``roles/cloudbuild.builds.builder`` plus project-level editor "
-        "in many organisations. Even under the GCP April-2024 default-"
+        "in many organizations. Even under the GCP April-2024 default-"
         "identity change, the default SA is still broader than what "
         "a single pipeline needs. Explicit ``serviceAccount:`` is "
         "required to pass."
+    ),
+    exploit_example=(
+        "# Vulnerable: no ``serviceAccount:`` declared. Cloud Build\n"
+        "# falls back to the legacy default\n"
+        "# ``<proj-num>@cloudbuild.gserviceaccount.com``, which on\n"
+        "# older projects carries Project Editor or has manually-\n"
+        "# granted Storage Admin / Run Admin / etc. Any build (even\n"
+        "# from a fork PR trigger) executes with that authority.\n"
+        "steps:\n"
+        "  - name: gcr.io/cloud-builders/gcloud@sha256:abc123...\n"
+        "    args: [deploy]\n"
+        "# no serviceAccount: line — uses the legacy default SA\n"
+        "\n"
+        "# Safe: declare a custom service account scoped to the\n"
+        "# minimum roles this pipeline needs (Cloud Run Deployer\n"
+        "# on a single service, Artifact Registry Reader on the\n"
+        "# specific repo). Each pipeline gets its own SA.\n"
+        "serviceAccount: projects/myproj/serviceAccounts/cd-pipeline@myproj.iam.gserviceaccount.com\n"
+        "steps:\n"
+        "  - name: gcr.io/cloud-builders/gcloud@sha256:abc123...\n"
+        "    args: [deploy]"
     ),
 )
 

@@ -22,6 +22,7 @@ from pipeline_check.core.checks.base import (
     Finding,
     ResourceAnchor,
     Severity,
+    TaintFlow,
 )
 from pipeline_check.core.gate import GateConfig, evaluate_gate
 
@@ -38,6 +39,7 @@ def _f(
     job_anchors: tuple[str, ...] = (),
     path_evidence: tuple[str, ...] = (),
     resource_anchors: tuple[ResourceAnchor, ...] = (),
+    taint_flows: tuple[TaintFlow, ...] = (),
 ) -> Finding:
     return Finding(
         check_id=check_id,
@@ -51,6 +53,7 @@ def _f(
         job_anchors=job_anchors,
         path_evidence=path_evidence,
         resource_anchors=resource_anchors,
+        taint_flows=taint_flows,
     )
 
 
@@ -188,8 +191,12 @@ class TestEngine:
             "AC-017", "AC-018", "AC-019", "AC-020",
             "AC-021", "AC-022", "AC-023", "AC-024",
             "AC-025", "AC-026", "AC-027", "AC-028", "AC-029",
+            "AC-030", "AC-031", "AC-032", "AC-033", "AC-034",
+            "AC-035", "AC-036", "AC-037", "AC-038", "AC-039",
+            "AC-040", "AC-041", "AC-042",
             "XPC-001", "XPC-002", "XPC-003", "XPC-004", "XPC-005",
-            "XPC-006", "XPC-007", "XPC-008", "XPC-009",
+            "XPC-006", "XPC-007", "XPC-008", "XPC-009", "XPC-010",
+            "CXPC-001", "CXPC-002", "CXPC-003", "CXPC-004",
         }
 
     def test_evaluate_empty_findings_returns_empty(self):
@@ -334,6 +341,122 @@ class TestChainAC001:
         assert ac1.confidence is Confidence.MEDIUM
 
 
+class TestChainAC035:
+    """AC-035 — AI agent is both reviewer and committer."""
+
+    def test_fires_on_gha103_plus_gha104(self):
+        wf = ".github/workflows/ai-review.yml"
+        out = chains_pkg.evaluate([_f("GHA-103", wf), _f("GHA-104", wf)])
+        ac = next((c for c in out if c.chain_id == "AC-035"), None)
+        assert ac is not None
+        assert ac.severity is Severity.CRITICAL
+        assert ac.triggering_check_ids == ["GHA-103", "GHA-104"]
+        assert ac.resources == [wf]
+
+    def test_fires_on_gha103_plus_gha106(self):
+        wf = ".github/workflows/ai-review.yml"
+        out = chains_pkg.evaluate([_f("GHA-103", wf), _f("GHA-106", wf)])
+        ac = next((c for c in out if c.chain_id == "AC-035"), None)
+        assert ac is not None
+        assert ac.triggering_check_ids == ["GHA-103", "GHA-106"]
+
+    def test_dedupes_to_one_when_both_write_legs_present(self):
+        wf = ".github/workflows/ai-review.yml"
+        out = chains_pkg.evaluate([
+            _f("GHA-103", wf), _f("GHA-104", wf), _f("GHA-106", wf),
+        ])
+        ac035 = [c for c in out if c.chain_id == "AC-035"]
+        assert len(ac035) == 1
+        # GHA-104 wins the dedupe (iterated first).
+        assert ac035[0].triggering_check_ids == ["GHA-103", "GHA-104"]
+
+    def test_does_not_fire_on_different_workflows(self):
+        out = chains_pkg.evaluate([
+            _f("GHA-103", ".github/workflows/a.yml"),
+            _f("GHA-106", ".github/workflows/b.yml"),
+        ])
+        assert not any(c.chain_id == "AC-035" for c in out)
+
+    def test_does_not_fire_without_write_leg(self):
+        wf = ".github/workflows/ai-review.yml"
+        out = chains_pkg.evaluate([_f("GHA-103", wf)])
+        assert not any(c.chain_id == "AC-035" for c in out)
+
+    def test_does_not_fire_when_reviewer_leg_passed(self):
+        wf = ".github/workflows/ai-review.yml"
+        out = chains_pkg.evaluate([
+            _f("GHA-103", wf, passed=True), _f("GHA-104", wf),
+        ])
+        assert not any(c.chain_id == "AC-035" for c in out)
+
+
+class TestChainAC036:
+    """AC-036 — untrusted-code execution with no egress containment."""
+
+    def test_fires_on_injection_plus_no_egress(self):
+        wf = ".github/workflows/deploy.yml"
+        out = chains_pkg.evaluate([_f("GHA-003", wf), _f("GHA-108", wf)])
+        ac = next((c for c in out if c.chain_id == "AC-036"), None)
+        assert ac is not None
+        assert ac.severity is Severity.HIGH
+        assert ac.triggering_check_ids == ["GHA-003", "GHA-108"]
+        assert ac.resources == [wf]
+
+    def test_fires_on_curlbash_plus_audit_mode(self):
+        wf = ".github/workflows/ci.yml"
+        out = chains_pkg.evaluate([_f("GHA-016", wf), _f("GHA-107", wf)])
+        ac = next((c for c in out if c.chain_id == "AC-036"), None)
+        assert ac is not None
+        assert "GHA-016" in ac.triggering_check_ids
+        assert "GHA-107" in ac.triggering_check_ids
+
+    def test_confirmed_reachable_when_same_job(self):
+        wf = ".github/workflows/deploy.yml"
+        out = chains_pkg.evaluate([
+            _f("GHA-003", wf, job_anchors=("deploy",)),
+            _f("GHA-108", wf, job_anchors=("deploy",)),
+        ])
+        ac = next((c for c in out if c.chain_id == "AC-036"), None)
+        assert ac is not None
+        assert ac.confirmed_reachable is True
+        assert ac.confidence is Confidence.HIGH
+        assert "deploy" in ac.reachability_note
+
+    def test_unconfirmed_when_different_jobs(self):
+        wf = ".github/workflows/deploy.yml"
+        out = chains_pkg.evaluate([
+            _f("GHA-003", wf, job_anchors=("build",)),
+            _f("GHA-108", wf, job_anchors=("release",)),
+        ])
+        ac = next((c for c in out if c.chain_id == "AC-036"), None)
+        assert ac is not None
+        assert ac.confirmed_reachable is False
+
+    def test_does_not_fire_without_egress_leg(self):
+        wf = ".github/workflows/ci.yml"
+        out = chains_pkg.evaluate([_f("GHA-003", wf)])
+        assert not any(c.chain_id == "AC-036" for c in out)
+
+    def test_does_not_fire_without_exec_leg(self):
+        wf = ".github/workflows/ci.yml"
+        out = chains_pkg.evaluate([_f("GHA-108", wf)])
+        assert not any(c.chain_id == "AC-036" for c in out)
+
+    def test_does_not_fire_on_different_workflows(self):
+        out = chains_pkg.evaluate([
+            _f("GHA-003", ".github/workflows/a.yml"),
+            _f("GHA-108", ".github/workflows/b.yml"),
+        ])
+        assert not any(c.chain_id == "AC-036" for c in out)
+
+    def test_does_not_fire_when_exec_leg_passed(self):
+        wf = ".github/workflows/ci.yml"
+        out = chains_pkg.evaluate([
+            _f("GHA-003", wf, passed=True), _f("GHA-108", wf),
+        ])
+        assert not any(c.chain_id == "AC-036" for c in out)
+
+
 class TestChainAC005:
     """AC-005 — cross-provider; resources may differ between legs."""
 
@@ -374,6 +497,10 @@ class TestChainAC005:
         assert len(ac5) == 1
         chain = ac5[0]
         assert chain.confirmed_reachable is True
+        # Shared image identity is a structural-identity confirmation,
+        # not job co-location and not a traced taint path.
+        assert chain.via_structural is True
+        assert chain.via_dataflow is False
         assert "ghcr.io/acme/app" in chain.reachability_note
         assert chain.resources == ["ghcr.io/acme/app"]
         assert chain.confidence is Confidence.HIGH
@@ -550,20 +677,98 @@ class TestChainAC002:
                 wf,
                 job_anchors=("release",),
                 path_evidence=(rendered_path,),
+                taint_flows=(
+                    TaintFlow(
+                        source_job="extract",
+                        sink_job="release",
+                        rendered=rendered_path,
+                    ),
+                ),
             ),
             _f("GHA-014", wf, job_anchors=("release",)),
         ])
         ac2 = next(c for c in out if c.chain_id == "AC-002")
         assert ac2.confirmed_reachable is True
+        # Phase-2: confirmed by a real source->sink taint path, not just
+        # shared-job co-location.
+        assert ac2.via_dataflow is True
+        assert "extract" in ac2.reachability_note
         assert "release" in ac2.reachability_note
         assert rendered_path in ac2.narrative
         assert "TAINT-002" in ac2.triggering_check_ids
+
+    def test_cross_document_reusable_workflow_dataflow(self):
+        # A caller passes untrusted input into a reusable workflow
+        # (TAINT-003 confirmed the forward, so its cross_document flow's
+        # sink_job is the resolved callee path) and that callee deploys
+        # without an environment gate (GHA-014 on the callee path). The
+        # injection reaches the ungated deploy across the boundary.
+        caller = ".github/workflows/caller.yml"
+        callee = ".github/workflows/deploy.yml"
+        rendered = (
+            "${{ github.event.issue.title }}@call.with.title -> "
+            "jobs.call.with.title -> "
+            "sink@uses:./.github/workflows/deploy.yml(inputs.title@...)"
+        )
+        out = chains_pkg.evaluate([
+            _f(
+                "TAINT-003",
+                caller,
+                taint_flows=(
+                    TaintFlow(
+                        source_job="call",
+                        sink_job=callee,
+                        rendered=rendered,
+                        cross_document=True,
+                    ),
+                ),
+            ),
+            _f("GHA-014", callee, job_anchors=("deploy",)),
+        ])
+        ac2 = [c for c in out if c.chain_id == "AC-002"]
+        assert len(ac2) == 1
+        c = ac2[0]
+        assert c.via_dataflow is True
+        assert c.confirmed_reachable is True
+        assert set(c.resources) == {caller, callee}
+        assert set(c.triggering_check_ids) == {"TAINT-003", "GHA-014"}
+        assert rendered in c.narrative
+
+    def test_no_cross_document_chain_when_callee_unresolved(self):
+        # An unconfirmed forward (callee not loaded) keeps the raw ref as
+        # the flow sink, which never matches a GHA-014 resource path, so
+        # no cross-document chain fires (no false reachability claim).
+        out = chains_pkg.evaluate([
+            _f(
+                "TAINT-003",
+                ".github/workflows/caller.yml",
+                taint_flows=(
+                    TaintFlow(
+                        source_job="call",
+                        sink_job="org/repo/.github/workflows/x.yml@sha",
+                        rendered="...",
+                        cross_document=True,
+                    ),
+                ),
+            ),
+            _f("GHA-014", ".github/workflows/deploy.yml", job_anchors=("deploy",)),
+        ])
+        assert not any(
+            c.chain_id == "AC-002" and len(c.resources) == 2 for c in out
+        )
 
 
 class TestChainAC003:
     """AC-003 — Unpinned action to credential exfiltration."""
 
     WF = ".github/workflows/release.yml"
+
+    def test_does_not_fire_when_legs_on_different_workflows(self):
+        out = chains_pkg.evaluate([
+            _f("GHA-001", ".github/workflows/a.yml"),
+            _f("GHA-005", ".github/workflows/b.yml"),
+        ])
+        assert not any(c.chain_id == "AC-003" for c in out)
 
     def test_reachability_confirmed_when_anchor_jobs_intersect(self):
         # GHA-001 fires in job ``release`` (an unpinned action lives
@@ -617,6 +822,13 @@ class TestChainAC004:
         assert len(ac4) == 1
         assert "T1543" in ac4[0].mitre_attack
 
+    def test_does_not_fire_when_legs_on_different_workflows(self):
+        out = chains_pkg.evaluate([
+            _f("GHA-002", ".github/workflows/a.yml"),
+            _f("GHA-012", ".github/workflows/b.yml"),
+        ])
+        assert not any(c.chain_id == "AC-004" for c in out)
+
     def test_reachability_confirmed_when_anchor_jobs_intersect(self):
         out = chains_pkg.evaluate([
             _f("GHA-002", self.WF, job_anchors=("build",)),
@@ -658,6 +870,13 @@ class TestChainAC006:
         ac6 = [c for c in out if c.chain_id == "AC-006"]
         assert len(ac6) == 1
         assert ac6[0].severity is Severity.HIGH
+
+    def test_does_not_fire_when_legs_on_different_workflows(self):
+        out = chains_pkg.evaluate([
+            _f("GHA-002", ".github/workflows/a.yml"),
+            _f("GHA-011", ".github/workflows/b.yml"),
+        ])
+        assert not any(c.chain_id == "AC-006" for c in out)
 
     def test_reachability_confirmed_when_anchor_jobs_intersect(self):
         # Same job runs PR-head code AND has a poisonable cache key.
@@ -702,6 +921,13 @@ class TestChainAC008:
         ac8 = [c for c in out if c.chain_id == "AC-008"]
         assert len(ac8) == 1
         assert "T1195.001" in ac8[0].mitre_attack
+
+    def test_does_not_fire_when_legs_on_different_workflows(self):
+        out = chains_pkg.evaluate([
+            _f("GHA-021", ".github/workflows/a.yml"),
+            _f("GHA-029", ".github/workflows/b.yml"),
+        ])
+        assert not any(c.chain_id == "AC-008" for c in out)
 
     def test_reachability_confirmed_when_anchor_jobs_intersect(self):
         # Same job both skips the lockfile AND installs from an
@@ -934,6 +1160,16 @@ class TestChainAC010:
         assert len(ac10) == 1
         assert ac10[0].severity is Severity.CRITICAL
 
+    def test_does_not_fire_when_legs_on_different_workflows(self):
+        # Self-hosted-runner workflow file is one repo; the curl-pipe
+        # leg fires on a separate workflow. The chain narrative is
+        # per-file, so neither AC-010 variant should match.
+        out = chains_pkg.evaluate([
+            _f("GHA-012", ".github/workflows/a.yml"),
+            _f("GHA-016", ".github/workflows/b.yml"),
+        ])
+        assert not any(c.chain_id == "AC-010" for c in out)
+
     def test_fires_with_self_hosted_plus_token_persistence(self):
         wf = ".github/workflows/release.yml"
         out = chains_pkg.evaluate([
@@ -1052,6 +1288,9 @@ class TestChainAC011:
         assert len(ac11) == 1
         chain = ac11[0]
         assert chain.confirmed_reachable is True
+        # Shared ServiceAccount identity is a structural-identity link.
+        assert chain.via_structural is True
+        assert chain.via_dataflow is False
         assert "prod/build-runner" in chain.reachability_note
         assert chain.resources == ["prod/build-runner"]
         assert chain.confidence is Confidence.HIGH
@@ -2162,11 +2401,19 @@ class TestChainAC022:
                 self.WF,
                 job_anchors=("release",),
                 path_evidence=(rendered_path,),
+                taint_flows=(
+                    TaintFlow(
+                        source_job="extract",
+                        sink_job="release",
+                        rendered=rendered_path,
+                    ),
+                ),
             ),
             _f("GL-004", self.WF, job_anchors=("release",)),
         ])
         ac22 = next(c for c in out if c.chain_id == "AC-022")
         assert ac22.confirmed_reachable is True
+        assert ac22.via_dataflow is True
         assert "release" in ac22.reachability_note
         assert rendered_path in ac22.narrative
         assert "TAINT-004" in ac22.triggering_check_ids
@@ -2189,11 +2436,22 @@ class TestChainAC022:
                 self.WF,
                 job_anchors=("release",),
                 path_evidence=(rendered_path,),
+                taint_flows=(
+                    # extends inheritance is a self-edge: the tainted
+                    # template var is inherited into and consumed by the
+                    # same (release) job.
+                    TaintFlow(
+                        source_job="release",
+                        sink_job="release",
+                        rendered=rendered_path,
+                    ),
+                ),
             ),
             _f("GL-004", self.WF, job_anchors=("release",)),
         ])
         ac22 = next(c for c in out if c.chain_id == "AC-022")
         assert ac22.confirmed_reachable is True
+        assert ac22.via_dataflow is True
         assert "release" in ac22.reachability_note
         assert rendered_path in ac22.narrative
         assert "TAINT-008" in ac22.triggering_check_ids
@@ -2325,6 +2583,40 @@ class TestChainAC023:
         assert chain.confirmed_reachable is False
         assert chain.reachability_note == ""
         assert chain.confidence is Confidence.MEDIUM
+
+    def test_taint006_confirms_cross_task_dataflow(self):
+        # TKN-003 fires in task ``extract``; the privileged step
+        # (TKN-002) is in a *different* task ``build``; TAINT-006
+        # reports a results flow extract -> build. The injection
+        # reaches the privileged container across tasks — a proven
+        # dataflow path the step-level shared check can't see.
+        rendered = (
+            "$(params.title)@extract.steps[0] -> "
+            "tasks.<producer>.results.<output> -> "
+            "tasks.build.params.title -> "
+            "sink@build.steps[0]($(params.title))"
+        )
+        out = chains_pkg.evaluate([
+            _f("TKN-003", self.TASK, job_anchors=("Task/extract:extract",)),
+            _f("TKN-002", self.TASK, job_anchors=("Task/build:build",)),
+            _f(
+                "TAINT-006",
+                self.TASK,
+                taint_flows=(
+                    TaintFlow(
+                        source_job="Task/extract",
+                        sink_job="Task/build",
+                        rendered=rendered,
+                    ),
+                ),
+            ),
+        ])
+        chain = next(c for c in out if c.chain_id == "AC-023")
+        assert chain.confirmed_reachable is True
+        assert chain.via_dataflow is True
+        assert "taint path" in chain.reachability_note
+        assert rendered in chain.narrative
+        assert "TAINT-006" in chain.triggering_check_ids
 
 
 class TestChainAC024:
@@ -2549,6 +2841,40 @@ class TestChainAC025:
         assert chain.reachability_note == ""
         assert chain.confidence is Confidence.MEDIUM
 
+    def test_taint007_confirms_cross_template_dataflow(self):
+        # ARGO-005 fires in template ``read-title``; the privileged
+        # container (ARGO-002) is in a *different* template ``ship``;
+        # TAINT-007 reports an outputs.parameters flow read-title ->
+        # ship. The injection reaches the privileged container across
+        # templates — a proven dataflow path.
+        rendered = (
+            "{{inputs.parameters.title}}@read-title.script -> "
+            "tasks.<producer>.outputs.parameters.<output> -> "
+            "tasks.consume.arguments.clean_title -> "
+            "sink@ship.script({{inputs.parameters.clean_title}})"
+        )
+        out = chains_pkg.evaluate([
+            _f("ARGO-005", self.WF, job_anchors=("Workflow/build:read-title",)),
+            _f("ARGO-002", self.WF, job_anchors=("Workflow/build:ship",)),
+            _f(
+                "TAINT-007",
+                self.WF,
+                taint_flows=(
+                    TaintFlow(
+                        source_job="Workflow/build:read-title",
+                        sink_job="Workflow/build:ship",
+                        rendered=rendered,
+                    ),
+                ),
+            ),
+        ])
+        chain = next(c for c in out if c.chain_id == "AC-025")
+        assert chain.confirmed_reachable is True
+        assert chain.via_dataflow is True
+        assert "taint path" in chain.reachability_note
+        assert rendered in chain.narrative
+        assert "TAINT-007" in chain.triggering_check_ids
+
 
 class TestChainAC026:
     """AC-026 — Buildkite injection lands on auto-deploy step."""
@@ -2647,6 +2973,39 @@ class TestChainAC026:
         assert ac26.confirmed_reachable is False
         assert ac26.reachability_note == ""
         assert ac26.confidence is Confidence.MEDIUM
+
+    def test_taint005_confirms_cross_step_dataflow(self):
+        # BK-003 fires on step ``extract``; the ungated deploy
+        # (BK-007) is a *different* step ``deploy``; TAINT-005 reports
+        # a meta-data round-trip extract -> deploy. The injected value
+        # is read back by the deploy step — a proven dataflow path the
+        # step-level shared check can't see.
+        rendered = (
+            "$BUILDKITE_PULL_REQUEST_TITLE@extract -> "
+            "steps.extract.meta-data.title -> "
+            "sink@deploy(buildkite-agent meta-data get title)"
+        )
+        out = chains_pkg.evaluate([
+            _f("BK-003", self.PIPELINE, job_anchors=("extract",)),
+            _f("BK-007", self.PIPELINE, job_anchors=("deploy",)),
+            _f(
+                "TAINT-005",
+                self.PIPELINE,
+                taint_flows=(
+                    TaintFlow(
+                        source_job="extract",
+                        sink_job="deploy",
+                        rendered=rendered,
+                    ),
+                ),
+            ),
+        ])
+        ac26 = next(c for c in out if c.chain_id == "AC-026")
+        assert ac26.confirmed_reachable is True
+        assert ac26.via_dataflow is True
+        assert "taint path" in ac26.reachability_note
+        assert rendered in ac26.narrative
+        assert "TAINT-005" in ac26.triggering_check_ids
 
 
 class TestChainAC027:
@@ -2821,6 +3180,137 @@ class TestChainAC029:
         assert len(gha013_triggers) == 2
 
 
+class TestChainAC030:
+    """AC-030 — Argo CD anonymous access meets wildcard RBAC."""
+
+    RESOURCE = "argocd"
+
+    def test_fires_when_both_legs_fail_on_same_instance(self):
+        out = chains_pkg.evaluate([
+            _f("ARGOCD-009", self.RESOURCE, severity=Severity.CRITICAL),
+            _f("ARGOCD-004", self.RESOURCE, severity=Severity.CRITICAL),
+        ])
+        ac30 = [c for c in out if c.chain_id == "AC-030"]
+        assert len(ac30) == 1
+        chain = ac30[0]
+        assert chain.severity is Severity.CRITICAL
+        assert set(chain.triggering_check_ids) == {"ARGOCD-009", "ARGOCD-004"}
+        assert "T1190" in chain.mitre_attack
+        assert "T1078.001" in chain.mitre_attack
+        assert "T1098.003" in chain.mitre_attack
+        assert "initial-access" in chain.kill_chain_phase
+        assert "impact" in chain.kill_chain_phase
+
+    def test_does_not_fire_without_argocd009(self):
+        out = chains_pkg.evaluate([
+            _f("ARGOCD-004", self.RESOURCE),
+        ])
+        assert not any(c.chain_id == "AC-030" for c in out)
+
+    def test_does_not_fire_without_argocd004(self):
+        out = chains_pkg.evaluate([
+            _f("ARGOCD-009", self.RESOURCE),
+        ])
+        assert not any(c.chain_id == "AC-030" for c in out)
+
+    def test_does_not_fire_when_legs_passed(self):
+        out = chains_pkg.evaluate([
+            _f("ARGOCD-009", self.RESOURCE, passed=True),
+            _f("ARGOCD-004", self.RESOURCE, passed=True),
+        ])
+        assert not any(c.chain_id == "AC-030" for c in out)
+
+    def test_does_not_fire_when_legs_target_different_instances(self):
+        out = chains_pkg.evaluate([
+            _f("ARGOCD-009", "argocd-east"),
+            _f("ARGOCD-004", "argocd-west"),
+        ])
+        assert not any(c.chain_id == "AC-030" for c in out)
+
+    def test_narrative_names_both_configmaps(self):
+        out = chains_pkg.evaluate([
+            _f("ARGOCD-009", self.RESOURCE),
+            _f("ARGOCD-004", self.RESOURCE),
+        ])
+        chain = next(c for c in out if c.chain_id == "AC-030")
+        assert "argocd-cm" in chain.narrative
+        assert "argocd-rbac-cm" in chain.narrative
+
+    def test_confidence_inherits_from_weakest_leg(self):
+        out = chains_pkg.evaluate([
+            _f("ARGOCD-009", self.RESOURCE, confidence=Confidence.HIGH),
+            _f("ARGOCD-004", self.RESOURCE, confidence=Confidence.MEDIUM),
+        ])
+        chain = next(c for c in out if c.chain_id == "AC-030")
+        assert chain.confidence is Confidence.MEDIUM
+
+
+class TestChainAC031:
+    """AC-031 — Argo CD untrusted PR generator meets wildcard source repos."""
+
+    RESOURCE = "argocd"
+
+    def test_fires_when_both_legs_fail_on_same_instance(self):
+        out = chains_pkg.evaluate([
+            _f("ARGOCD-006", self.RESOURCE, severity=Severity.HIGH),
+            _f("ARGOCD-001", self.RESOURCE, severity=Severity.HIGH),
+        ])
+        ac31 = [c for c in out if c.chain_id == "AC-031"]
+        assert len(ac31) == 1
+        chain = ac31[0]
+        assert chain.severity is Severity.CRITICAL
+        assert set(chain.triggering_check_ids) == {"ARGOCD-006", "ARGOCD-001"}
+        assert "T1195.002" in chain.mitre_attack
+        assert "T1199" in chain.mitre_attack
+        assert "T1078.004" in chain.mitre_attack
+        assert "initial-access" in chain.kill_chain_phase
+        assert "impact" in chain.kill_chain_phase
+
+    def test_does_not_fire_without_argocd006(self):
+        out = chains_pkg.evaluate([
+            _f("ARGOCD-001", self.RESOURCE),
+        ])
+        assert not any(c.chain_id == "AC-031" for c in out)
+
+    def test_does_not_fire_without_argocd001(self):
+        out = chains_pkg.evaluate([
+            _f("ARGOCD-006", self.RESOURCE),
+        ])
+        assert not any(c.chain_id == "AC-031" for c in out)
+
+    def test_does_not_fire_when_legs_passed(self):
+        out = chains_pkg.evaluate([
+            _f("ARGOCD-006", self.RESOURCE, passed=True),
+            _f("ARGOCD-001", self.RESOURCE, passed=True),
+        ])
+        assert not any(c.chain_id == "AC-031" for c in out)
+
+    def test_does_not_fire_when_legs_target_different_instances(self):
+        out = chains_pkg.evaluate([
+            _f("ARGOCD-006", "argocd-east"),
+            _f("ARGOCD-001", "argocd-west"),
+        ])
+        assert not any(c.chain_id == "AC-031" for c in out)
+
+    def test_narrative_names_pull_request_generator_and_source_repos(self):
+        out = chains_pkg.evaluate([
+            _f("ARGOCD-006", self.RESOURCE),
+            _f("ARGOCD-001", self.RESOURCE),
+        ])
+        chain = next(c for c in out if c.chain_id == "AC-031")
+        assert "pullRequest" in chain.narrative
+        assert "sourceRepos" in chain.narrative
+
+    def test_recommendation_names_both_fixes(self):
+        out = chains_pkg.evaluate([
+            _f("ARGOCD-006", self.RESOURCE),
+            _f("ARGOCD-001", self.RESOURCE),
+        ])
+        chain = next(c for c in out if c.chain_id == "AC-031")
+        assert "sourceRepos" in chain.recommendation
+        assert "filters:" in chain.recommendation or "branchMatch" in chain.recommendation
+
+
 # ── Gate integration ─────────────────────────────────────────────────
 
 
@@ -2895,7 +3385,7 @@ class TestCLI:
             "  build:\n"
             "    runs-on: ubuntu-latest\n"
             "    env:\n"
-            "      AWS_ACCESS_KEY_ID: AKIAIOSFODNN7EXAMPLE\n"
+            "      AWS_ACCESS_KEY_ID: AKIAZ3MHALF2TESTHIJK\n"
             "      AWS_SECRET_ACCESS_KEY: notarealsecret/notarealsecret/notarealsecret\n"
             "    steps:\n"
             "      - uses: actions/checkout@v4\n"
@@ -2951,7 +3441,7 @@ class TestCLI:
             "  publish:\n"
             "    runs-on: ubuntu-latest\n"
             "    env:\n"
-            "      AWS_ACCESS_KEY_ID: AKIAIOSFODNN7EXAMPLE\n"
+            "      AWS_ACCESS_KEY_ID: AKIAZ3MHALF2TESTHIJK\n"
             "      AWS_SECRET_ACCESS_KEY: notarealsecret/notarealsecret/notarealsecret\n"
             "    steps:\n"
             "      - run: aws s3 cp build/ s3://prod/\n"
@@ -2996,3 +3486,658 @@ class TestCLI:
         chain_ids = {c["chain_id"] for c in payload.get("chains", [])}
         assert "AC-001" not in chain_ids
         assert "AC-002" in chain_ids
+
+
+class TestChainAC032:
+    """AC-032 — cosign-verified-but-not-bound artifact to production deploy."""
+
+    RESOURCE = "deploy.yml"
+
+    def test_fires_when_both_legs_fail_on_same_workflow(self):
+        out = chains_pkg.evaluate([
+            _f("GHA-100", self.RESOURCE),
+            _f("GHA-098", self.RESOURCE),
+        ])
+        ac32 = [c for c in out if c.chain_id == "AC-032"]
+        assert len(ac32) == 1
+        chain = ac32[0]
+        assert chain.severity is Severity.CRITICAL
+        assert set(chain.triggering_check_ids) == {"GHA-100", "GHA-098"}
+        assert "T1195.002" in chain.mitre_attack
+
+    def test_does_not_fire_without_gha100(self):
+        out = chains_pkg.evaluate([
+            _f("GHA-098", self.RESOURCE),
+        ])
+        assert not any(c.chain_id == "AC-032" for c in out)
+
+    def test_does_not_fire_without_gha098(self):
+        out = chains_pkg.evaluate([
+            _f("GHA-100", self.RESOURCE),
+        ])
+        assert not any(c.chain_id == "AC-032" for c in out)
+
+    def test_does_not_fire_on_different_workflows(self):
+        out = chains_pkg.evaluate([
+            _f("GHA-100", "verify.yml"),
+            _f("GHA-098", "deploy.yml"),
+        ])
+        assert not any(c.chain_id == "AC-032" for c in out)
+
+    def test_does_not_fire_when_legs_passed(self):
+        out = chains_pkg.evaluate([
+            _f("GHA-100", self.RESOURCE, passed=True),
+            _f("GHA-098", self.RESOURCE, passed=True),
+        ])
+        assert not any(c.chain_id == "AC-032" for c in out)
+
+
+class TestChainAC033:
+    """AC-033 — environment-secret laundering to unprotected deploy job."""
+
+    RESOURCE = "deploy.yml"
+
+    def test_fires_when_both_legs_fail_on_same_workflow(self):
+        out = chains_pkg.evaluate([
+            _f("TAINT-009", self.RESOURCE),
+            _f("GHA-098", self.RESOURCE),
+        ])
+        ac33 = [c for c in out if c.chain_id == "AC-033"]
+        assert len(ac33) == 1
+        chain = ac33[0]
+        assert chain.severity is Severity.CRITICAL
+        assert set(chain.triggering_check_ids) == {"TAINT-009", "GHA-098"}
+
+    def test_does_not_fire_without_taint009(self):
+        out = chains_pkg.evaluate([
+            _f("GHA-098", self.RESOURCE),
+        ])
+        assert not any(c.chain_id == "AC-033" for c in out)
+
+    def test_does_not_fire_without_gha098(self):
+        out = chains_pkg.evaluate([
+            _f("TAINT-009", self.RESOURCE),
+        ])
+        assert not any(c.chain_id == "AC-033" for c in out)
+
+    def test_does_not_fire_on_different_workflows(self):
+        out = chains_pkg.evaluate([
+            _f("TAINT-009", "auth.yml"),
+            _f("GHA-098", "deploy.yml"),
+        ])
+        assert not any(c.chain_id == "AC-033" for c in out)
+
+
+class TestChainAC034:
+    """AC-034 — submodule-poisoned PR to credential exfiltration."""
+
+    RESOURCE = "ci.yml"
+
+    def test_fires_with_gha037(self):
+        out = chains_pkg.evaluate([
+            _f("GHA-102", self.RESOURCE),
+            _f("GHA-037", self.RESOURCE),
+        ])
+        ac34 = [c for c in out if c.chain_id == "AC-034"]
+        assert len(ac34) == 1
+        chain = ac34[0]
+        assert chain.severity is Severity.CRITICAL
+        assert "GHA-102" in chain.triggering_check_ids
+
+    def test_fires_with_gha004(self):
+        out = chains_pkg.evaluate([
+            _f("GHA-102", self.RESOURCE),
+            _f("GHA-004", self.RESOURCE),
+        ])
+        ac34 = [c for c in out if c.chain_id == "AC-034"]
+        assert len(ac34) == 1
+
+    def test_does_not_fire_without_gha102(self):
+        out = chains_pkg.evaluate([
+            _f("GHA-037", self.RESOURCE),
+            _f("GHA-004", self.RESOURCE),
+        ])
+        assert not any(c.chain_id == "AC-034" for c in out)
+
+    def test_does_not_fire_on_different_workflows(self):
+        out = chains_pkg.evaluate([
+            _f("GHA-102", "pr.yml"),
+            _f("GHA-037", "ci.yml"),
+        ])
+        assert not any(c.chain_id == "AC-034" for c in out)
+
+    def test_deduplicates_when_both_credential_checks_fire(self):
+        out = chains_pkg.evaluate([
+            _f("GHA-102", self.RESOURCE),
+            _f("GHA-037", self.RESOURCE),
+            _f("GHA-004", self.RESOURCE),
+        ])
+        ac34 = [c for c in out if c.chain_id == "AC-034"]
+        assert len(ac34) == 1
+
+
+# ── Cross-repo directional dedup ──────────────────────────────────────
+
+
+class TestCrossRepoDirectionalDedup:
+    """CXPC matchers run producer -> consumer, so X->Y and Y->X are
+    distinct paths. The dedup key must be ordered, not min/max, or the
+    reverse direction is silently dropped when two repos each satisfy
+    both legs."""
+
+    def test_both_directions_emitted(self):
+        wf = ".github/workflows/x.yml"
+        findings_by_repo = {
+            "org/repo-x": [_f("TAINT-001", wf), _f("GHA-002", wf)],
+            "org/repo-y": [_f("TAINT-001", wf), _f("GHA-002", wf)],
+        }
+        out = chains_pkg.evaluate_cross_repo(
+            findings_by_repo, enabled={"CXPC-004"},
+        )
+        assert len(out) == 2
+        # Each chain pairs a different producer repo as the leg-A anchor.
+        producers = {c.resources[0] for c in out}
+        assert producers == {wf}
+        assert all(c.chain_id == "CXPC-004" for c in out)
+
+
+class TestChainAC028:
+    """AC-028: npm worm propagation primitive co-located (Shai-Hulud).
+
+    Fires on a single repo carrying NPM-004 (install-time lifecycle
+    scripts) AND a self-mutating (GHA-048) or cross-repo-pushing
+    (GHA-049) workflow.
+    """
+
+    NPM = "package.json"
+    WF = ".github/workflows/ci.yml"
+
+    def _ac028(self, findings: list) -> list:
+        return [c for c in chains_pkg.evaluate(findings) if c.chain_id == "AC-028"]
+
+    def test_fires_with_npm004_and_self_mutation(self):
+        out = self._ac028([_f("NPM-004", self.NPM), _f("GHA-048", self.WF)])
+        assert len(out) == 1
+        assert out[0].severity is Severity.CRITICAL
+        assert set(out[0].triggering_check_ids) == {"NPM-004", "GHA-048"}
+        assert "T1195.002" in out[0].mitre_attack
+
+    def test_fires_with_npm004_and_cross_repo_push(self):
+        out = self._ac028([_f("NPM-004", self.NPM), _f("GHA-049", self.WF)])
+        assert len(out) == 1
+        assert set(out[0].triggering_check_ids) == {"NPM-004", "GHA-049"}
+
+    def test_fires_with_both_workflow_legs(self):
+        out = self._ac028([
+            _f("NPM-004", self.NPM),
+            _f("GHA-048", self.WF),
+            _f("GHA-049", self.WF),
+        ])
+        assert len(out) == 1
+        assert set(out[0].triggering_check_ids) == {"NPM-004", "GHA-048", "GHA-049"}
+
+    def test_does_not_fire_without_npm004(self):
+        # The workflow legs alone are hygiene debt, not the worm topology.
+        assert not self._ac028([_f("GHA-048", self.WF), _f("GHA-049", self.WF)])
+
+    def test_does_not_fire_without_a_workflow_leg(self):
+        assert not self._ac028([_f("NPM-004", self.NPM)])
+
+    def test_does_not_fire_when_legs_passed(self):
+        assert not self._ac028([
+            _f("NPM-004", self.NPM, passed=True),
+            _f("GHA-048", self.WF, passed=True),
+        ])
+
+
+class TestChainCXPC001:
+    """CXPC-001: npm install-scripts package in one repo + unpinned /
+    confusable npm deps in a partner repo, across a fleet scan."""
+
+    def _fire(self, fbr: dict) -> list:
+        return chains_pkg.evaluate_cross_repo(fbr, enabled={"CXPC-001"})
+
+    def test_fires_across_two_repos(self):
+        out = self._fire({
+            "org/lib": [_f("NPM-008", "package.json")],
+            "org/app": [_f("NPM-001", "package.json")],
+        })
+        assert len(out) == 1
+        assert out[0].chain_id == "CXPC-001"
+        assert out[0].severity is Severity.HIGH
+        assert set(out[0].repos) == {"org/lib", "org/app"}
+
+    def test_does_not_fire_within_one_repo(self):
+        assert not self._fire({
+            "org/mono": [_f("NPM-008", "a/package.json"), _f("NPM-001", "b/package.json")],
+        })
+
+    def test_does_not_fire_on_a_single_leg(self):
+        assert not self._fire({"org/lib": [_f("NPM-008", "package.json")]})
+
+
+class TestChainCXPC002:
+    """CXPC-002: Argo CD wildcard sourceRepos in one repo + weakened CI
+    gate in a partner repo."""
+
+    def _fire(self, fbr: dict) -> list:
+        return chains_pkg.evaluate_cross_repo(fbr, enabled={"CXPC-002"})
+
+    def test_fires_across_two_repos(self):
+        out = self._fire({
+            "org/gitops": [_f("ARGOCD-001", "appproject.yaml")],
+            "org/service": [_f("GHA-002", ".github/workflows/ci.yml")],
+        })
+        assert len(out) == 1
+        assert out[0].chain_id == "CXPC-002"
+        assert out[0].severity is Severity.CRITICAL
+        assert set(out[0].repos) == {"org/gitops", "org/service"}
+
+    def test_fires_with_taint_leg_b(self):
+        out = self._fire({
+            "org/gitops": [_f("ARGOCD-001", "appproject.yaml")],
+            "org/service": [_f("TAINT-001", ".github/workflows/ci.yml")],
+        })
+        assert len(out) == 1
+
+    def test_does_not_fire_within_one_repo(self):
+        assert not self._fire({
+            "org/mono": [
+                _f("ARGOCD-001", "appproject.yaml"),
+                _f("GHA-002", ".github/workflows/ci.yml"),
+            ],
+        })
+
+    def test_does_not_fire_on_a_single_leg(self):
+        assert not self._fire({"org/gitops": [_f("ARGOCD-001", "appproject.yaml")]})
+
+
+class TestChainCXPC003:
+    """CXPC-003: GitHub App token without a permissions filter in one
+    repo + credential exposure in a partner repo of the same org."""
+
+    def _fire(self, fbr: dict) -> list:
+        return chains_pkg.evaluate_cross_repo(fbr, enabled={"CXPC-003"})
+
+    def test_fires_across_two_repos(self):
+        out = self._fire({
+            "org/app-host": [_f("GHA-061", ".github/workflows/release.yml")],
+            "org/partner": [_f("GHA-005", ".github/workflows/ci.yml")],
+        })
+        assert len(out) == 1
+        assert out[0].chain_id == "CXPC-003"
+        assert out[0].severity is Severity.HIGH
+        assert set(out[0].repos) == {"org/app-host", "org/partner"}
+
+    def test_does_not_fire_within_one_repo(self):
+        assert not self._fire({
+            "org/mono": [
+                _f("GHA-061", ".github/workflows/release.yml"),
+                _f("GHA-008", ".github/workflows/ci.yml"),
+            ],
+        })
+
+    def test_does_not_fire_on_a_single_leg(self):
+        assert not self._fire({"org/partner": [_f("GHA-005", ".github/workflows/ci.yml")]})
+
+
+class TestChainAC037:
+    """AC-037: AI agent applies attacker-influenced IaC to the cloud."""
+
+    WF = ".github/workflows/iac.yml"
+
+    def _ac037(self, findings):
+        return [c for c in chains_pkg.evaluate(findings) if c.chain_id == "AC-037"]
+
+    def test_gha058_plus_gha111_fires_critical(self):
+        out = self._ac037([_f("GHA-058", self.WF), _f("GHA-111", self.WF)])
+        assert len(out) == 1
+        assert out[0].severity is Severity.CRITICAL
+        assert out[0].triggering_check_ids == ["GHA-058", "GHA-111"]
+        assert out[0].resources == [self.WF]
+
+    def test_gha103_plus_gha111_fires(self):
+        out = self._ac037([_f("GHA-103", self.WF), _f("GHA-111", self.WF)])
+        assert len(out) == 1
+        assert out[0].triggering_check_ids == ["GHA-103", "GHA-111"]
+
+    def test_both_input_legs_dedup_to_one(self):
+        out = self._ac037([
+            _f("GHA-058", self.WF), _f("GHA-103", self.WF), _f("GHA-111", self.WF),
+        ])
+        assert len(out) == 1
+        # Dedup keeps the GHA-058 leg per resource.
+        assert out[0].triggering_check_ids == ["GHA-058", "GHA-111"]
+
+    def test_no_chain_without_iac_apply(self):
+        assert self._ac037([_f("GHA-058", self.WF)]) == []
+
+    def test_no_chain_without_input_leg(self):
+        assert self._ac037([_f("GHA-111", self.WF)]) == []
+
+    def test_no_chain_across_different_workflows(self):
+        out = self._ac037([
+            _f("GHA-058", self.WF),
+            _f("GHA-111", ".github/workflows/other.yml"),
+        ])
+        assert out == []
+
+    def test_passed_iac_finding_does_not_chain(self):
+        out = self._ac037([
+            _f("GHA-058", self.WF), _f("GHA-111", self.WF, passed=True),
+        ])
+        assert out == []
+
+
+class TestChainAC038:
+    """AC-038: untrusted branch reaches OIDC trusted publish."""
+
+    WF = ".github/workflows/release.yml"
+
+    def _ac038(self, findings):
+        return [c for c in chains_pkg.evaluate(findings) if c.chain_id == "AC-038"]
+
+    def test_same_job_fires_critical_confirmed(self):
+        out = self._ac038([
+            _f("GHA-113", self.WF, job_anchors=("release",)),
+            _f("GHA-114", self.WF, job_anchors=("release",)),
+        ])
+        assert len(out) == 1
+        assert out[0].severity is Severity.CRITICAL
+        assert out[0].triggering_check_ids == ["GHA-113", "GHA-114"]
+        assert out[0].resources == [self.WF]
+        assert out[0].confirmed_reachable is True
+        # Confirmed single-job reachability promotes to HIGH confidence.
+        assert out[0].confidence is Confidence.HIGH
+
+    def test_different_jobs_fires_unconfirmed(self):
+        out = self._ac038([
+            _f("GHA-113", self.WF, job_anchors=("oidc",),
+               confidence=Confidence.MEDIUM),
+            _f("GHA-114", self.WF, job_anchors=("publish",),
+               confidence=Confidence.MEDIUM),
+        ])
+        assert len(out) == 1
+        assert out[0].confirmed_reachable is False
+        # Unconfirmed co-occurrence stays at the weakest leg's confidence.
+        assert out[0].confidence is Confidence.MEDIUM
+
+    def test_no_chain_without_oidc_leg(self):
+        assert self._ac038([_f("GHA-114", self.WF, job_anchors=("release",))]) == []
+
+    def test_no_chain_without_trigger_leg(self):
+        assert self._ac038([_f("GHA-113", self.WF, job_anchors=("release",))]) == []
+
+    def test_no_chain_across_different_workflows(self):
+        out = self._ac038([
+            _f("GHA-113", self.WF, job_anchors=("release",)),
+            _f("GHA-114", ".github/workflows/other.yml", job_anchors=("release",)),
+        ])
+        assert out == []
+
+    def test_passed_finding_does_not_chain(self):
+        out = self._ac038([
+            _f("GHA-113", self.WF, job_anchors=("release",)),
+            _f("GHA-114", self.WF, job_anchors=("release",), passed=True),
+        ])
+        assert out == []
+
+
+class TestAC039UntrustedTriggerBulkSecrets:
+    """AC-039: untrusted trigger (GHA-002/009/013) reaches a
+    bulk-secrets serialization (GHA-116) in the same workflow."""
+
+    WF = ".github/workflows/pr.yml"
+
+    def _ac039(self, findings):
+        return [c for c in chains_pkg.evaluate(findings) if c.chain_id == "AC-039"]
+
+    def test_fires_on_trigger_plus_dump(self):
+        out = self._ac039([
+            _f("GHA-002", self.WF),
+            _f("GHA-116", self.WF),
+        ])
+        assert len(out) == 1
+        assert out[0].severity is Severity.CRITICAL
+        assert "GHA-002" in out[0].triggering_check_ids
+        assert "GHA-116" in out[0].triggering_check_ids
+
+    def test_confirmed_reachable_when_same_job(self):
+        out = self._ac039([
+            _f("GHA-013", self.WF, job_anchors=("build",)),
+            _f("GHA-116", self.WF, job_anchors=("build",)),
+        ])
+        assert len(out) == 1
+        assert out[0].confirmed_reachable is True
+        assert out[0].confidence is Confidence.HIGH
+        assert "build" in out[0].reachability_note
+
+    def test_unconfirmed_when_different_jobs(self):
+        out = self._ac039([
+            _f("GHA-002", self.WF, job_anchors=("checkout",)),
+            _f("GHA-116", self.WF, job_anchors=("dump",)),
+        ])
+        assert len(out) == 1
+        assert out[0].confirmed_reachable is False
+
+    def test_does_not_fire_without_dump_leg(self):
+        out = self._ac039([_f("GHA-002", self.WF)])
+        assert out == []
+
+    def test_does_not_fire_without_trigger_leg(self):
+        out = self._ac039([_f("GHA-116", self.WF)])
+        assert out == []
+
+    def test_does_not_fire_on_different_workflows(self):
+        out = self._ac039([
+            _f("GHA-002", ".github/workflows/a.yml"),
+            _f("GHA-116", ".github/workflows/b.yml"),
+        ])
+        assert out == []
+
+    def test_passed_finding_does_not_chain(self):
+        out = self._ac039([
+            _f("GHA-002", self.WF),
+            _f("GHA-116", self.WF, passed=True),
+        ])
+        assert out == []
+
+
+class TestChainAC040:
+    """AC-040: prompt-injected agent commits its output with no human
+    review (injection leg + autoland leg, per provider, same resource)."""
+
+    def _ac040(self, findings):
+        return [c for c in chains_pkg.evaluate(findings) if c.chain_id == "AC-040"]
+
+    def test_github_pair_fires_critical(self):
+        wf = ".github/workflows/ai.yml"
+        out = self._ac040([_f("GHA-119", wf), _f("GHA-123", wf)])
+        assert len(out) == 1
+        assert out[0].severity is Severity.CRITICAL
+        assert out[0].triggering_check_ids == ["GHA-119", "GHA-123"]
+        assert out[0].resources == [wf]
+
+    def test_gitlab_pair_fires(self):
+        f = ".gitlab-ci.yml"
+        out = self._ac040([_f("GL-048", f), _f("GL-049", f)])
+        assert len(out) == 1
+        assert out[0].triggering_check_ids == ["GL-048", "GL-049"]
+
+    def test_bitbucket_pair_fires(self):
+        f = "bitbucket-pipelines.yml"
+        out = self._ac040([_f("BB-036", f), _f("BB-039", f)])
+        assert len(out) == 1
+        assert out[0].triggering_check_ids == ["BB-036", "BB-039"]
+
+    def test_azure_pair_fires(self):
+        f = "azure-pipelines.yml"
+        out = self._ac040([_f("ADO-035", f), _f("ADO-038", f)])
+        assert len(out) == 1
+        assert out[0].triggering_check_ids == ["ADO-035", "ADO-038"]
+
+    def test_jenkins_pair_fires(self):
+        f = "Jenkinsfile"
+        out = self._ac040([_f("JF-037", f), _f("JF-038", f)])
+        assert len(out) == 1
+        assert out[0].triggering_check_ids == ["JF-037", "JF-038"]
+
+    def test_harness_pair_fires(self):
+        f = ".harness/build.yaml"
+        out = self._ac040([_f("HARNESS-008", f), _f("HARNESS-009", f)])
+        assert len(out) == 1
+        assert out[0].triggering_check_ids == ["HARNESS-008", "HARNESS-009"]
+
+    def test_circleci_pair_fires(self):
+        f = ".circleci/config.yml"
+        out = self._ac040([_f("CC-037", f), _f("CC-038", f)])
+        assert len(out) == 1
+        assert out[0].severity is Severity.CRITICAL
+        assert out[0].triggering_check_ids == ["CC-037", "CC-038"]
+        assert out[0].resources == [f]
+
+    def test_circleci_injection_alone_does_not_fire(self):
+        # Only the injection leg, no autoland: the chain must not fire.
+        f = ".circleci/config.yml"
+        out = self._ac040([_f("CC-037", f)])
+        assert out == []
+
+    def test_no_chain_without_autoland_leg(self):
+        wf = ".github/workflows/ai.yml"
+        assert self._ac040([_f("GHA-119", wf)]) == []
+
+    def test_no_chain_without_injection_leg(self):
+        wf = ".github/workflows/ai.yml"
+        assert self._ac040([_f("GHA-123", wf)]) == []
+
+    def test_no_cross_provider_mix(self):
+        # An injection leg in one provider and an autoland leg in another
+        # never compose, even if (pathologically) on the same resource key.
+        f = "shared.yml"
+        assert self._ac040([_f("GHA-119", f), _f("GL-049", f)]) == []
+
+    def test_no_chain_across_different_resources(self):
+        out = self._ac040([
+            _f("GHA-119", ".github/workflows/a.yml"),
+            _f("GHA-123", ".github/workflows/b.yml"),
+        ])
+        assert out == []
+
+    def test_passed_finding_does_not_chain(self):
+        wf = ".github/workflows/ai.yml"
+        out = self._ac040([_f("GHA-119", wf), _f("GHA-123", wf, passed=True)])
+        assert out == []
+
+    def test_confidence_inherits_weakest_leg(self):
+        wf = ".github/workflows/ai.yml"
+        out = self._ac040([
+            _f("GHA-119", wf, confidence=Confidence.HIGH),
+            _f("GHA-123", wf, confidence=Confidence.MEDIUM),
+        ])
+        assert len(out) == 1
+        assert out[0].confidence is Confidence.MEDIUM
+
+
+class TestChainAC041:
+    """AC-041: compromised action executed AND a credential left the run,
+    both legs on the same run (RUN-006 + RUN-003 / RUN-004)."""
+
+    RUN = "github:owner/repo#run/42"
+
+    def _ac041(self, findings):
+        return [c for c in chains_pkg.evaluate(findings) if c.chain_id == "AC-041"]
+
+    def test_run006_plus_secret_leak_fires_critical(self):
+        out = self._ac041([_f("RUN-006", self.RUN), _f("RUN-003", self.RUN)])
+        assert len(out) == 1
+        assert out[0].severity is Severity.CRITICAL
+        assert out[0].triggering_check_ids == ["RUN-006", "RUN-003"]
+        assert out[0].confirmed_reachable is True
+        assert out[0].via_structural is True
+        assert "#run/42" in out[0].reachability_note
+
+    def test_run006_plus_oidc_mint_fires(self):
+        out = self._ac041([_f("RUN-006", self.RUN), _f("RUN-004", self.RUN)])
+        assert len(out) == 1
+        assert out[0].triggering_check_ids == ["RUN-006", "RUN-004"]
+
+    def test_both_exfil_legs_dedup_to_one(self):
+        out = self._ac041([
+            _f("RUN-006", self.RUN), _f("RUN-003", self.RUN),
+            _f("RUN-004", self.RUN),
+        ])
+        assert len(out) == 1
+        # Dedup keeps the RUN-003 leg per run.
+        assert out[0].triggering_check_ids == ["RUN-006", "RUN-003"]
+
+    def test_no_chain_without_compromised_action(self):
+        assert self._ac041([_f("RUN-003", self.RUN)]) == []
+
+    def test_no_chain_without_exfil_leg(self):
+        assert self._ac041([_f("RUN-006", self.RUN)]) == []
+
+    def test_no_chain_across_different_runs(self):
+        out = self._ac041([
+            _f("RUN-006", "github:owner/repo#run/1"),
+            _f("RUN-003", "github:owner/repo#run/2"),
+        ])
+        assert out == []
+
+    def test_passed_finding_does_not_chain(self):
+        out = self._ac041([
+            _f("RUN-006", self.RUN), _f("RUN-003", self.RUN, passed=True),
+        ])
+        assert out == []
+
+
+class TestChainAC042:
+    """AC-042: a fork pipeline executed AND a credential left it, both legs
+    on the same pipeline (GLRUN-002 + GLRUN-003 / GLRUN-004). The GitLab
+    analog of AC-041."""
+
+    PIPE = "gitlab:group/project#pipeline/42"
+
+    def _ac042(self, findings):
+        return [c for c in chains_pkg.evaluate(findings) if c.chain_id == "AC-042"]
+
+    def test_fork_plus_secret_leak_fires_critical(self):
+        out = self._ac042([_f("GLRUN-002", self.PIPE), _f("GLRUN-003", self.PIPE)])
+        assert len(out) == 1
+        assert out[0].severity is Severity.CRITICAL
+        assert out[0].triggering_check_ids == ["GLRUN-002", "GLRUN-003"]
+        assert out[0].confirmed_reachable is True
+        assert out[0].via_structural is True
+        assert "#pipeline/42" in out[0].reachability_note
+
+    def test_fork_plus_oidc_mint_fires(self):
+        out = self._ac042([_f("GLRUN-002", self.PIPE), _f("GLRUN-004", self.PIPE)])
+        assert len(out) == 1
+        assert out[0].triggering_check_ids == ["GLRUN-002", "GLRUN-004"]
+
+    def test_both_exfil_legs_dedup_to_one(self):
+        out = self._ac042([
+            _f("GLRUN-002", self.PIPE), _f("GLRUN-003", self.PIPE),
+            _f("GLRUN-004", self.PIPE),
+        ])
+        assert len(out) == 1
+        # Dedup keeps the GLRUN-003 leg per pipeline.
+        assert out[0].triggering_check_ids == ["GLRUN-002", "GLRUN-003"]
+
+    def test_no_chain_without_fork_pipeline_leg(self):
+        assert self._ac042([_f("GLRUN-003", self.PIPE)]) == []
+
+    def test_no_chain_without_exfil_leg(self):
+        assert self._ac042([_f("GLRUN-002", self.PIPE)]) == []
+
+    def test_no_chain_across_different_pipelines(self):
+        out = self._ac042([
+            _f("GLRUN-002", "gitlab:group/project#pipeline/1"),
+            _f("GLRUN-003", "gitlab:group/project#pipeline/2"),
+        ])
+        assert out == []
+
+    def test_passed_finding_does_not_chain(self):
+        out = self._ac042([
+            _f("GLRUN-002", self.PIPE), _f("GLRUN-003", self.PIPE, passed=True),
+        ])
+        assert out == []

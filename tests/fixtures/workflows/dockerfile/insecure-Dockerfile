@@ -11,7 +11,7 @@ FROM python:3.12-slim
 # credential-shaped KEY name + any non-empty literal value, so the
 # placeholder still triggers it the same way a real secret would.
 ENV API_KEY=EXAMPLE-FAKE-KEY-DO-NOT-USE
-ENV AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
+ENV AWS_ACCESS_KEY_ID=AKIAZ3MHALF2TESTHIJK
 ARG DATABASE_PASSWORD=EXAMPLE-FAKE-PASSWORD
 
 # DF-020: ARG declares a credential-named build arg without a default.
@@ -89,6 +89,11 @@ RUN npm install
 ARG NPM_REGISTRY_TOKEN
 RUN echo "//registry.npmjs.org/:_authToken=${NPM_REGISTRY_TOKEN}" \
     > /root/.npmrc
+
+# DF-031: COPY --from pulls an external image by floating tag, a
+# build-time image pull (and byte copy into the final image) that
+# DF-001's FROM-only digest check never sees.
+COPY --from=sigstore/cosign:latest /ko-app/cosign /usr/local/bin/cosign
 
 COPY . .
 

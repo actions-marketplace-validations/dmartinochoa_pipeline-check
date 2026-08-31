@@ -7,7 +7,7 @@ from typing import Any
 from ...base import Finding, Severity
 from ...rule import Rule
 from ..base import iter_jobs, iter_steps
-from ._helpers import AWS_KEY_RE
+from ._helpers import aws_key_in
 
 _AWS_CONFIGURE_RE = re.compile(
     r"aws\s+configure\s+set\s+aws_access_key_id\b"
@@ -34,15 +34,36 @@ RULE = Rule(
         "credential injection for cross-cloud access."
     ),
     known_fp=(
-        "Variable values that *reference* a secret rather than "
-        "embed one (``$(MySecretVar)`` / ``$(AwsKey)`` mapped from "
-        "a variable group backed by Key Vault) still match the "
-        "``AWS_ACCESS_KEY_ID`` / ``AWS_SECRET_ACCESS_KEY`` name "
-        "regex because the variable name itself looks long-lived. "
-        "The rule has no way to follow the binding to its source. "
-        "Suppress per-pipeline via ``--ignore-file`` once you've "
-        "confirmed the value is injected at runtime from a Key "
-        "Vault group rather than stored in the YAML.",
+        "The check only flags literal AKIA-shaped *values*, never "
+        "variable names. The residual false positive is a literal "
+        "AKIA-shaped value that is actually a deactivated or test "
+        "key (a documentation sample, or a deliberately revoked "
+        "credential left in place). The rule can't tell a live key "
+        "from a dead one. Suppress per-pipeline via "
+        "``--ignore-file`` once you've confirmed the value is "
+        "deactivated or non-production.",
+    ),
+    exploit_example=(
+        "# Vulnerable: long-lived AWS keys in pipeline variables.\n"
+        "variables:\n"
+        "  AWS_ACCESS_KEY_ID: AKIA…\n"
+        "  AWS_SECRET_ACCESS_KEY: …\n"
+        "steps:\n"
+        "  - script: aws s3 sync ./dist s3://prod-site\n"
+        "\n"
+        "# Attack: the keys are in the YAML (or a plain variable),\n"
+        "# exposed to every task's environment. A leaked log or a\n"
+        "# malicious dependency exfiltrates them; the long-lived IAM\n"
+        "# user keys keep working until someone rotates them by hand.\n"
+        "\n"
+        "# Safe: a federated service connection (workload identity) or a\n"
+        "# Key Vault task, both injecting short-lived credentials.\n"
+        "steps:\n"
+        "  - task: AWSShellScript@1\n"
+        "    inputs:\n"
+        "      awsCredentials: prod-oidc-connection\n"
+        "      scriptType: inline\n"
+        "      inlineScript: aws s3 sync ./dist s3://prod-site"
     ),
 )
 
@@ -51,18 +72,18 @@ def check(path: str, doc: dict[str, Any]) -> Finding:
     static_keys = False
     # Scan top-level variables.
     for v in _walk_vars(doc.get("variables")):
-        if AWS_KEY_RE.search(v):
+        if aws_key_in(v):
             static_keys = True
     # Scan job-level variables, step env, and script bodies.
     for _, job in iter_jobs(doc):
         for v in _walk_vars(job.get("variables")):
-            if AWS_KEY_RE.search(v):
+            if aws_key_in(v):
                 static_keys = True
         for _, step in iter_steps(job):
             env = step.get("env") or {}
             if isinstance(env, dict):
                 for val in env.values():
-                    if isinstance(val, str) and AWS_KEY_RE.search(val):
+                    if isinstance(val, str) and aws_key_in(val):
                         static_keys = True
             # Detect `aws configure set` in script bodies.
             for key in ("script", "bash", "pwsh", "powershell"):

@@ -46,6 +46,29 @@ class TestGHA009WorkflowRunArtifact:
         f = run_check(wf, "GHA-009")
         assert not f.passed
 
+    def test_fails_on_dawidd6_download_action_without_verify(self):
+        # ``dawidd6/action-download-artifact`` is the canonical cross-run
+        # downloader for workflow_run workflows and this rule's exact
+        # target; it must be recognized as a download step (B4 FN).
+        wf = """
+        name: privileged-consume
+        on:
+          workflow_run:
+            workflows: ['ci']
+            types: [completed]
+        jobs:
+          consume:
+            runs-on: ubuntu-22.04
+            timeout-minutes: 10
+            permissions: { contents: read }
+            steps:
+              - uses: dawidd6/action-download-artifact@268677152d06ba59fcec7a7f0b5d961b6ccd7e1e
+                with: { name: build-output }
+              - run: ./run-binary
+        """
+        f = run_check(wf, "GHA-009")
+        assert not f.passed
+
     def test_passes_with_cosign_verify_attestation(self):
         wf = """
         name: privileged-consume
@@ -531,6 +554,71 @@ class TestGHA044BuildToolPPE:
         f = run_check(wf, "GHA-044")
         assert f.passed
 
+    def test_fails_on_docker_build_under_pull_request_target(self):
+        wf = """
+        name: pr-build
+        on: pull_request_target
+        jobs:
+          build:
+            runs-on: ubuntu-22.04
+            timeout-minutes: 10
+            permissions: { contents: read }
+            steps:
+              - run: docker build -t app .
+        """
+        f = run_check(wf, "GHA-044")
+        assert not f.passed
+        assert "docker build" in f.description.lower()
+
+    def test_fails_on_docker_buildx_build(self):
+        wf = """
+        name: pr-build
+        on: pull_request_target
+        jobs:
+          build:
+            runs-on: ubuntu-22.04
+            timeout-minutes: 10
+            permissions: { contents: read }
+            steps:
+              - run: docker buildx build --push -t reg/app .
+        """
+        f = run_check(wf, "GHA-044")
+        assert not f.passed
+
+    def test_fails_on_docker_build_push_action(self):
+        wf = """
+        name: pr-build
+        on: pull_request_target
+        jobs:
+          build:
+            runs-on: ubuntu-22.04
+            timeout-minutes: 10
+            permissions: { contents: read }
+            steps:
+              - uses: docker/build-push-action@v6
+                with: { push: false }
+        """
+        f = run_check(wf, "GHA-044")
+        assert not f.passed
+        assert "build-push-action" in f.description.lower()
+
+    def test_passes_on_docker_build_under_trusted_trigger(self):
+        wf = """
+        name: release
+        on:
+          push: { branches: [main] }
+        jobs:
+          ship:
+            runs-on: ubuntu-22.04
+            timeout-minutes: 10
+            permissions: { contents: read }
+            steps:
+              - run: docker build -t app .
+              - uses: docker/build-push-action@v6
+        """
+        f = run_check(wf, "GHA-044")
+        assert f.passed
+
     def test_fails_on_bun_install_under_pull_request_target(self):
         wf = """
         name: pr-build
@@ -638,6 +726,30 @@ class TestGHA045CallerRefCheckout:
               - uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29
                 with:
                   ref: ${{ inputs.ref }}
+        """
+        f = run_check(wf, "GHA-045")
+        assert not f.passed
+
+    def test_fails_on_github_event_inputs_spelling(self):
+        # The older-but-valid ``${{ github.event.inputs.<name> }}``
+        # workflow_dispatch spelling must be matched too (B4 FN: only
+        # the ``inputs.<name>`` form was recognized).
+        wf = """
+        name: build
+        on:
+          workflow_dispatch:
+            inputs:
+              ref:
+                required: true
+        jobs:
+          build:
+            runs-on: ubuntu-22.04
+            timeout-minutes: 10
+            permissions: { contents: read }
+            steps:
+              - uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29
+                with:
+                  ref: ${{ github.event.inputs.ref }}
         """
         f = run_check(wf, "GHA-045")
         assert not f.passed
@@ -753,6 +865,41 @@ class TestGHA046ManualPRFetch:
             steps:
               - uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29
               - run: git fetch origin pull/123/head
+        """
+        f = run_check(wf, "GHA-046")
+        assert not f.passed
+
+    def test_fails_on_git_fetch_pull_with_expression_number(self):
+        # The PR number is an expression, not a literal, a bypass of
+        # ``pull/\\d+/`` digit-only matching.
+        wf = """
+        name: pr-test
+        on: pull_request_target
+        jobs:
+          test:
+            runs-on: ubuntu-22.04
+            timeout-minutes: 10
+            permissions: { contents: read }
+            steps:
+              - uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29
+              - run: git fetch origin pull/${{ github.event.number }}/merge
+        """
+        f = run_check(wf, "GHA-046")
+        assert not f.passed
+
+    def test_fails_on_git_checkout_merge_commit_sha(self):
+        # The merge commit contains the PR's code merged into base.
+        wf = """
+        name: pr-test
+        on: pull_request_target
+        jobs:
+          test:
+            runs-on: ubuntu-22.04
+            timeout-minutes: 10
+            permissions: { contents: read }
+            steps:
+              - uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29
+              - run: git checkout ${{ github.event.pull_request.merge_commit_sha }}
         """
         f = run_check(wf, "GHA-046")
         assert not f.passed

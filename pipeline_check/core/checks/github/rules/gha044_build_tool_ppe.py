@@ -52,7 +52,10 @@ RULE = Rule(
         "lifecycle hooks; ``pip install .`` runs the PR's "
         "``setup.py``; ``make`` runs the PR's ``Makefile``; ``mvn`` "
         "/ ``gradle`` load plugins declared in the PR's ``pom.xml`` "
-        "/ ``build.gradle``; ``cargo build`` runs ``build.rs``. "
+        "/ ``build.gradle``; ``cargo build`` runs ``build.rs``; "
+        "``docker build`` / ``docker/build-push-action`` execute the "
+        "PR's ``Dockerfile`` (its ``RUN`` instructions) against the "
+        "checked-out build context. "
         "Under ``pull_request_target`` / ``workflow_run``, the "
         "surrounding context already has secrets and a write-scope "
         "token, so the lifecycle hook is the entire attack."
@@ -74,7 +77,7 @@ RULE = Rule(
         "repo's secrets in scope. Same shape with ``pip install -e "
         ".`` (setup.py) and ``make`` (Makefile).",
         "Cycode / Legit Security ``Poisoned Pipeline Execution`` "
-        "research (2022-2023) catalogued dozens of OSS repos where "
+        "research (2022-2023) cataloged dozens of OSS repos where "
         "a privileged-trigger workflow's build step executed PR-"
         "controlled config: ``setup.py``'s ``cmdclass``, "
         "``build.gradle``'s ``init.gradle``, ``pom.xml``'s ``<build>"
@@ -135,7 +138,10 @@ _BUILD_TOOL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("pnpm install",
      re.compile(r"^\s*(?:sudo\s+)?pnpm\s+(?:install|i)(?:\s|$)")),
     ("yarn install",
-     re.compile(r"^\s*(?:sudo\s+)?yarn(?:\s+install)?(?:\s|$)")),
+     # ``yarn install`` or bare ``yarn`` (which installs deps by
+     # default); NOT ``yarn <named-script>`` / ``yarn run x`` / ``yarn
+     # --version``, which don't run install-time lifecycle hooks.
+     re.compile(r"^\s*(?:sudo\s+)?yarn(?:\s+install\b|\s*$)")),
     ("bun install",
      re.compile(r"^\s*(?:sudo\s+)?bun\s+(?:install|i)(?:\s|$)")),
     ("deno install",
@@ -187,7 +193,16 @@ _BUILD_TOOL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
      # ``go generate`` executes directives baked into source files;
      # ``go build`` doesn't auto-run external scripts so it's omitted.
      re.compile(r"^\s*(?:sudo\s+)?go\s+generate(?:\s|$)")),
+    ("docker build",
+     # ``docker build`` / ``docker buildx build`` execute the PR's
+     # ``Dockerfile`` (its ``RUN`` instructions) against the checked-out
+     # build context, so a fork-supplied Dockerfile is the payload.
+     re.compile(r"^\s*(?:sudo\s+)?docker\s+(?:buildx\s+)?build\b")),
 )
+
+# ``docker/build-push-action`` builds the PR's Dockerfile on the runner,
+# the ``uses:`` equivalent of a ``docker build`` run step.
+_USES_BUILD_RE = re.compile(r"^docker/build-push-action(?:/|@)")
 
 
 def _scan_run(run_body: str) -> str | None:
@@ -216,11 +231,13 @@ def check(path: str, doc: dict[str, Any]) -> Finding:
     for job_id, job in iter_jobs(doc):
         for idx, step in enumerate(iter_steps(job)):
             run = step.get("run")
-            if not isinstance(run, str):
-                continue
-            hit = _scan_run(run)
-            if hit is not None:
-                offenders.append(f"{job_id}[{idx}]: {hit}")
+            if isinstance(run, str):
+                hit = _scan_run(run)
+                if hit is not None:
+                    offenders.append(f"{job_id}[{idx}]: {hit}")
+            uses = step.get("uses")
+            if isinstance(uses, str) and _USES_BUILD_RE.match(uses):
+                offenders.append(f"{job_id}[{idx}]: docker/build-push-action")
     passed = not offenders
     desc = (
         f"No build-tool invocation detected on untrusted trigger(s) "

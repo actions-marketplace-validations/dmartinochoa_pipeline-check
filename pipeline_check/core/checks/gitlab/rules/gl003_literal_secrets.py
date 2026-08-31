@@ -6,7 +6,7 @@ from typing import Any
 from ...base import Finding, Severity
 from ...rule import Rule
 from ..base import iter_jobs
-from ._helpers import AWS_KEY_RE, SECRETISH_KEY_RE
+from ._helpers import SECRETISH_KEY_RE, aws_key_in, is_placeholder_value
 
 RULE = Rule(
     id="GL-003",
@@ -26,7 +26,58 @@ RULE = Rule(
         "is a literal string (not a `$VAR` reference). AWS access "
         "keys are detected by value pattern regardless of key name."
     ),
+    exploit_example=(
+        "# Vulnerable: literal AWS access key in pipeline-level\n"
+        "# ``variables:``. The ``.gitlab-ci.yml`` is committed\n"
+        "# to git, printed in build logs whenever a job echoes\n"
+        "# its environment, visible to any repo reader.\n"
+        "variables:\n"
+        "  AWS_ACCESS_KEY_ID: AKIAZ3MHALF2TESTHIJK\n"
+        "  AWS_SECRET_ACCESS_KEY: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n"
+        "deploy:\n"
+        "  script: [aws s3 cp ./build s3://bucket/]\n"
+        "\n"
+        "# Safe: store credentials as protected + masked CI/CD\n"
+        "# variables in GitLab Settings. The pipeline file\n"
+        "# references the env names; values resolve at runtime\n"
+        "# and are masked in logs.\n"
+        "deploy:\n"
+        "  script: [aws s3 cp ./build s3://bucket/]\n"
+        "  # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY come from\n"
+        "  # project-level protected + masked CI/CD variables"
+    ),
 )
+
+
+#: GitLab analyzer/template config-variable key prefixes. Their values
+#: are scanner configuration (paths, flags), not credentials.
+_CONFIG_KEY_PREFIXES = (
+    "SECRET_DETECTION_", "SAST_", "DAST_", "DEPENDENCY_SCANNING_",
+    "CONTAINER_SCANNING_", "CS_", "DS_", "COVERAGE_",
+)
+#: Suffixes that make a credential-named key a pointer (a path / name /
+#: URL) rather than the secret itself.
+_REFERENCE_KEY_SUFFIXES = (
+    "_PATH", "_FILE", "_DIR", "_NAME", "_URL", "_URI", "_ENABLED", "_ID",
+)
+_BENIGN_VALUES = frozenset({
+    "true", "false", "yes", "no", "on", "off", "none", "null",
+})
+
+
+def _is_config_var(key: str, raw: str) -> bool:
+    """Whether ``key: raw`` is scanner/template config, not a secret."""
+    up = key.upper()
+    if up.startswith(_CONFIG_KEY_PREFIXES):
+        return True
+    if up.endswith(_REFERENCE_KEY_SUFFIXES):
+        return True
+    v = raw.strip()
+    if v.lower() in _BENIGN_VALUES:
+        return True
+    if v.startswith(("/", "./", "../", "~/")):
+        return True
+    return False
 
 
 def check(path: str, doc: dict[str, Any]) -> Finding:
@@ -41,10 +92,15 @@ def check(path: str, doc: dict[str, Any]) -> Finding:
             raw = value.get("value") if isinstance(value, dict) else value
             if not isinstance(raw, str):
                 continue
-            if AWS_KEY_RE.search(raw):
+            if aws_key_in(raw):
                 offenders.append(f"{where}.{key} (AWS access key)")
                 continue
-            if SECRETISH_KEY_RE.search(key) and raw and "$" not in raw:
+            if (
+                SECRETISH_KEY_RE.search(key)
+                and raw and "$" not in raw
+                and not is_placeholder_value(raw)
+                and not _is_config_var(key, raw)
+            ):
                 offenders.append(f"{where}.{key}")
 
     _scan(doc.get("variables"), "<top>")

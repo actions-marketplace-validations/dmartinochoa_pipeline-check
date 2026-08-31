@@ -12,7 +12,10 @@ Shape:
 - One ``<testsuite>`` per check-ID *prefix* (e.g. GHA, IAM, CB) so CI
   UIs surface a "GitHub Actions rules: 3/12 failing" row rather than
   a single opaque suite. Groupings match how the provider docs
-  organize rules, so users already know how to navigate them.
+  organize rules, so users already know how to navigate them. Each
+  suite leads with a ``<properties>`` block carrying the run's
+  ``pipeline-check.grade`` and ``pipeline-check.score`` (the standard,
+  portable slot for that metadata; ``data-*`` attributes are not JUnit).
 - One ``<testcase>`` per Finding. Passing findings are empty self-
   closed elements. Failing findings nest a ``<failure>`` child whose
   ``message`` is the one-line description, ``type`` is the severity
@@ -25,11 +28,28 @@ the XML envelope.
 """
 from __future__ import annotations
 
-from xml.sax.saxutils import escape as _xml_escape
-from xml.sax.saxutils import quoteattr as _xml_attr
+import re
+from xml.sax.saxutils import escape as _sax_escape
+from xml.sax.saxutils import quoteattr as _sax_quoteattr
 
-from .checks.base import Finding
+from .checks.base import Finding, inline_exploit
+from .report_view import ReportView
 from .scorer import ScoreResult
+
+# XML 1.0 forbids the C0 control characters except tab / LF / CR.
+# ``saxutils`` escapes markup but passes these bytes through verbatim,
+# so a finding field carrying one (a NUL or other control byte lifted
+# from a scanned file) yields non-well-formed XML that CI ingestors
+# reject. Strip them before escaping.
+_XML_INVALID_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+def _xml_escape(text: str) -> str:
+    return _sax_escape(_XML_INVALID_RE.sub("", text))
+
+
+def _xml_attr(text: str) -> str:
+    return _sax_quoteattr(_XML_INVALID_RE.sub("", text))
 
 
 def _prefix(check_id: str) -> str:
@@ -42,7 +62,7 @@ def _prefix(check_id: str) -> str:
     return check_id[:dash] if dash > 0 else check_id
 
 
-def _failure_body(f: Finding) -> str:
+def _failure_body(f: Finding, inline_explain: bool = False) -> str:
     """Render the body of a <failure> element, recommendation + controls."""
     parts = [f.description.strip()] if f.description else []
     if f.recommendation:
@@ -55,15 +75,24 @@ def _failure_body(f: Finding) -> str:
                 f"{c.standard}:{c.control_id}" for c in f.controls
             )
         )
+    exploit = inline_exploit(f, inline_explain)
+    if exploit:
+        parts.append(f"Proof of exploit:\n{exploit}")
     return "\n".join(parts)
 
 
-def report_junit(findings: list[Finding], score_result: ScoreResult) -> str:
+def report_junit(
+    findings: list[Finding],
+    score_result: ScoreResult,
+    inline_explain: bool = False,
+) -> str:
     """Render *findings* as a JUnit XML 4.x report string.
 
     Returns the XML as a string, prologue included. The caller decides
     whether to write to a file or stdout, symmetric with the other
-    reporters in this package.
+    reporters in this package. When *inline_explain* is set, each
+    failing finding's ``exploit_example`` is appended to its
+    ``<failure>`` body.
     """
     # Group by prefix. Preserve input order within each group so that
     # CI UIs don't shuffle the user's mental ordering.
@@ -71,16 +100,16 @@ def report_junit(findings: list[Finding], score_result: ScoreResult) -> str:
     for f in findings:
         by_suite.setdefault(_prefix(f.check_id), []).append(f)
 
-    total = len(findings)
-    failures = sum(1 for f in findings if not f.passed)
+    view = ReportView(findings)
+    total = view.total
+    failures = view.failed_count
     grade = score_result.get("grade", "")
     score = f"{score_result.get('score', 0)}"
 
     out: list[str] = ['<?xml version="1.0" encoding="UTF-8"?>']
     out.append(
         f'<testsuites name="pipeline_check" '
-        f'tests="{total}" failures="{failures}" errors="0" '
-        f'data-grade={_xml_attr(grade)} data-score={_xml_attr(score)}>'
+        f'tests="{total}" failures="{failures}" errors="0">'
     )
     for suite, group in sorted(by_suite.items()):
         suite_total = len(group)
@@ -89,6 +118,22 @@ def report_junit(findings: list[Finding], score_result: ScoreResult) -> str:
             f'  <testsuite name={_xml_attr(suite)} '
             f'tests="{suite_total}" failures="{suite_failed}" errors="0">'
         )
+        # Carry the run-level grade / score as standard JUnit
+        # ``<properties>`` rather than non-standard ``data-*`` attributes
+        # on the root. ``data-*`` is an HTML convention, not JUnit, and
+        # strict schema-validating ingestors (some Azure DevOps / Jenkins
+        # publishers) reject unknown attributes; ``<properties>`` is the
+        # portable extension slot and must precede the test cases.
+        out.append('    <properties>')
+        out.append(
+            f'      <property name="pipeline-check.grade" '
+            f'value={_xml_attr(grade)} />'
+        )
+        out.append(
+            f'      <property name="pipeline-check.score" '
+            f'value={_xml_attr(score)} />'
+        )
+        out.append('    </properties>')
         for f in group:
             # JUnit's <testcase> uses ``name`` for the displayed label
             # and ``classname`` for the grouping-within-suite. We put
@@ -106,7 +151,7 @@ def report_junit(findings: list[Finding], score_result: ScoreResult) -> str:
                     f'file={resource} time="0" />'
                 )
             else:
-                body = _xml_escape(_failure_body(f))
+                body = _xml_escape(_failure_body(f, inline_explain))
                 msg = _xml_attr(
                     (f.description or f.title).split("\n", 1)[0][:200]
                 )

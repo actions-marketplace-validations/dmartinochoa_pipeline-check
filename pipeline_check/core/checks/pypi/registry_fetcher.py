@@ -24,10 +24,13 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
-from collections.abc import Iterable
+import re
+from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, TypeVar
+from urllib.parse import urlsplit
 
+from .._primitives.provenance_ref import source_ref_from_pep740_provenance
 from .._primitives.registry_fetcher import (
     FileSystemCache as _FileSystemCache,
 )
@@ -81,6 +84,26 @@ class HttpRegistryFetcher:
     def fetch(self, name: str) -> bytes | None:
         encoded = name.strip().lower()
         return self._http.get(f"{self.BASE_URL}/{encoded}/json")
+
+    def fetch_provenance_object(self, url: str) -> bytes | None:
+        """Fetch a PEP 740 provenance object from its PyPI ``provenance`` URL.
+
+        Each attested file record in the JSON API carries a ``provenance``
+        URL once attestations are published. That URL is set by PyPI's
+        integrity service, not by the uploader, but it's pinned to the
+        ``pypi.org`` host before the GET so a tampered metadata blob can't
+        redirect the fetch off-index. Used by PYPI-021 to read the build's
+        source ref. Returns ``None`` for an off-host or non-HTTPS URL.
+        """
+        if not isinstance(url, str):
+            return None
+        parts = urlsplit(url)
+        host = parts.hostname or ""
+        if parts.scheme != "https":
+            return None
+        if host != "pypi.org" and not host.endswith(".pypi.org"):
+            return None
+        return self._http.get(url)
 
 
 # ── Per-version timestamp parser ─────────────────────────────────
@@ -171,10 +194,281 @@ def fetch_publish_times(
     )
 
 
+# ── Shared per-package field fetch loop ──────────────────────────
+
+_T = TypeVar("_T")
+
+
+def _fetch_field(
+    names: Iterable[str],
+    fetcher: RegistryMetadataFetcher,
+    parser: Callable[[bytes], _T | None],
+    cache: FileSystemCache | None = None,
+) -> tuple[dict[str, _T], list[str]]:
+    """Dedup (PEP 503 lowercase) + cache + fetch + parse one field out
+    of each PyPI JSON document.
+
+    Shared by the provenance and repo-slug passes. Every pass reads the
+    same ``pypi.org/pypi/<name>/json`` document, so running them together
+    in one ``--resolve-remote`` scan (alongside the publish-time pass)
+    fetches each package only once, later passes hit the disk cache.
+    A package whose metadata can't be fetched lands as a warning and is
+    omitted; a parser returning ``None`` (field absent / can't tell) is
+    omitted so the consuming rule skips it, a parser returning ``False``
+    is recorded (a meaningful "no provenance").
+    """
+    seen: set[str] = set()
+    out: dict[str, _T] = {}
+    warnings: list[str] = []
+    for raw in names:
+        if not isinstance(raw, str) or not raw:
+            continue
+        name = raw.strip().lower()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        blob = cache.get(name) if cache is not None else None
+        if blob is None:
+            blob = fetcher.fetch(name)
+            if blob is None:
+                warnings.append(
+                    f"pypi-registry: could not fetch metadata for {name}"
+                )
+                continue
+            if cache is not None:
+                cache.put(name, blob)
+        parsed = parser(blob)
+        if parsed is not None:
+            out[name] = parsed
+    return out, warnings
+
+
+# ── PEP 740 build-provenance parser ──────────────────────────────
+
+
+def _parse_has_provenance(blob: bytes) -> bool | None:
+    """Whether the latest release's files carry a PEP 740 attestation.
+
+    PyPI's JSON API lists the latest release's files under the
+    top-level ``urls`` array; each file record gains a ``provenance``
+    field (a URL to the provenance object) once attestations are
+    published. Returns ``True`` when any file carries a populated
+    ``provenance``, ``False`` when the field is present but empty on
+    every file (the index exposes attestations and this release has
+    none), and ``None`` when no file record carries the field at all
+    (the index doesn't expose it / can't tell) so the rule skips the
+    package rather than flagging an unknown as missing.
+    """
+    try:
+        doc = json.loads(blob)
+    except (ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(doc, dict):
+        return None
+    urls = doc.get("urls")
+    if not isinstance(urls, list) or not urls:
+        return None
+    saw_field = False
+    for file_rec in urls:
+        if not isinstance(file_rec, dict):
+            continue
+        if "provenance" in file_rec:
+            saw_field = True
+            if file_rec.get("provenance"):
+                return True
+    return False if saw_field else None
+
+
+def fetch_provenance(
+    names: Iterable[str],
+    fetcher: RegistryMetadataFetcher,
+    cache: FileSystemCache | None = None,
+) -> tuple[dict[str, bool], list[str]]:
+    """Resolve PEP 740 provenance presence for every package in *names*.
+
+    Returns ``({name: has_provenance}, warnings)``; ``False`` entries
+    are the ones PYPI-019 flags, unresolved packages are omitted.
+    """
+    return _fetch_field(names, fetcher, _parse_has_provenance, cache)
+
+
+def _parse_latest_provenance_url(blob: bytes) -> str | None:
+    """The PEP 740 provenance URL of the latest release, if a file exposes one.
+
+    PyPI's JSON API lists the latest release's files under the top-level
+    ``urls`` array; an attested file gains a populated ``provenance``
+    field holding the URL of its provenance object. Returns the first
+    populated URL; ``None`` when no file carries one (no attestation,
+    which is PYPI-019's concern, so PYPI-021 skips the package). Mirrors
+    :func:`_parse_has_provenance` but returns the URL the provenance
+    object lives at instead of a presence flag.
+    """
+    try:
+        doc = json.loads(blob)
+    except (ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(doc, dict):
+        return None
+    urls = doc.get("urls")
+    if not isinstance(urls, list):
+        return None
+    for file_rec in urls:
+        if not isinstance(file_rec, dict):
+            continue
+        prov = file_rec.get("provenance")
+        if isinstance(prov, str) and prov.strip():
+            return prov.strip()
+    return None
+
+
+def fetch_provenance_refs(
+    names: Iterable[str],
+    fetcher: RegistryMetadataFetcher,
+    cache: FileSystemCache | None = None,
+) -> tuple[dict[str, str], list[str]]:
+    """Resolve the build-provenance *source ref* for packages that ship one.
+
+    Two-stage, mirroring the npm pass: read each PyPI JSON document
+    (shared name-keyed cache, so no extra fetch alongside the other
+    ``--resolve-remote`` passes) to find the latest release's PEP 740
+    provenance URL, then fetch that provenance object and parse the SLSA
+    source ref. Only packages whose latest release both ships provenance
+    AND exposes a parseable ref are returned; everything else is omitted
+    so PYPI-021 skips unknowns rather than flagging them. Needs a fetcher
+    exposing ``fetch_provenance_object``; without it the pass is a no-op.
+    Packages with no provenance are PYPI-019's concern and skipped here.
+    """
+    fetch_obj = getattr(fetcher, "fetch_provenance_object", None)
+    seen: set[str] = set()
+    out: dict[str, str] = {}
+    warnings: list[str] = []
+    for raw in names:
+        if not isinstance(raw, str) or not raw:
+            continue
+        name = raw.strip().lower()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        blob = cache.get(name) if cache is not None else None
+        if blob is None:
+            blob = fetcher.fetch(name)
+            if blob is None:
+                continue  # unfetchable metadata: PYPI-019 already warns
+            if cache is not None:
+                cache.put(name, blob)
+        prov_url = _parse_latest_provenance_url(blob)
+        if prov_url is None or fetch_obj is None:
+            continue
+        prov_key = f"{name}::provenance"
+        prov_blob = cache.get(prov_key) if cache is not None else None
+        if prov_blob is None:
+            prov_blob = fetch_obj(prov_url)
+            if prov_blob is None:
+                warnings.append(
+                    f"pypi-registry: could not fetch provenance for {name}"
+                )
+                continue
+            if cache is not None:
+                cache.put(prov_key, prov_blob)
+        try:
+            provenance = json.loads(prov_blob)
+        except (ValueError, json.JSONDecodeError):
+            continue
+        if not isinstance(provenance, dict):
+            continue
+        ref = source_ref_from_pep740_provenance(provenance)
+        if ref:
+            out[name] = ref
+    return out, warnings
+
+
+# ── GitHub repository-slug parser ────────────────────────────────
+
+
+_GITHUB_REPO_RE = re.compile(
+    # Host-anchored so a look-alike domain (``evilgithub.com``) can't
+    # masquerade as ``github.com``.
+    r"(?<![A-Za-z0-9.-])github\.com[/:]"
+    r"([A-Za-z0-9][A-Za-z0-9._-]*)/([A-Za-z0-9][A-Za-z0-9._-]*)"
+)
+#: First-segment values on ``github.com/<seg>/<x>`` that are NOT a
+#: repository owner (sponsor / marketplace / docs links commonly
+#: appear in ``project_urls``).
+_NON_OWNER_SEGMENTS = frozenset({
+    "sponsors", "marketplace", "apps", "orgs", "about", "features",
+})
+
+
+def _parse_repo_slug(blob: bytes) -> str | None:
+    """Return the ``owner/repo`` GitHub slug from a PyPI JSON document.
+
+    Reads ``info.project_urls`` (preferring source / repository / code
+    keys) plus ``info.home_page`` and searches for a
+    ``github.com/owner/repo`` URL. Only GitHub is recognized (the
+    OpenSSF Scorecard API is GitHub-scoped); sponsor / marketplace
+    links and non-GitHub or unparseable URLs return ``None`` so the
+    rule skips the package.
+    """
+    try:
+        doc = json.loads(blob)
+    except (ValueError, json.JSONDecodeError):
+        return None
+    info = doc.get("info") if isinstance(doc, dict) else None
+    if not isinstance(info, dict):
+        return None
+    candidates: list[str] = []
+    project_urls = info.get("project_urls")
+    if isinstance(project_urls, dict):
+        preferred: list[str] = []
+        other: list[str] = []
+        for key, value in project_urls.items():
+            if not isinstance(value, str):
+                continue
+            label = key.lower() if isinstance(key, str) else ""
+            if any(
+                tag in label
+                for tag in ("source", "repository", "repo", "code", "github")
+            ):
+                preferred.append(value)
+            else:
+                other.append(value)
+        candidates.extend(preferred)
+        candidates.extend(other)
+    for key in ("home_page", "project_url", "download_url"):
+        value = info.get(key)
+        if isinstance(value, str):
+            candidates.append(value)
+    for url in candidates:
+        m = _GITHUB_REPO_RE.search(url)
+        if m is None:
+            continue
+        owner, name = m.group(1), m.group(2).removesuffix(".git")
+        if owner and name and owner.lower() not in _NON_OWNER_SEGMENTS:
+            return f"{owner}/{name}"
+    return None
+
+
+def fetch_repo_slugs(
+    names: Iterable[str],
+    fetcher: RegistryMetadataFetcher,
+    cache: FileSystemCache | None = None,
+) -> tuple[dict[str, str], list[str]]:
+    """Resolve the GitHub ``owner/repo`` slug for every package in *names*.
+
+    Returns ``({name: "owner/repo"}, warnings)``; packages with no
+    GitHub repository in their PyPI metadata are omitted. PYPI-020
+    feeds these slugs to the OpenSSF Scorecard API.
+    """
+    return _fetch_field(names, fetcher, _parse_repo_slug, cache)
+
+
 __all__ = [
     "FileSystemCache",
     "HttpRegistryFetcher",
     "RegistryMetadataFetcher",
     "default_cache_dir",
+    "fetch_provenance",
+    "fetch_provenance_refs",
     "fetch_publish_times",
+    "fetch_repo_slugs",
 ]

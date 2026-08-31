@@ -1,5 +1,5 @@
 name: 'pipeline-check'
-description: 'CI/CD pipeline security scanner. 810+ checks across 22 providers, 15 compliance standards. SARIF output for code scanning.'
+description: 'CI/CD pipeline security scanner. 1260+ checks across 39 providers, 18 compliance standards. SARIF output for code scanning.'
 author: 'Pipeline-Check'
 branding:
   icon: 'shield'
@@ -80,16 +80,29 @@ inputs:
     description: >
       Output format. ``sarif`` is the default so findings flow into
       the GitHub Security tab via the upload-sarif step. Other
-      options: ``terminal``, ``json``, ``html``, ``junit``,
-      ``markdown``, ``both``.
+      options: ``terminal``, ``json``, ``jsonl`` (newline-delimited
+      JSON, one finding per line for log / SIEM ingestion), ``html``,
+      ``junit``, ``markdown``, ``codequality``, ``csv``, ``annotations``
+      (GitHub Actions inline ``::error`` annotations), ``cyclonedx``,
+      ``spdx``, ``openvex`` (an OpenVEX document for the OSV advisory
+      findings), ``both``.
     required: false
     default: 'sarif'
   output-file:
     description: >
-      Path to write the report. Defaults to ``pipeline-check.sarif``
-      for SARIF output.
+      Path to write the report. When left blank a per-format default
+      is used: ``pipeline-check.sarif`` for SARIF (so the upload-sarif
+      step keeps working), ``pipeline-check.json`` for JSON,
+      ``pipeline-check.html`` for HTML, ``pipeline-check.xml`` for
+      JUnit, ``pipeline-check.md`` for Markdown,
+      ``gl-code-quality-report.json`` for Code Quality (the GitLab
+      convention), ``pipeline-check-sbom.json`` for CycloneDX,
+      ``pipeline-check.spdx.json`` for SPDX,
+      ``pipeline-check.openvex.json`` for OpenVEX,
+      ``pipeline-check-threatmodel.json`` for the threat-model
+      report. Terminal / both write to stdout when this is blank.
     required: false
-    default: 'pipeline-check.sarif'
+    default: ''
   upload-sarif:
     description: >
       When ``true`` and ``output`` is ``sarif``, upload the SARIF
@@ -126,6 +139,27 @@ inputs:
       similar flags not represented above. Quoted as a single string.
     required: false
     default: ''
+  pr-comment:
+    description: >
+      Post inline review comments on the PR diff. ``true`` enables on
+      pull_request events; ``false`` disables. Requires
+      ``pull-requests: write`` permission. Findings outside the diff
+      fall back to a single PR-level summary comment.
+    required: false
+    default: 'true'
+  comment-mode:
+    description: >
+      ``per-finding`` posts one review comment per finding location;
+      ``summary`` posts a single PR-level comment listing every finding.
+    required: false
+    default: 'per-finding'
+  gh-token:
+    description: >
+      Token used to post PR review comments. Defaults to the runner-
+      provided ``GITHUB_TOKEN``. Only needed when ``pr-comment`` is
+      enabled.
+    required: false
+    default: ${{ github.token }}
 
 outputs:
   exit-code:
@@ -151,7 +185,7 @@ runs:
   using: 'composite'
   steps:
     - name: Set up Python
-      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+      uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
       with:
         python-version: ${{ inputs.python-version }}
 
@@ -217,10 +251,15 @@ runs:
             drone)          args+=(--drone-path      "$WORKSPACE_PATH") ;;
             tekton)         args+=(--tekton-path     "$WORKSPACE_PATH") ;;
             argo)           args+=(--argo-path       "$WORKSPACE_PATH") ;;
+            argocd)         args+=(--argocd-path     "$WORKSPACE_PATH") ;;
             dockerfile)     args+=(--dockerfile-path "$WORKSPACE_PATH") ;;
             kubernetes)     args+=(--k8s-path        "$WORKSPACE_PATH") ;;
             helm)           args+=(--helm-path       "$WORKSPACE_PATH") ;;
             oci)            args+=(--oci-manifest    "$WORKSPACE_PATH") ;;
+            npm)            args+=(--npm-path        "$WORKSPACE_PATH") ;;
+            pypi)           args+=(--pypi-path       "$WORKSPACE_PATH") ;;
+            maven)          args+=(--maven-path      "$WORKSPACE_PATH") ;;
+            nuget)          args+=(--nuget-path      "$WORKSPACE_PATH") ;;
             auto|"")        cd "$WORKSPACE_PATH" || exit 3 ;;
             aws)            : ;;  # AWS scans the live account, no path
             *,*)            : ;;  # multi-pipeline, leave each provider on auto-detect
@@ -236,6 +275,29 @@ runs:
         [ -n "$DIFF_BASE" ]          && args+=(--diff-base "$DIFF_BASE")
         [ -n "$IGNORE_FILE" ]        && args+=(--ignore-file "$IGNORE_FILE")
         [ -n "$OUTPUT_FORMAT" ]      && args+=(--output "$OUTPUT_FORMAT")
+
+        # Derive a per-format default filename when the caller left
+        # ``output-file`` blank. The previous behavior always wrote
+        # ``pipeline-check.sarif`` regardless of format, so a caller
+        # who set ``output: codequality`` without overriding the file
+        # name got the Code Quality JSON in a ``.sarif`` file —
+        # invisible to GitLab's ``artifacts.reports.codequality:``
+        # slot, no error to diagnose. Terminal/both stay blank
+        # because they stream to stdout.
+        if [ -z "$OUTPUT_FILE" ]; then
+          case "$OUTPUT_FORMAT" in
+            sarif|"")    OUTPUT_FILE="pipeline-check.sarif" ;;
+            json)        OUTPUT_FILE="pipeline-check.json" ;;
+            html)        OUTPUT_FILE="pipeline-check.html" ;;
+            junit)       OUTPUT_FILE="pipeline-check.xml" ;;
+            markdown)    OUTPUT_FILE="pipeline-check.md" ;;
+            codequality) OUTPUT_FILE="gl-code-quality-report.json" ;;
+            cyclonedx)   OUTPUT_FILE="pipeline-check-sbom.json" ;;
+            spdx)        OUTPUT_FILE="pipeline-check.spdx.json" ;;
+            openvex)     OUTPUT_FILE="pipeline-check.openvex.json" ;;
+            threatmodel) OUTPUT_FILE="pipeline-check-threatmodel.json" ;;
+          esac
+        fi
         [ -n "$OUTPUT_FILE" ]        && args+=(--output-file "$OUTPUT_FILE")
         [ "$RESOLVE_REMOTE" = "true" ] && args+=(--resolve-remote)
 
@@ -267,14 +329,16 @@ runs:
         echo "exit-code=$ec" >> "$GITHUB_OUTPUT"
         echo "sarif-file=$OUTPUT_FILE" >> "$GITHUB_OUTPUT"
 
-        if [ "$OUTPUT_FORMAT" = "sarif" ] && [ -f "$OUTPUT_FILE" ]; then
-          # Re-scan with ``--output json`` to extract score / grade /
-          # finding counts as action outputs. Cheaper than parsing
-          # SARIF + computing severity rollups by hand. Build the
-          # stats invocation by stripping any output / output-file /
-          # gate flags from the original args, then add the json
-          # output explicitly.
-          stats="$(mktemp)"
+        # Produce a JSON sidecar at a known path. Used for: (a) action
+        # outputs (score, grade, counts) and (b) the PR-comment step.
+        # When the primary output is already JSON, just copy it.
+        # Otherwise re-scan with ``--output json``.
+        stats="$RUNNER_TEMP/pipeline-check-report.json"
+        if [ "$OUTPUT_FORMAT" = "json" ] && [ -f "$OUTPUT_FILE" ]; then
+          cp "$OUTPUT_FILE" "$stats"
+        fi
+
+        if [ ! -s "$stats" ]; then
           stats_args=()
           skip_next=0
           for tok in "${args[@]}"; do
@@ -290,8 +354,10 @@ runs:
           done
           stats_args+=(--output json --output-file "$stats")
           pipeline_check "${stats_args[@]}" >/dev/null 2>&1 || true
-          if [ -s "$stats" ]; then
-            python - "$stats" <<'PY' >> "$GITHUB_OUTPUT"
+        fi
+
+        if [ -s "$stats" ]; then
+          python - "$stats" <<'PY' >> "$GITHUB_OUTPUT"
         import json, sys
         with open(sys.argv[1]) as fh:
             data = json.load(fh)
@@ -305,7 +371,6 @@ runs:
         print(f"score={score.get('score', '')}")
         print(f"grade={score.get('grade', '')}")
         PY
-          fi
         fi
 
         # Re-raise the original exit code so the job reflects the gate.
@@ -313,6 +378,32 @@ runs:
 
     - name: Upload SARIF
       if: ${{ inputs.upload-sarif == 'true' && inputs.output == 'sarif' && always() }}
-      uses: github/codeql-action/upload-sarif@9e0d7b8d25671d64c341c19c0152d693099fb5ba  # v4.35.5
+      uses: github/codeql-action/upload-sarif@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a  # v4.36.3
       with:
-        sarif_file: ${{ inputs.output-file }}
+        # ``steps.run.outputs.sarif-file`` carries the path the run step
+        # actually wrote to — either the explicit ``inputs.output-file``
+        # or the per-format default the step derives. Reading
+        # ``inputs.output-file`` here would be empty when the caller
+        # relied on the default.
+        sarif_file: ${{ steps.run.outputs.sarif-file }}
+
+    - name: Post PR review comments
+      if: >-
+        ${{
+          inputs.pr-comment == 'true'
+          && github.event_name == 'pull_request'
+          && always()
+        }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.gh-token }}
+        PIPELINE_CHECK_REPORT: ${{ runner.temp }}/pipeline-check-report.json
+        PIPELINE_CHECK_PIPELINE: ${{ inputs.pipeline }}
+        PIPELINE_CHECK_PATH: ${{ inputs.path }}
+        PIPELINE_CHECK_SEVERITY: ${{ inputs.severity-threshold }}
+        PIPELINE_CHECK_RESOLVE_REMOTE: ${{ inputs.resolve-remote }}
+        PIPELINE_CHECK_COMMENT_MODE: ${{ inputs.comment-mode }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        GITHUB_PR_NUMBER: ${{ github.event.pull_request.number }}
+        GITHUB_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      run: python "$GITHUB_ACTION_PATH/.github/actions/pipeline-check-pr/entrypoint.py"

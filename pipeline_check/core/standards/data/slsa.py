@@ -75,14 +75,22 @@ STANDARD = Standard(
         "IAM-006":  ["Build.L3.NonFalsifiable"],                   # wildcard resource
         "IAM-007":  ["Build.L3.NonFalsifiable"],                   # access key > 90 days (forgeable)
         "IAM-008":  ["Build.L3.NonFalsifiable"],                   # OIDC trust missing aud/sub pin
+        "IAM-009":  ["Build.L3.NonFalsifiable"],                   # Azure WIF broad subject
+        "IAM-010":  ["Build.L3.NonFalsifiable"],                   # GCP WIF no repo condition
         # PBAC, cross-build contamination breaks isolation
         "PBAC-001": ["Build.L3.Isolated"],                         # no VPC boundary
         "PBAC-002": ["Build.L3.Isolated"],                         # shared service role
         "PBAC-005": ["Build.L3.NonFalsifiable"],                   # stage roles mirror pipeline role
         # ── GitHub Actions ────────────────────────────────────────
         "GHA-001":  ["Build.L3.NonFalsifiable"],                   # unpinned 3rd-party action
+        "GHA-110": ["Build.L3.NonFalsifiable"],  # CI env disables Go module verification
         "GHA-002":  ["Build.L3.NonFalsifiable", "Build.L3.Isolated"], # pull_request_target + PR head
         "GHA-003":  ["Build.L3.Isolated"],                         # script injection
+        "GHA-119":  ["Build.L3.Isolated"],                         # untrusted context into an agentic AI CLI
+        "GHA-120":  ["Build.L3.Isolated"],                         # trust_remote_code model load = code exec
+        "GHA-122":  ["Build.L3.Isolated"],                         # unsafe pickle deser of fetched artifact = code exec
+        "GHA-117":  ["Build.L3.Isolated"],                         # IaC apply on untrusted PR trigger
+        "GHA-118":  ["Build.L3.Isolated"],                         # untrusted content into $GITHUB_ENV / $GITHUB_PATH
         "GHA-004":  ["Build.L3.NonFalsifiable"],                   # unrestricted GITHUB_TOKEN
         "GHA-006":  ["Build.L2.Signed"],                           # unsigned artifacts
         "GHA-007":  ["Build.L1.Provenance"],                       # no SBOM / provenance
@@ -91,6 +99,8 @@ STANDARD = Standard(
         "GHA-010":  ["Build.L3.Isolated"],                         # local action on untrusted trigger
         "GHA-011":  ["Build.L3.Isolated"],                         # cache key tainting
         "GHA-012":  ["Build.L2.Hosted", "Build.L3.Ephemeral"],     # self-hosted runner
+        "GHA-105":  ["Build.L2.Hosted", "Build.L3.Ephemeral"],     # self-hosted runner on PR trigger
+        "ORG-009":  ["Build.L2.Hosted", "Build.L3.Ephemeral"],     # org self-hosted runner group, public repos
         "GHA-013":  ["Build.L3.Isolated"],                         # issue_comment without guard
         "GHA-015":  ["Build.L3.Ephemeral"],                        # unbounded build
         "GHA-016":  ["Build.L3.Isolated"],                         # curl | bash → RCE
@@ -102,6 +112,9 @@ STANDARD = Standard(
                      "Build.L3.NonFalsifiable"],                   # SLSA attestation missing
         "GHA-025":  ["Build.L3.NonFalsifiable"],                   # unpinned reusable workflow
         "GHA-026":  ["Build.L3.Isolated"],                         # container escape via options
+        "GHA-107":  ["Build.L3.Isolated"],                         # harden-runner in audit mode (egress not blocked)
+        "GHA-108":  ["Build.L3.Isolated"],                         # no runtime egress control on OIDC/deploy workflow
+        "GHA-109":  ["Build.L3.Isolated"],                         # harden-runner not the first step
         "GHA-028":  ["Build.L3.Isolated"],                         # eval / shell re-invocation
         "GHA-029":  ["Build.L3.Isolated"],                         # package source bypasses lockfile
         # OIDC w/o env-protected job (provenance binding weak)
@@ -112,6 +125,14 @@ STANDARD = Standard(
         "GHA-042":  ["Build.L3.NonFalsifiable"],                   # very-young action repo
         "GHA-043":  ["Build.L3.NonFalsifiable"],                   # low-star + sensitive perms
         "GHA-047":  ["Build.L3.NonFalsifiable"],                   # fresh-ref cooldown
+        "GHA-088":  ["Build.L3.NonFalsifiable"],                   # typosquat uses
+        "GHA-089":  ["Build.L3.NonFalsifiable"],                   # archived upstream
+        "GHA-090":  ["Build.L3.NonFalsifiable"],                   # impostor-commit
+        "GHA-091":  ["Build.L3.NonFalsifiable"],                   # repojacking
+        "GHA-092":  ["Build.L3.Isolated"],                         # TOCTOU PR head SHA
+        "GHA-093":  ["Build.L3.Isolated"],                         # LOTP indicators (workflow-command abuse)
+        "GHA-094":  ["Build.L3.NonFalsifiable"],                   # stale-action-refs
+        "GHA-096":  ["Build.L3.NonFalsifiable"],                   # known-vulnerable action ref (GHSA)
         "GHA-048":  ["Build.L3.NonFalsifiable",
                      "Build.L3.Isolated"],                         # workflow self-mutation
         "GHA-049":  ["Build.L3.NonFalsifiable"],                   # cross-repo push
@@ -122,6 +143,7 @@ STANDARD = Standard(
         "GHA-054":  ["Build.L3.NonFalsifiable"],                   # checkout ssh-key persists into .git/config
         "GHA-005":  ["Build.L3.NonFalsifiable"],                   # long-lived AWS keys
         "GHA-014":  ["Build.L3.NonFalsifiable"],                   # deploy job missing environment
+        "GHA-123":  ["Build.L3.NonFalsifiable"],                   # agentic CLI output lands without review
         "GHA-018":  ["Build.L3.NonFalsifiable"],                   # GITHUB_TOKEN persisted to storage
         "GHA-022":  ["Build.L3.Isolated",
                      "Build.L3.NonFalsifiable"],                   # TLS bypass
@@ -130,6 +152,7 @@ STANDARD = Standard(
         "GHA-032":  ["Build.L3.Isolated"],                         # local script on untrusted trigger
         "GHA-033":  ["Build.L3.NonFalsifiable"],                   # secret echoed in run:
         "GHA-034":  ["Build.L3.NonFalsifiable"],                   # secrets: inherit (broad cred surface)
+        "GHA-116":  ["Build.L3.NonFalsifiable"],                   # bulk secrets serialization
         "GHA-035":  ["Build.L3.Isolated"],                         # github-script untrusted context
         "GHA-036":  ["Build.L3.Isolated"],                         # runs-on untrusted context
         "GHA-038":  ["Build.L3.Isolated"],                         # ACTIONS_ALLOW_UNSECURE_COMMANDS
@@ -144,13 +167,26 @@ STANDARD = Standard(
         "GHA-059":  ["Build.L3.NonFalsifiable"],                   # npm install without audit signatures
         "GHA-060":  ["Build.L3.NonFalsifiable"],                   # pip install without --require-hashes
         "GHA-061":  ["Build.L3.NonFalsifiable"],                   # App token minted without permissions filter
+        "GHA-106":  ["Build.L3.NonFalsifiable"],                   # AI agent with write-scoped token
+        "GHA-111":  ["Build.L3.NonFalsifiable"],  # AI agent edits IaC applied in the same job
+        "GHA-112":  ["Build.L3.Ephemeral"],  # self-hosted deploy with no environment gate
+        "GHA-113":  ["Build.L3.NonFalsifiable"],  # OIDC trusted-publish w/o env gate
+        "GHA-114":  ["Build.L3.NonFalsifiable"],  # publish workflow on an unrestricted push trigger
+        "GHA-062":  ["Build.L3.NonFalsifiable"],                   # OIDC trust subject in sibling IaC is overly broad
         # ── GitLab CI ─────────────────────────────────────────────
         "GL-001":   ["Build.L3.NonFalsifiable"],                   # floating image tag
+        "GL-037": ["Build.L3.NonFalsifiable"],  # CI env disables Go module verification
         "GL-002":   ["Build.L3.Isolated"],                         # script injection
+        "GL-045":   ["Build.L3.Isolated"],                         # trust_remote_code model load = code exec
+        "GL-047":   ["Build.L3.Isolated"],                         # unsafe pickle deser of fetched artifact = code exec
+        "GL-048":   ["Build.L3.Isolated"],                         # MR context into agentic CLI = prompt injection
+        "GL-049":   ["Build.L3.NonFalsifiable"],                   # agentic CLI output lands without review
         "GL-005":   ["Build.L3.NonFalsifiable"],                   # unpinned include
+        "GL-042":   ["Build.L3.NonFalsifiable"],                   # unpinned component include
         "GL-006":   ["Build.L2.Signed"],
         "GL-007":   ["Build.L1.Provenance"],
         "GL-008":   ["Build.L3.NonFalsifiable"],                   # leaked creds
+        "DEV-008":   ["Build.L3.NonFalsifiable"],                  # literal secret in a devenv config
         "GL-009":   ["Build.L3.NonFalsifiable"],                   # tag-pinned not digest
         "GL-010":   ["Build.L3.Isolated"],                         # multi-project artifact ingestion
         "GL-011":   ["Build.L3.Isolated"],                         # include: local on MR pipeline
@@ -159,6 +195,7 @@ STANDARD = Standard(
         "GL-015":   ["Build.L3.Ephemeral"],                        # unbounded build
         "GL-016":   ["Build.L3.Isolated"],                         # curl | bash
         "GL-017":   ["Build.L3.Isolated"],                         # Docker privileged
+        "GL-039":   ["Build.L3.Isolated"],                         # dind daemon TLS disabled / exposed on 2375
         "GL-020":   ["Build.L3.NonFalsifiable"],                   # token persistence
         "GL-021":   ["Build.L3.Isolated"],                         # no lockfile
         "GL-023":   ["Build.L3.Isolated"],                         # TLS bypass
@@ -176,6 +213,9 @@ STANDARD = Standard(
         "GL-029":   ["Build.L3.NonFalsifiable"],                   # manual deploy allow_failure
         "GL-030":   ["Build.L3.NonFalsifiable"],                   # trigger: include w/o pinned ref
         "GL-031":   ["Build.L3.NonFalsifiable"],                   # id_tokens missing audience pin
+        "GL-040":   ["Build.L3.NonFalsifiable"],                   # CI_JOB_TOKEN used for cross-project access
+        "GL-041":   ["Build.L3.Isolated"],                         # IaC apply on an untrusted MR trigger
+        "GL-050":   ["Build.L2.Signed"],  # publish job long-lived registry token (GHA-050 analog)
         "GL-032":   ["Build.L3.Isolated"],                         # tags interpolates untrusted variable
         "GL-033":   ["Build.L3.Isolated"],                         # global before_script taint
         "GL-034":   ["Build.L3.NonFalsifiable"],                   # npm install without audit signatures
@@ -183,6 +223,14 @@ STANDARD = Standard(
         # ── Bitbucket Pipelines ───────────────────────────────────
         "BB-001":   ["Build.L3.NonFalsifiable"],                   # unpinned pipe
         "BB-002":   ["Build.L3.Isolated"],                         # script injection
+        "BB-035":   ["Build.L3.Isolated"],                         # trust_remote_code model load = code exec
+        "BB-036":   ["Build.L3.Isolated"],                         # untrusted PR context into agentic CLI
+        "BB-037":   ["Build.L3.Isolated"],                         # unsafe pickle deser of fetched artifact
+        "BB-039":   ["Build.L3.NonFalsifiable"],                         # agentic CLI output lands without review
+        "JF-038":   ["Build.L3.NonFalsifiable"],                         # agentic CLI output lands without review
+        "JF-039":   ["Build.L3.Isolated"],                         # trust_remote_code model load = code exec
+        "JF-041":   ["Build.L3.Isolated"],                         # unsafe pickle deser of fetched artifact = code exec
+        "JF-042":   ["Build.L3.NonFalsifiable"],                         # secret echoed to Jenkins build log
         "BB-005":   ["Build.L3.Ephemeral"],                        # unbounded runtime
         "BB-006":   ["Build.L2.Signed"],
         "BB-007":   ["Build.L1.Provenance"],
@@ -214,6 +262,10 @@ STANDARD = Standard(
         # ── Azure DevOps Pipelines ────────────────────────────────
         "ADO-001":  ["Build.L3.NonFalsifiable"],                   # unpinned task
         "ADO-002":  ["Build.L3.Isolated"],                         # script injection
+        "ADO-034":  ["Build.L3.Isolated"],                         # trust_remote_code model load = code exec
+        "ADO-035":  ["Build.L3.Isolated"],                         # untrusted PR context into agentic CLI
+        "ADO-036":  ["Build.L3.Isolated"],                         # unsafe pickle deser of fetched artifact
+        "ADO-038":  ["Build.L3.NonFalsifiable"],                         # agentic CLI output lands without review
         "ADO-005":  ["Build.L3.NonFalsifiable"],                   # unpinned container
         "ADO-006":  ["Build.L2.Signed"],
         "ADO-007":  ["Build.L1.Provenance"],
@@ -245,6 +297,7 @@ STANDARD = Standard(
         # ── Jenkins ───────────────────────────────────────────────
         "JF-001":   ["Build.L3.NonFalsifiable"],                   # unpinned shared library
         "JF-002":   ["Build.L3.Isolated"],                         # script injection
+        "JF-037":   ["Build.L3.Isolated"],                         # agentic CLI prompt injection
         "JF-003":   ["Build.L3.Isolated"],                         # agent any, no isolation
         "JF-006":   ["Build.L2.Signed"],                           # unsigned artifacts
         "JF-007":   ["Build.L1.Provenance"],                       # no SBOM
@@ -280,6 +333,7 @@ STANDARD = Standard(
                      "Build.L3.NonFalsifiable"],                   # httpRequest SSL off
         # ── CircleCI ──────────────────────────────────────────────
         "CC-001":   ["Build.L3.NonFalsifiable"],                   # orb not pinned
+        "CC-033": ["Build.L3.NonFalsifiable"],  # CI env disables Go module verification
         "CC-002":   ["Build.L3.Isolated"],                         # script injection
         "CC-003":   ["Build.L3.NonFalsifiable"],                   # image not pinned to digest
         "CC-004":   ["Build.L3.NonFalsifiable"],                   # unrestricted context
@@ -298,6 +352,11 @@ STANDARD = Standard(
                      "Build.L3.NonFalsifiable"],
         "CC-025":   ["Build.L3.Isolated"],                         # cache poisoning
         "CC-027":   ["Build.L3.Isolated"],                         # eval / shell re-invocation
+        "DR-017":  ["Build.L3.Isolated"],  # Drone dangerous shell idiom
+        "BK-016":  ["Build.L3.Isolated"],  # Buildkite dangerous shell idiom
+        "ARGO-019":  ["Build.L3.Isolated"],  # Argo dangerous shell idiom
+        "TKN-018":  ["Build.L3.Isolated"],  # Tekton dangerous shell idiom
+        "HARNESS-014":  ["Build.L3.Isolated"],  # Harness dangerous shell idiom
         "CC-028":   ["Build.L3.Isolated"],                         # package source bypasses lockfile
         "CC-005":   ["Build.L3.NonFalsifiable"],                   # leaked credentials
         "CC-009":   ["Build.L3.NonFalsifiable"],                   # job missing approval gate
@@ -319,7 +378,11 @@ STANDARD = Standard(
         "BK-007":   ["Build.L3.NonFalsifiable"],                   # deploy not gated
         "BK-008":   ["Build.L3.Isolated"],                         # TLS bypass
         "BK-009":   ["Build.L2.Signed"],                           # artifact signing
+        "HARNESS-015":  ["Build.L2.Signed"],  # Harness artifacts not signed
+        "DR-019":  ["Build.L2.Signed"],  # Drone artifacts not signed
         "BK-010":   ["Build.L1.Provenance"],                       # SBOM
+        "HARNESS-016":  ["Build.L1.Provenance"],  # Harness no SBOM
+        "DR-020":  ["Build.L1.Provenance"],  # Drone no SBOM
         "BK-011":   ["Build.L1.Provenance", "Build.L2.Signed",
                      "Build.L3.NonFalsifiable"],                   # SLSA provenance
         "BK-013":   ["Build.L3.NonFalsifiable"],                   # deploy step no branches filter
@@ -327,11 +390,13 @@ STANDARD = Standard(
         "BK-015":   ["Build.L3.Isolated"],                         # agents map untrusted interpolation
         # ── Tekton ────────────────────────────────────────────────
         "TKN-001":  ["Build.L3.NonFalsifiable"],                   # step image not digest-pinned
+        "TKN-016": ["Build.L3.NonFalsifiable"],  # remote resolver / bundle task body not pinned
         "TKN-002":  ["Build.L3.Isolated"],                         # step privileged / root
         "TKN-003":  ["Build.L3.Isolated"],                         # param injection in script
         "TKN-004":  ["Build.L3.Isolated"],                         # hostPath / host namespaces
         "TKN-005":  ["Build.L3.NonFalsifiable"],                   # leaked creds in env / param
         "TKN-006":  ["Build.L3.Ephemeral"],                        # no timeout
+        "HARNESS-019":  ["Build.L3.Ephemeral"],  # Harness pipeline lacks an explicit timeout
         "TKN-007":  ["Build.L3.NonFalsifiable"],                   # default ServiceAccount
         "TKN-008":  ["Build.L3.Isolated"],                         # remote install / TLS bypass
         "TKN-009":  ["Build.L2.Signed"],                           # artifact signing
@@ -345,8 +410,10 @@ STANDARD = Standard(
         "ARGO-001": ["Build.L3.NonFalsifiable"],                   # template image not digest-pinned
         "ARGO-002": ["Build.L3.Isolated"],                         # template privileged / root
         "ARGO-003": ["Build.L3.NonFalsifiable"],                   # default ServiceAccount
+        "ARGO-016": ["Build.L3.NonFalsifiable"],                   # cluster-admin / over-privileged ServiceAccount
         "ARGO-004": ["Build.L3.Isolated"],                         # hostPath / host namespaces
         "ARGO-005": ["Build.L3.Isolated"],                         # parameter injection in script
+        "ARGO-017": ["Build.L3.Isolated"],                         # resource template manifest injection
         "ARGO-006": ["Build.L3.NonFalsifiable"],                   # leaked creds in env / param
         "ARGO-007": ["Build.L3.Ephemeral"],                        # no activeDeadlineSeconds
         "ARGO-008": ["Build.L3.Isolated"],                         # remote install / TLS bypass
@@ -360,6 +427,23 @@ STANDARD = Standard(
                      "Build.L3.NonFalsifiable"],                   # insecure (non-HTTPS) artifact URL
         # ── Drone CI ─────────────────────────────────────────────
         "DR-001":   ["Build.L3.NonFalsifiable"],                   # step image not digest-pinned
+        "HARNESS-001":   ["Build.L3.NonFalsifiable"],  # Harness step image not digest-pinned
+        "HARNESS-002":   ["Build.L3.Isolated"],  # Harness expression injection in step command
+        "HARNESS-003":   ["Build.L3.Isolated"],  # Harness privileged step
+        "HARNESS-004":   ["Build.L3.NonFalsifiable"],  # Harness literal credential in variable
+        "HARNESS-005":   ["Build.L3.NonFalsifiable"],  # Harness pipe-to-shell
+        "HARNESS-006":   ["Build.L3.Isolated", "Build.L3.NonFalsifiable"],  # Harness TLS bypass in commands
+        "HARNESS-007":   ["Build.L3.Isolated"],  # Harness sensitive host-path mount
+        "HARNESS-008":   ["Build.L3.Isolated"],  # Harness agentic-CLI prompt injection
+        "HARNESS-010":   ["Build.L3.Isolated"],  # Harness model trust_remote_code (code exec)
+        "HARNESS-011":   ["Build.L3.Isolated"],  # Harness unsafe model deser (pickle RCE)
+        "HARNESS-013":   ["Build.L3.NonFalsifiable"],  # Harness secret echoed to step log
+        "GCB-028":  ["Build.L3.NonFalsifiable"],  # Cloud Build secret echoed to build log
+        "ARGO-018":  ["Build.L3.NonFalsifiable"],  # Argo secret echoed to template log
+        "TKN-017":  ["Build.L3.NonFalsifiable"],  # Tekton secret echoed to step log
+        "DR-018":  ["Build.L3.NonFalsifiable"],  # Drone secret echoed to step log
+        "BK-017":  ["Build.L3.NonFalsifiable"],  # Buildkite secret echoed to step log
+        "HARNESS-009":   ["Build.L3.NonFalsifiable"],  # Harness agentic-CLI output autolands without review
         "DR-002":   ["Build.L3.Isolated"],                         # privileged step
         "DR-003":   ["Build.L3.Isolated"],                         # Drone variable injection
         "DR-004":   ["Build.L3.NonFalsifiable"],                   # literal credential
@@ -371,6 +455,11 @@ STANDARD = Standard(
         "DR-009":   ["Build.L3.Isolated"],                         # cache key tainted by attacker input
         "DR-010":   ["Build.L3.NonFalsifiable"],                   # unpinned package install
         "DR-011":   ["Build.L3.Isolated"],                         # node map interpolates untrusted
+        # ── Drone extended pack ──
+        "DR-012":   ["Build.L3.NonFalsifiable"],                   # service image not pinned
+        "DR-014":   ["Build.L3.NonFalsifiable"],                   # pipe-to-shell
+        "DR-015":   ["Build.L3.NonFalsifiable"],                   # clone recursive
+        "DR-016":   ["Build.L3.Isolated"],                         # image field interpolation
         # ── Cross-cutting dataflow / taint engine ─────────────────
         # The TAINT-NNN family flags cross-step / cross-job flows
         # where untrusted data reaches a privileged sink. That's
@@ -386,6 +475,7 @@ STANDARD = Standard(
         "TAINT-006": ["Build.L3.Isolated", "Build.L3.NonFalsifiable"],
         "TAINT-007": ["Build.L3.Isolated", "Build.L3.NonFalsifiable"],
         "TAINT-008": ["Build.L3.Isolated", "Build.L3.NonFalsifiable"],
+        "TAINT-009": ["Build.L3.NonFalsifiable"],                  # env-protected secret flows to unprotected job
         # ── NPM / PyPI / Maven dep supply-chain ──────────────────
         # Each unpinned / non-registry / compromised-version finding
         # is a tenant-substitutable input — the canonical
@@ -398,11 +488,16 @@ STANDARD = Standard(
         "NPM-006":  ["Build.L3.NonFalsifiable"],                   # compromised npm version
         "NPM-007":  ["Build.L3.Isolated"],                         # .npmrc ignore-scripts
         "NPM-011":  ["Build.L3.NonFalsifiable"],                   # secret-shaped paths in files field
+        "NPM-013":  ["Build.L3.NonFalsifiable"],                   # broad files-field publishes everything
         "PYPI-001": ["Build.L3.NonFalsifiable"],                   # missing ==pin
         "PYPI-002": ["Build.L3.NonFalsifiable"],                   # missing hash
         "PYPI-003": ["Build.L3.NonFalsifiable"],                   # http index / --trusted-host
+        "PYPI-018": ["Build.L3.NonFalsifiable"],  # --no-binary forces sdist build
         "PYPI-004": ["Build.L3.NonFalsifiable"],                   # VCS dep without commit SHA
+        "PYPI-015": ["Build.L3.NonFalsifiable"],  # direct artifact URL
         "PYPI-005": ["Build.L3.NonFalsifiable"],                   # --extra-index-url (dep confusion)
+        "PYPI-017": ["Build.L3.NonFalsifiable"],  # remote --find-links
+        "PYPI-016": ["Build.L3.NonFalsifiable"],  # primary index repointed
         "PYPI-006": ["Build.L3.NonFalsifiable"],                   # compromised PyPI version
         "MVN-001":  ["Build.L3.NonFalsifiable"],                   # floating Maven range
         "MVN-002":  ["Build.L3.NonFalsifiable"],                   # mutable SNAPSHOT dep
@@ -411,6 +506,57 @@ STANDARD = Standard(
         "MVN-005":  ["Build.L3.NonFalsifiable"],                   # lax checksumPolicy
         "MVN-006":  ["Build.L3.NonFalsifiable"],                   # compromised Maven version
         "MVN-007":  ["Build.L3.NonFalsifiable"],                   # settings.xml wildcard mirror
+        "MVN-008":  ["Build.L3.NonFalsifiable"],                   # cooldown gate (--resolve-remote)
+        "MVN-009":  ["Build.L3.NonFalsifiable"],                   # OSV advisory (--resolve-remote)
+        # ── Maven extended pack ──
+        "MVN-010":  ["Build.L3.NonFalsifiable"],                   # plaintext server password
+        "MVN-011":  ["Build.L3.NonFalsifiable"],                   # repo URL credentials
+        "MVN-012":  ["Build.L3.NonFalsifiable"],                   # build plugin floating
+        "MVN-013":  ["Build.L3.NonFalsifiable"],                   # build extension floating
+        "MVN-014":  ["Build.L3.NonFalsifiable"],                   # wrapper sha256 missing
+        "MVN-015": ["Build.L3.NonFalsifiable"],  # build-time plugin exec bound to lifecycle
+        "MVN-016": ["Build.L3.NonFalsifiable"],  # gradle allowInsecureProtocol
+        "MVN-017": ["Build.L3.NonFalsifiable"],  # settings.xml privateKey + plaintext passphrase
+        "MVN-018": ["Build.L3.NonFalsifiable"],  # distributionManagement release accepts snapshots
+        "NPM-008":  ["Build.L3.NonFalsifiable"],                   # cooldown gate (--resolve-remote)
+        "NPM-009":  ["Build.L3.NonFalsifiable"],                   # new-transitive-dep diff gate
+        "NPM-010":  ["Build.L3.NonFalsifiable"],                   # OSV advisory (--resolve-remote)
+        "PYPI-008": ["Build.L3.NonFalsifiable"],                   # cooldown gate (--resolve-remote)
+        "PYPI-009": ["Build.L3.NonFalsifiable"],                   # OSV advisory (--resolve-remote)
+        # ── nuget (dep supply-chain) ─────────────────────────────
+        "NUGET-001": ["Build.L3.NonFalsifiable"],                  # floating NuGet version range
+        "NUGET-002": ["Build.L3.NonFalsifiable"],                  # wildcard prerelease version
+        "NUGET-003": ["Build.L3.NonFalsifiable"],                  # missing explicit version
+        "NUGET-004": ["Build.L3.NonFalsifiable"],                  # HTTP-only package source
+        "NUGET-005": ["Build.L3.NonFalsifiable"],                  # known-compromised package version
+        "NUGET-006": ["Build.L3.NonFalsifiable"],                  # no lock file for reproducible restores
+        "NUGET-007": ["Build.L3.NonFalsifiable"],                  # multiple sources without packageSourceMapping
+        "NUGET-008": ["Build.L3.NonFalsifiable"],                  # cooldown gate (--resolve-remote)
+        "NUGET-009": ["Build.L3.NonFalsifiable"],                  # OSV advisory (--resolve-remote)
+        "NUGET-010": ["Build.L3.NonFalsifiable"],                  # NuGet.config cleartext feed credential
+        # ── NuGet extended pack ──
+        "NUGET-011": ["Build.L3.NonFalsifiable"],
+        "NUGET-012": ["Build.L3.NonFalsifiable"],
+        "NUGET-013": ["Build.L3.NonFalsifiable"],
+        "NUGET-014": ["Build.L3.NonFalsifiable"],
+        "NUGET-015": ["Build.L3.NonFalsifiable"],
+        "NUGET-016": ["Build.L3.NonFalsifiable"],  # missing <clear/> inherits public gallery
+        "NUGET-017": ["Build.L3.NonFalsifiable"],  # public gallery active alongside private feed, not disabled
+        "NUGET-018": ["Build.L3.NonFalsifiable"],  # build-time MSBuild execution
+        "NUGET-019": ["Build.L3.NonFalsifiable"],  # require mode, no trusted signers
+        # ── Composer / PHP ──
+        "COMPOSER-001": ["Build.L3.NonFalsifiable"], # missing composer.lock
+        "COMPOSER-002": ["Build.L3.NonFalsifiable"], # floating require constraint
+        "COMPOSER-007": ["Build.L3.NonFalsifiable"], # compromised package version
+        "COMPOSER-008": ["Build.L3.NonFalsifiable"], # allow-plugins wildcard
+        # ── RubyGems / Bundler ──
+        "GEM-001": ["Build.L3.NonFalsifiable"],      # missing Gemfile.lock
+        "GEM-002": ["Build.L3.NonFalsifiable"],      # floating gem constraint
+        "GEM-005": ["Build.L3.NonFalsifiable"],      # git/github source mutable ref
+        "GEM-006": ["Build.L3.NonFalsifiable"],      # compromised gem version
+        "GEM-011": ["Build.L3.NonFalsifiable"],  # Bundler plugin install-time exec
+        "GEM-012": ["Build.L3.NonFalsifiable"],  # per-gem :source override
+        "GEM-013": ["Build.L3.NonFalsifiable"],  # insecure git transport
         # ── Helm chart-supply-chain ───────────────────────────────
         # The chart's own packaging metadata sits at the build-output
         # boundary. Chart.lock and Chart.yaml are the chart's
@@ -430,6 +576,15 @@ STANDARD = Standard(
         "HELM-009": ["Build.L3.Isolated",
                      "Build.L3.NonFalsifiable"],                   # non-HTTPS home / sources URL
         "HELM-010": ["Build.L1.Provenance"],                       # appVersion (provenance metadata)
+        # ── Helm extended pack ──
+        "HELM-011": ["Build.L1.Provenance"],                       # dependency URL embedded creds
+        "HELM-012": ["Build.L1.Provenance"],                       # deprecated without successor
+        "HELM-013": ["Build.L1.Provenance"],                       # invalid chart type
+        "HELM-015": ["Build.L3.NonFalsifiable"],  # oci:// dependency not digest-pinned
+        "HELM-016": ["Build.L3.NonFalsifiable"],  # default secret in values.yaml
+        "HELM-017": ["Build.L3.NonFalsifiable"],  # tpl of an untrusted .Values value
+        "HELM-014": ["Build.L1.Provenance",
+                     "Build.L3.NonFalsifiable"],                   # known-compromised dep
         # ── Dockerfile (image build process is the SLSA build) ────
         # Pinning rules tie to L3.NonFalsifiable (digest pinning is
         # the canonical "tenant can't substitute" mitigation).
@@ -438,6 +593,13 @@ STANDARD = Standard(
         # or by the build's own tenant). Provenance labels tie to
         # L1.Provenance + L2.Signed.
         "DF-001": ["Build.L3.NonFalsifiable"],                     # FROM not digest-pinned
+        "MODEL-001": ["Build.L3.NonFalsifiable"],                  # unpinned base model
+        "MODEL-002": ["Build.L3.NonFalsifiable"],                  # third-party hub base model
+        "MODEL-003": ["Build.L3.NonFalsifiable"],                  # local unverified weights blob
+        "MODEL-006": ["Build.L3.NonFalsifiable"],                  # committed unsafe-serialization model artifact
+        "MODEL-004": ["Build.L3.NonFalsifiable"],                  # remote LoRA adapter
+        "MODEL-005": ["Build.L3.NonFalsifiable"],                  # config auto_map = custom loader code
+        "DF-031": ["Build.L3.NonFalsifiable"],                     # COPY --from external image not digest-pinned
         "DF-003": ["Build.L3.NonFalsifiable"],                     # ADD remote no integrity
         "DF-004": ["Build.L3.Isolated",
                    "Build.L3.NonFalsifiable"],                     # curl-pipe
@@ -521,6 +683,7 @@ STANDARD = Standard(
         "OCI-005": ["Build.L1.Provenance"],                        # missing image.licenses
         "OCI-007": ["Build.L3.NonFalsifiable"],                    # legacy schemaVersion 1
         "OCI-008": ["Build.L3.NonFalsifiable"],                    # weak digest algorithm
+        "OCI-009": ["Build.L1.Provenance"],                        # missing base-image annotations
         "ATTEST-001": ["Build.L2.Hosted",
                        "Build.L3.Isolated",
                        "Build.L3.NonFalsifiable"],                 # untrusted builder identity
@@ -547,6 +710,9 @@ STANDARD = Standard(
         "SCM-022":  ["Build.L3.Isolated",
                      "Build.L3.NonFalsifiable"],    # allowed_actions unrestricted (untrusted 3rd-party in build)
         "SCM-029":  ["Build.L3.NonFalsifiable"],    # ruleset not enforced (governance silently disabled)
+        "ORG-013":  ["Build.L3.NonFalsifiable"],    # org ruleset not enforced (org-wide governance silently disabled)
+        "ORG-015":  ["Build.L3.NonFalsifiable"],  # org: immutable releases not enforced org-wide
+        "ORG-014":  ["Build.L3.NonFalsifiable"],  # org: native SHA-pinning policy not required
         "SCM-030":  ["Build.L3.NonFalsifiable"],    # ruleset always-bypass (governance bypassed silently)
         "SCM-034":  ["Build.L3.NonFalsifiable"],    # ruleset allows force_push
         "SCM-035":  ["Build.L3.NonFalsifiable"],    # ruleset allows deletion
@@ -569,5 +735,135 @@ STANDARD = Standard(
         "CF-001":   ["Build.L3.NonFalsifiable"],    # AWS::IAM::AccessKey declared as code
         "CF-002":   ["Build.L3.NonFalsifiable"],    # hard-coded secret in resource property
         "CF-003":   ["Build.L3.Isolated"],          # CodeBuild VPC shares public subnet
+        # supply-chain posture pack
+        "GHA-097":  ["Build.L3.Isolated"],                         # recursive PR auto-merge loop
+        "GHA-098":  ["Build.L3.NonFalsifiable"],                   # deploy without security scan gate
+        "GHA-099":  ["Build.L3.NonFalsifiable"],                   # deploy env plaintext secret
+        "GHA-100":  ["Build.L3.NonFalsifiable"],                   # cosign verify no identity binding
+        "GHA-102":  ["Build.L3.Isolated"],                         # submodule checkout on PR trigger
+        "GHA-103":  ["Build.L3.Isolated"],                         # AI review bot on untrusted trigger
+        "GHA-104":  ["Build.L3.Isolated"],                         # AI agent auto-push without PR review
+        "GL-036":   ["Build.L3.NonFalsifiable"],                   # secret echoed to GitLab CI log
+        "GL-038":   ["Build.L3.NonFalsifiable"],                   # CI_DEBUG_TRACE dumps secrets to GitLab CI log
+        "BB-032":   ["Build.L3.NonFalsifiable"],                   # secret echoed to Bitbucket log
+        "ADO-031":  ["Build.L3.NonFalsifiable"],                   # secret echoed to Azure DevOps log
+        "ADO-032":  ["Build.L3.NonFalsifiable"],                   # checkout persistCredentials leaks token
+        "CC-032":   ["Build.L3.NonFalsifiable"],                   # secret echoed to CircleCI log
+        "CC-034":   ["Build.L3.Isolated"],                   # trust_remote_code model load = code exec
+        "CC-036":   ["Build.L3.Isolated"],                   # unsafe pickle deser of fetched artifact = code exec
+        "CC-037":   ["Build.L3.Isolated"],                   # agentic CLI prompt injection
+        "CC-038":   ["Build.L3.NonFalsifiable"],                   # agentic CLI output lands without review
+        "SCM-048":  ["Build.L3.NonFalsifiable"],                   # org codespace secrets scoped to all repos
+        "SCM-049":  ["Build.L3.NonFalsifiable"],                   # classic PAT where fine-grained suffices
+        "NPM-012":  ["Build.L2.Signed"],                           # publish token missing restrictions
+        # ── Azure Cloud (Entra ID / Storage / Key Vault / ACR / Monitor) ──
+        "ENTRA-001": ["Build.L3.NonFalsifiable"],                  # SP assigned Global Administrator
+        "ENTRA-002": ["Build.L3.NonFalsifiable"],                  # app credential beyond 180 days
+        "ENTRA-003": ["Build.L3.NonFalsifiable"],                  # SP uses password credential
+        "AZST-001":  ["Build.L3.NonFalsifiable"],                  # public blob access
+        "AZST-002":  ["Build.L3.Isolated",
+                      "Build.L3.NonFalsifiable"],                  # non-HTTPS traffic
+        "AZST-003":  ["Build.L2.Signed"],                          # no CMK encryption
+        "AKV-001":   ["Build.L3.NonFalsifiable"],                  # soft delete not enabled
+        "AKV-002":   ["Build.L3.NonFalsifiable"],                  # purge protection not enabled
+        "AKV-003":   ["Build.L3.NonFalsifiable"],                  # network ACLs allow all
+        "ACR-001":   ["Build.L3.NonFalsifiable"],                  # admin user enabled
+        "ACR-002":   ["Build.L3.NonFalsifiable"],                  # public network access
+        "ACR-003":   ["Build.L2.Signed"],                          # content trust not enabled
+        "AZMON-001": ["Build.L3.NonFalsifiable"],                  # no diagnostic setting
+        "AZMON-002": ["Build.L3.NonFalsifiable"],                  # log retention < 365 days
+        "AZMON-003": ["Build.L3.NonFalsifiable"],                  # no alert rule
+        # ── GCP (IAM / GCS / KMS / Artifact Registry / Cloud Logging) ────
+        "GCIAM-001": ["Build.L3.NonFalsifiable"],                  # SA has Owner/Editor role
+        "GCIAM-002": ["Build.L3.NonFalsifiable"],                  # user-managed SA key
+        "GCIAM-003": ["Build.L3.NonFalsifiable"],                  # token creator without condition
+        "GCS-001":   ["Build.L3.NonFalsifiable"],                  # public bucket
+        "GCS-002":   ["Build.L3.NonFalsifiable"],                  # no uniform access
+        "GCS-003":   ["Build.L3.NonFalsifiable"],                  # versioning not enabled
+        "GCKMS-001": ["Build.L3.NonFalsifiable"],                  # key rotation > 365 days
+        "GCKMS-002": ["Build.L3.NonFalsifiable"],                  # public KMS key access
+        "GCKMS-003": ["Build.L2.Signed"],                          # no HSM protection
+        "GAR-001":   ["Build.L3.NonFalsifiable"],                  # no vulnerability scanning
+        "GAR-002":   ["Build.L3.NonFalsifiable"],                  # publicly readable repo
+        "GAR-003":   ["Build.L3.NonFalsifiable"],                  # no cleanup policy
+        "GCLOG-001": ["Build.L3.NonFalsifiable"],                  # audit logs not enabled
+        "GCLOG-002": ["Build.L3.NonFalsifiable"],                  # no log sink
+        "GCLOG-003": ["Build.L3.NonFalsifiable"],                  # log retention < 365 days
+        # ── Azure Cloud phase-2 ──────────────────────────────────────
+        "ENTRA-004": ["Build.L3.NonFalsifiable"],                  # cond access MFA
+        "ENTRA-005": ["Build.L3.NonFalsifiable"],                  # ext user restrict
+        "ENTRA-006": ["Build.L3.NonFalsifiable"],                  # risky signin
+        "AZST-004":  ["Build.L3.Isolated",
+                      "Build.L3.NonFalsifiable"],                  # min TLS
+        "AZST-005":  ["Build.L3.NonFalsifiable"],                  # lifecycle
+        "AZST-006":  ["Build.L3.NonFalsifiable"],                  # key rotation
+        "AKV-004":   ["Build.L3.NonFalsifiable"],                  # key expiry
+        "AKV-005":   ["Build.L3.NonFalsifiable"],                  # secret expiry
+        "AKV-006":   ["Build.L3.NonFalsifiable"],                  # RBAC
+        "ACR-004":   ["Build.L3.NonFalsifiable"],                  # defender scan
+        "ACR-005":   ["Build.L3.NonFalsifiable"],                  # tag immutability
+        "AZMON-004": ["Build.L3.NonFalsifiable"],                  # KV diagnostics
+        "AZMON-005": ["Build.L3.NonFalsifiable"],                  # NSG flow retention
+        "AZMON-006": ["Build.L3.NonFalsifiable"],                  # LAW retention
+        "AZMON-007": ["Build.L3.NonFalsifiable"],                  # svc health alert
+        "AZNW-001":  ["Build.L3.Isolated"],                        # SSH/RDP internet (CRITICAL)
+        "AZNW-002":  ["Build.L3.NonFalsifiable"],                  # flow logs
+        "AZNW-003":  ["Build.L3.Isolated"],                        # WAF
+        "AZNW-004":  ["Build.L3.Isolated"],                        # deny-all
+        "AZNW-005":  ["Build.L3.Isolated"],                        # public IP VM
+        "AZAPP-001": ["Build.L3.Isolated",
+                      "Build.L3.NonFalsifiable"],                  # HTTPS
+        "AZAPP-002": ["Build.L3.Isolated",
+                      "Build.L3.NonFalsifiable"],                  # TLS
+        "AZAPP-003": ["Build.L3.NonFalsifiable"],                  # managed identity
+        "AZAPP-004": ["Build.L3.Isolated"],                        # remote debug
+        "AZAPP-005": ["Build.L3.Isolated"],                        # FTP
+        "AZSQL-001": ["Build.L2.Signed"],                          # TDE CMK
+        "AZSQL-002": ["Build.L3.NonFalsifiable"],                  # auditing
+        "AZSQL-003": ["Build.L3.Isolated"],                        # public access
+        "AZSQL-004": ["Build.L3.NonFalsifiable"],                  # AAD admin
+        "AZSQL-005": ["Build.L3.NonFalsifiable"],                  # threat detect
+        "AZVM-001":  ["Build.L2.Signed"],                          # disk encrypt
+        "AZVM-002":  ["Build.L3.Isolated"],                        # public IP
+        "AZVM-003":  ["Build.L3.Isolated"],                        # JIT
+        "AZVM-004":  ["Build.L3.NonFalsifiable"],                  # OS patch
+        "AZVM-005":  ["Build.L3.NonFalsifiable"],                  # managed identity
+        # ── GCP phase-2 ──────────────────────────────────────────────
+        "GCIAM-004": ["Build.L3.NonFalsifiable"],                  # default SA
+        "GCIAM-005": ["Build.L3.NonFalsifiable"],                  # domain restrict
+        "GCIAM-006": ["Build.L3.NonFalsifiable"],                  # SA key age
+        "GCS-004":   ["Build.L2.Signed"],                          # CMEK
+        "GCS-005":   ["Build.L3.NonFalsifiable"],                  # access logging
+        "GCLOG-004": ["Build.L3.NonFalsifiable"],                  # VPC flow logs
+        "GCLOG-005": ["Build.L3.NonFalsifiable"],                  # firewall logging
+        "GCLOG-006": ["Build.L3.NonFalsifiable"],                  # data access
+        "GCLOG-007": ["Build.L3.NonFalsifiable"],                  # metric filter IAM
+        "GCLOG-008": ["Build.L3.NonFalsifiable"],                  # metric filter firewall
+        "GCLOG-009": ["Build.L3.NonFalsifiable"],                  # metric filter route
+        "GCLOG-010": ["Build.L3.NonFalsifiable"],                  # metric filter SQL
+        "GCLOG-011": ["Build.L3.NonFalsifiable"],                  # metric filter custom role
+        "GCNET-001": ["Build.L3.Isolated"],                        # default network
+        "GCNET-002": ["Build.L3.Isolated"],                        # deny-all
+        "GCNET-003": ["Build.L3.Isolated"],                        # SSH/RDP (CRITICAL)
+        "GCNET-004": ["Build.L3.Isolated"],                        # private access
+        "GCNET-005": ["Build.L3.Isolated"],                        # Cloud NAT
+        "GCCE-001":  ["Build.L3.NonFalsifiable"],                  # shielded VM
+        "GCCE-002":  ["Build.L3.NonFalsifiable"],                  # OS Login
+        "GCCE-003":  ["Build.L3.Isolated"],                        # serial port
+        "GCCE-004":  ["Build.L3.Isolated"],                        # public IP
+        "GCCE-005":  ["Build.L3.Isolated"],                        # project SSH keys
+        "GCSQL-001": ["Build.L3.Isolated"],                        # public IP
+        "GCSQL-002": ["Build.L3.NonFalsifiable"],                  # backups
+        "GCSQL-003": ["Build.L3.Isolated",
+                      "Build.L3.NonFalsifiable"],                  # SSL
+        "GCSQL-004": ["Build.L3.NonFalsifiable"],                  # IAM auth
+        "GCSQL-005": ["Build.L3.NonFalsifiable"],                  # PITR
+        "GCRUN-001": ["Build.L3.Isolated"],                        # unauth
+        "GCRUN-002": ["Build.L3.NonFalsifiable"],                  # custom SA
+        "GCRUN-003": ["Build.L3.NonFalsifiable"],                  # min instances
+        "GCRUN-004": ["Build.L3.Isolated"],                        # VPC connector
+        "GCKMS-004": ["Build.L3.NonFalsifiable"],                  # keyring IAM
+        "GCKMS-005": ["Build.L3.NonFalsifiable"],                  # destroy sched
+        "GCKMS-006": ["Build.L2.Signed"],                          # imported key
     },
 )

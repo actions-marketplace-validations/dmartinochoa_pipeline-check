@@ -3,14 +3,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..._primitives.secret_shapes import AWS_KEY_RE, SECRETISH_KEY_RE
-from ...base import Finding, Severity
+from ..._primitives.secret_shapes import SECRETISH_KEY_RE, aws_key_in
+from ...base import Finding, Location, Severity
 from ...rule import Rule
 from ..base import (
     KubernetesContext,
     container_name,
     iter_containers,
     iter_workload_pod_specs,
+    manifest_location,
 )
 
 RULE = Rule(
@@ -37,6 +38,44 @@ RULE = Rule(
         "value is a non-empty literal. ``valueFrom`` entries are "
         "always safe (no inline value)."
     ),
+    exploit_example=(
+        "# Vulnerable: a literal credential value in a container\n"
+        "# ``env`` block. The Pod manifest is in etcd; anyone\n"
+        "# with ``pods/get`` on the namespace reads the value.\n"
+        "# Logs that echo the env (``env``, ``printenv``,\n"
+        "# ``env | curl ...``) further leak it.\n"
+        "apiVersion: v1\n"
+        "kind: Pod\n"
+        "metadata: { name: app }\n"
+        "spec:\n"
+        "  containers:\n"
+        "    - name: app\n"
+        "      image: app@sha256:abc123...\n"
+        "      env:\n"
+        "        - name: AWS_ACCESS_KEY_ID\n"
+        "          value: AKIAIOSFODNN7EXAMPLE\n"
+        "        - name: AWS_SECRET_ACCESS_KEY\n"
+        "          value: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n"
+        "\n"
+        "# Safe: reference a Kubernetes Secret via\n"
+        "# ``valueFrom.secretKeyRef``. The Pod manifest carries\n"
+        "# the Secret's name only; the value resolves at\n"
+        "# kubelet-runtime from the cluster's Secret store.\n"
+        "apiVersion: v1\n"
+        "kind: Pod\n"
+        "metadata: { name: app }\n"
+        "spec:\n"
+        "  containers:\n"
+        "    - name: app\n"
+        "      image: app@sha256:abc123...\n"
+        "      env:\n"
+        "        - name: AWS_ACCESS_KEY_ID\n"
+        "          valueFrom:\n"
+        "            secretKeyRef: { name: aws-app, key: access_key_id }\n"
+        "        - name: AWS_SECRET_ACCESS_KEY\n"
+        "          valueFrom:\n"
+        "            secretKeyRef: { name: aws-app, key: secret_access_key }"
+    ),
 )
 
 
@@ -53,6 +92,7 @@ def _looks_literal(value: Any) -> bool:
 
 def check(ctx: KubernetesContext) -> Finding:
     offenders: list[str] = []
+    locations: list[Location] = []
     for m, ps in iter_workload_pod_specs(ctx):
         for kind, c in iter_containers(ps):
             envs = c.get("env")
@@ -65,17 +105,19 @@ def check(ctx: KubernetesContext) -> Finding:
                 value = entry.get("value")
                 if not isinstance(name, str):
                     continue
-                if AWS_KEY_RE.search(value if isinstance(value, str) else ""):
+                if aws_key_in(value if isinstance(value, str) else ""):
                     offenders.append(
                         f"{m.kind}/{m.name} {kind}={container_name(c)} "
                         f"env={name} (AKIA-shaped value)"
                     )
+                    locations.append(manifest_location(m, c))
                     continue
                 if SECRETISH_KEY_RE.search(name) and _looks_literal(value):
                     offenders.append(
                         f"{m.kind}/{m.name} {kind}={container_name(c)} "
                         f"env={name} (literal credential-shaped name)"
                     )
+                    locations.append(manifest_location(m, c))
     passed = not offenders
     desc = (
         "No container env entry carries a credential-shaped literal."
@@ -89,4 +131,5 @@ def check(ctx: KubernetesContext) -> Finding:
         resource="kubernetes/manifests",
         description=desc,
         recommendation=RULE.recommendation, passed=passed,
+        locations=locations,
     )

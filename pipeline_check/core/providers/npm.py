@@ -23,10 +23,32 @@ from ..checks.npm.registry_fetcher import (
     FileSystemCache,
     HttpRegistryFetcher,
     default_cache_dir,
+    fetch_maintainer_counts,
+    fetch_new_publisher,
+    fetch_provenance,
+    fetch_provenance_refs,
     fetch_publish_times,
+    fetch_repo_slugs,
 )
 from ..inventory import Component
+from ..sbom import BuildDependency, make_npm_purl
 from .base import BaseProvider
+
+_EXACT_VERSION_RE = __import__("re").compile(
+    r"^=?v?(\d+\.\d+\.\d+(?:[\w.+-]*)?)$"
+)
+
+
+def _collect_osv_queries_npm(
+    context: NpmContext,
+) -> list[tuple[str, str, str]]:
+    queries: list[tuple[str, str, str]] = []
+    for manifest in context.manifests:
+        for _section, name, spec in iter_manifest_dependencies(manifest):
+            m = _EXACT_VERSION_RE.match(spec.strip())
+            if m:
+                queries.append((name, m.group(1), "npm"))
+    return queries
 
 
 class NpmProvider(BaseProvider):
@@ -48,7 +70,7 @@ class NpmProvider(BaseProvider):
         return NpmContext.from_path(npm_path)
 
     @property
-    def check_classes(self) -> list[type[BaseCheck]]:
+    def check_classes(self) -> list[type[BaseCheck[Any]]]:
         return [NpmChecks]
 
     def post_filter(
@@ -104,6 +126,88 @@ class NpmProvider(BaseProvider):
         )
         context.publish_times = publish_times
         context.warnings.extend(warnings)
+
+        # Publisher counts and build-provenance both come from the same
+        # packument the publish-time pass just cached, so these add no
+        # network requests. The warnings half is dropped: any fetch
+        # failure was already surfaced by the publish-time pass above.
+        context.maintainer_counts = fetch_maintainer_counts(
+            names, fetcher, cache=cache,
+        )[0]
+        # NPM-018: whether each package's latest release came from an
+        # account new to the package (the takeover / publisher-change
+        # shape). Reuses the cached packument's per-version ``_npmUser``,
+        # so it adds no network requests.
+        context.new_publisher = fetch_new_publisher(
+            names, fetcher, cache=cache,
+        )[0]
+        context.provenance = fetch_provenance(
+            names, fetcher, cache=cache,
+        )[0]
+        # NPM-017: the source ref each attested package's provenance was
+        # built from. Reuses the cached packument; only attested packages
+        # incur the extra attestation-bundle fetch.
+        prov_refs, prov_ref_warnings = fetch_provenance_refs(
+            names, fetcher, cache=cache,
+        )
+        context.provenance_ref = prov_refs
+        context.warnings.extend(prov_ref_warnings)
+
+        # OpenSSF Scorecard (NPM-016): the GitHub repo slug comes free
+        # from the cached packument, but the Scorecard lookup itself is a
+        # separate external API (api.securityscorecards.dev), so it only
+        # runs when there are GitHub-linked deps to query.
+        repo_slugs = fetch_repo_slugs(names, fetcher, cache=cache)[0]
+        if repo_slugs:
+            from ..checks._primitives.scorecard import (
+                fetch_scorecards,
+                scorecard_cache_dir,
+            )
+            sc_cache = FileSystemCache(
+                scorecard_cache_dir(), enabled=not no_cache,
+            )
+            context.scorecards = fetch_scorecards(
+                repo_slugs, cache=sc_cache,
+            )[0]
+
+        osv_queries = _collect_osv_queries_npm(context)
+        if osv_queries:
+            from ..checks._primitives.osv_fetcher import query_osv_batch
+            osv_cache = FileSystemCache(
+                default_cache_dir() / "osv", enabled=not no_cache,
+            )
+            context.osv_advisories = query_osv_batch(
+                osv_queries, cache=osv_cache,
+                warnings=context.warnings,
+            )
+
+    def build_dependencies(
+        self, context: NpmContext,
+    ) -> list[BuildDependency]:
+        deps: list[BuildDependency] = []
+        for m in context.manifests:
+            for section in ("dependencies", "devDependencies"):
+                raw = m.data.get(section)
+                if not isinstance(raw, dict):
+                    continue
+                for name, version_spec in raw.items():
+                    if not isinstance(name, str) or not isinstance(version_spec, str):
+                        continue
+                    version = version_spec.lstrip("^~>=<! ")
+                    if not version:
+                        continue
+                    deps.append(BuildDependency(
+                        name=name,
+                        version=version,
+                        dep_type="npm",
+                        purl=make_npm_purl(name, version),
+                        provider=self.NAME,
+                        source=m.path,
+                        pinned=not any(
+                            c in version_spec for c in "^~><=*x"
+                        ),
+                    ))
+        return deps
 
     def inventory(self, context: NpmContext) -> list[Component]:
         out: list[Component] = []

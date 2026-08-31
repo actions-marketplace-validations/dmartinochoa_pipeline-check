@@ -27,11 +27,40 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from pipeline_check.core.chains import Chain
 from pipeline_check.core.checks.base import (
     Confidence,
     Finding,
     Severity,
 )
+
+
+def make_reach_chain(
+    *,
+    via_dataflow: bool,
+    via_structural: bool = False,
+    note: str = "legs share job `release`",
+) -> Chain:
+    """A confirmed-reachable ``Chain`` for reporter badge tests.
+
+    Toggle the tier knobs to exercise the three reachability tiers:
+    *via_dataflow* (a proven source-to-sink taint path) and
+    *via_structural* (a shared artifact / role / SA / repo identity) are
+    both confirmed tiers; with neither set the chain is the weaker
+    shared-job co-location fallback. Reporters must render them with
+    distinct badges (the two strong ones say "confirmed", the weak one
+    only "co-located").
+    """
+    return Chain(
+        chain_id="AC-002", title="t", severity=Severity.CRITICAL,
+        confidence=Confidence.HIGH, summary="s", narrative="n",
+        mitre_attack=[], kill_chain_phase="",
+        triggering_check_ids=["GHA-003"], triggering_findings=[],
+        resources=["wf.yml"], references=[], recommendation="r",
+        confirmed_reachable=True, via_dataflow=via_dataflow,
+        via_structural=via_structural,
+        reachability_note=note,
+    )
 
 
 def make_failing(
@@ -158,6 +187,14 @@ MECHANICAL_CONTRACTS: tuple[XpcContract, ...] = (
         leg_a_checks=("SCM-001", "SCM-007"),  # either satisfies the SCM leg
         leg_a_resource="github:org/repo",
         leg_b_checks=("DF-001",),
+        leg_b_resource="Dockerfile",
+    ),
+    XpcContract(
+        rule_module_path="xpc010_npm_cooldown_dockerfile_lifecycle",
+        chain_id="XPC-010",
+        leg_a_checks=("NPM-008",),
+        leg_a_resource="package.json",
+        leg_b_checks=("DF-024",),
         leg_b_resource="Dockerfile",
     ),
 )

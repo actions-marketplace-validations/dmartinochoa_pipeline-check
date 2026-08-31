@@ -8,15 +8,23 @@ from ...base import Finding, Severity
 from ...rule import Rule
 from ..base import iter_steps, step_scripts
 
+# A token is "persisted" when a redirect (``>``/``>>``) or ``| tee``
+# writes the token reference itself. The redirect must closely follow
+# the token (only closing quotes / whitespace between) so the common
+# safe idiom ``curl -H "Authorization: Bearer $TOKEN" URL > out.json``
+# (where the redirect saves the API RESPONSE, not the token) is not
+# matched. ``["'\s]*`` cannot span the URL that sits between the token
+# and the redirect in that idiom.
+_TOKENS = (
+    "BITBUCKET_TOKEN",
+    "REPOSITORY_OAUTH_ACCESS_TOKEN",
+    "BITBUCKET_STEP_OIDC_TOKEN",
+    "BITBUCKET_CLONE_TOKEN",
+)
 _TOKEN_PERSIST_RE = re.compile(
-    r"BITBUCKET_TOKEN.*(?:>>?\s|tee\s)"
-    r"|REPOSITORY_OAUTH_ACCESS_TOKEN.*(?:>>?\s|tee\s)"
-    r"|>>?\s*.*BITBUCKET_TOKEN"
-    r"|>>?\s*.*REPOSITORY_OAUTH_ACCESS_TOKEN"
-    r"|BITBUCKET_STEP_OIDC_TOKEN.*(?:>>?\s|tee\s)"
-    r"|>>?\s*.*BITBUCKET_STEP_OIDC_TOKEN"
-    r"|BITBUCKET_CLONE_TOKEN.*(?:>>?\s|tee\s)"
-    r"|>>?\s*.*BITBUCKET_CLONE_TOKEN"
+    "|".join(
+        rf"{tok}[\"'\s]*(?:>>?\s|\|\s*tee\s)" for tok in _TOKENS
+    )
 )
 
 RULE = Rule(
@@ -36,6 +44,29 @@ RULE = Rule(
         "redirected to files or piped through `tee`. Persisted tokens "
         "survive the step boundary and can be exfiltrated by later "
         "steps, artifacts, or cache entries."
+    ),
+    exploit_example=(
+        "# Vulnerable: ``BITBUCKET_TOKEN`` written to a file or\n"
+        "# piped to ``tee`` for downstream steps. The token is\n"
+        "# meant to live only for the step's duration; persisting\n"
+        "# it into an artifact or a cache extends the credential's\n"
+        "# lifetime well beyond its intended scope.\n"
+        "pipelines:\n"
+        "  default:\n"
+        "    - step:\n"
+        "        script:\n"
+        "          - echo \"TOKEN=$BITBUCKET_TOKEN\" >> .env\n"
+        "        artifacts: [.env]\n"
+        "\n"
+        "# Safe: use the token inline in the one command that\n"
+        "# needs it. Bitbucket scopes the token to the step's\n"
+        "# lifetime and revokes it on exit.\n"
+        "pipelines:\n"
+        "  default:\n"
+        "    - step:\n"
+        "        script:\n"
+        "          - curl --header \"Authorization: Bearer $BITBUCKET_TOKEN\" \\\n"
+        "              \"https://api.bitbucket.org/2.0/repositories/$BITBUCKET_REPO_FULL_NAME\""
     ),
 )
 

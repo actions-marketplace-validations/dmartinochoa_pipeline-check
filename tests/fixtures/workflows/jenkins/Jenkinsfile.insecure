@@ -12,12 +12,13 @@ pipeline {
     // build.xml and surfaces it on the parameters page.
     parameters {
         password(name: 'DEPLOY_TOKEN', defaultValue: '', description: 'prod token')
+        string(name: 'BUILD_TARGET', defaultValue: 'all', description: 'make target')
     }
 
     environment {
-        DEBUG_AWS_KEY = "AKIAIOSFODNN7EXAMPLE"
+        DEBUG_AWS_KEY = "AKIAZ3MHALF2TESTHIJK"
         // JF-010 — long-lived AWS keys exposed via env block.
-        AWS_ACCESS_KEY_ID = "AKIAIOSFODNN7EXAMPLE"
+        AWS_ACCESS_KEY_ID = "AKIAZ3MHALF2TESTHIJK"
         AWS_SECRET_ACCESS_KEY = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
     }
 
@@ -35,7 +36,14 @@ pipeline {
         stage('Build') {
             steps {
                 sh "echo Building branch ${env.BRANCH_NAME}"
+                // JF-036 — build parameter spliced into a double-quoted sh.
+                sh "make ${params.BUILD_TARGET}"
                 sh "make build"
+                // JF-037 — untrusted PR context fed into an agentic AI CLI prompt.
+                sh "claude -p 'Triage this PR titled ${env.CHANGE_TITLE}'"
+                // JF-038 — agentic CLI output (claude above) pushed straight
+                // to a branch in the same pipeline, with no review gate.
+                sh "git push origin HEAD"
                 // JF-013 -- ingests build output from another job
                 // with no integrity check.
                 copyArtifacts(projectName: 'platform-build', filter: 'dist/*')
@@ -129,6 +137,14 @@ spec:
                 sh 'eval "$BUILD_CMD"'
                 // JF-031: pip install from an unpinned git URL.
                 sh 'pip install git+https://example.com/internal/helper.git'
+                // JF-039: model loaded with trust_remote_code (RCE on the agent).
+                sh 'huggingface-cli download acme/llm --trust-remote-code'
+                // JF-040: model pulled without a pinned revision (swappable weights).
+                sh "python -c 'from transformers import AutoModel; AutoModel.from_pretrained(\"acme/llm\")'"
+                // JF-041: fetch + pickle-backed load of a model checkpoint (RCE).
+                sh 'curl -fsSL -o m.pt https://models.example.com/m.pt && python -c "import torch; torch.load(1)"'
+                // JF-042: a secret-named variable echoed to the build log.
+                sh 'echo "deploying with $AWS_SECRET_ACCESS_KEY"'
                 script {
                     def proc = Runtime.getRuntime().exec("id")
                 }

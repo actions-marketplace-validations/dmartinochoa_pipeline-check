@@ -21,9 +21,11 @@ RULE = Rule(
         "base64 / urlencoded / partial substrings, and any caller "
         "that retrieves the raw log via the API gets the unredacted "
         "stream. If you need to confirm the secret exists, log a "
-        "boolean (``[ -n \"$X\" ] && echo set || echo unset``) or a "
-        "fingerprint (``echo \"$X\" | sha256sum | head -c8``), never "
-        "the value itself."
+        "boolean (``[ -n \"$X\" ] && echo set || echo unset``), "
+        "never the value itself. Note: a SHA-256 fingerprint or a "
+        "``${X:0:N}`` prefix is not a safe substitute either, those "
+        "shapes still slip past the masker and are flagged by "
+        "GHA-087 separately."
     ),
     docs_note=(
         "Three shapes are flagged:\n\n"
@@ -54,15 +56,39 @@ RULE = Rule(
         "credential in an ``Authorization:`` header. GHA-008 fires "
         "on the literal; GHA-033 deliberately does not."
     ),
-)
-
-#: Print-like commands whose first non-flag argument is what we treat
-#: as the printed value. Matched as the first token in a logical line.
-_PRINT_HEAD_RE = re.compile(
-    r"(?:^|\n|\s|;|&|\|)"
-    r"(?:echo|printf|cat|tee|print)"
-    r"(?:\s+-\w+)*"
-    r"\s+",
+    exploit_example=(
+        "# Vulnerable: ``echo $TOKEN`` (or printing a\n"
+        "# ``${{ secrets.X }}`` interpolation) prints the masked\n"
+        "# value to stdout. GitHub masks ``$TOKEN`` with ``***``\n"
+        "# in the log, but ``set -x`` (or any shell-trace mode)\n"
+        "# dumps the literal value because trace output isn't\n"
+        "# subject to the mask. Same applies to ``cat`` / ``tee``\n"
+        "# of any file the secret was written into.\n"
+        "jobs:\n"
+        "  deploy:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    env:\n"
+        "      TOKEN: ${{ secrets.DEPLOY_KEY }}\n"
+        "    steps:\n"
+        "      - run: |\n"
+        "          set -x\n"
+        "          curl -H \"Authorization: Bearer $TOKEN\" \\\n"
+        "            https://api.example.com/deploy\n"
+        "\n"
+        "# Safe: don't echo the secret. Drop ``set -x`` (or ensure\n"
+        "# it's set only when no secret env vars are in scope).\n"
+        "# Pass the secret to curl via a stdin / config file so it\n"
+        "# never lands in shell trace output.\n"
+        "jobs:\n"
+        "  deploy:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    env:\n"
+        "      TOKEN: ${{ secrets.DEPLOY_KEY }}\n"
+        "    steps:\n"
+        "      - run: |\n"
+        "          curl --config <(echo \"header = \\\"Authorization: Bearer $TOKEN\\\"\") \\\n"
+        "            https://api.example.com/deploy"
+    ),
 )
 
 #: A ``${{ secrets.NAME }}`` (or ``env.NAME`` referencing a secret)
@@ -83,10 +109,9 @@ _SHELL_TRACE_RE = re.compile(
 )
 
 
-def _step_secret_env_vars(step: dict[str, Any]) -> set[str]:
-    """Names of step-level env vars whose value references ``secrets.*``."""
+def _secret_env_vars(env: Any) -> set[str]:
+    """Names of env vars in *env* whose value references ``secrets.*``."""
     out: set[str] = set()
-    env = step.get("env")
     if not isinstance(env, dict):
         return out
     for name, value in env.items():
@@ -160,12 +185,22 @@ def _shell_trace_with_secret_ref(
 
 def check(path: str, doc: dict[str, Any]) -> Finding:
     offenders: list[str] = []
+    # Secrets bound at workflow scope inherit into every job/step; a
+    # secret-bound name at any scope is in scope for the step's ``run:``.
+    # Only step env was scanned before, so job/workflow-level bindings
+    # (the more common placement) silently escaped the leak check.
+    wf_secret_env = _secret_env_vars(doc.get("env"))
     for job_id, job in iter_jobs(doc):
+        job_secret_env = _secret_env_vars(job.get("env"))
         for idx, step in enumerate(iter_steps(job)):
             run = step.get("run")
             if not isinstance(run, str):
                 continue
-            secret_env = _step_secret_env_vars(step)
+            secret_env = (
+                _secret_env_vars(step.get("env"))
+                | job_secret_env
+                | wf_secret_env
+            )
             if _scan_for_printed_secret(run, secret_env):
                 offenders.append(f"{job_id}[{idx}]")
                 continue

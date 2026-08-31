@@ -89,7 +89,7 @@ class DroneContext:
         return ctx
 
 
-class DroneBaseCheck(BaseCheck):
+class DroneBaseCheck(BaseCheck[DroneContext]):
     """Base class for Drone rule modules."""
 
     PROVIDER = "drone"
@@ -160,7 +160,7 @@ def step_label(
 
     Drone's ``name:`` is required in practice, but tolerate its
     absence so a malformed pipeline still produces a readable
-    finding. *kind* parameterises the fallback so service
+    finding. *kind* parameterizes the fallback so service
     callers (DR-001 / DR-002 iterating ``iter_services``)
     produce ``services[0]`` rather than the misleading
     ``steps[0]``.

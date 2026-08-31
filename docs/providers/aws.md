@@ -245,14 +245,14 @@ optional:
 
 | Check | Title | Severity | Fix |
 |-------|-------|----------|-----|
-| [CA-001](#ca-001) | CodeArtifact domain not encrypted with customer KMS CMK | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
+| [CA-001](#ca-001) | CodeArtifact domain has no KMS encryptionKey configured | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
 | [CA-002](#ca-002) | CodeArtifact repository has a public external connection | <span class="pg-sev pg-sev--high">HIGH</span> |  |
 | [CA-003](#ca-003) | CodeArtifact domain policy allows cross-account wildcard | <span class="pg-sev pg-sev--critical">CRITICAL</span> |  |
 | [CA-004](#ca-004) | CodeArtifact repo policy grants ``codeartifact:*`` with ``Resource '*'`` | <span class="pg-sev pg-sev--high">HIGH</span> |  |
 | [CB-001](#cb-001) | Secrets in plaintext environment variables | <span class="pg-sev pg-sev--critical">CRITICAL</span> |  |
 | [CB-002](#cb-002) | Privileged mode enabled | <span class="pg-sev pg-sev--high">HIGH</span> |  |
 | [CB-003](#cb-003) | Build logging not enabled | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
-| [CB-004](#cb-004) | No build timeout configured | <span class="pg-sev pg-sev--low">LOW</span> |  |
+| [CB-004](#cb-004) | Build timeout missing or at the AWS maximum (480 min) | <span class="pg-sev pg-sev--low">LOW</span> |  |
 | [CB-005](#cb-005) | Outdated managed build image | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
 | [CB-006](#cb-006) | CodeBuild source auth uses long-lived token | <span class="pg-sev pg-sev--high">HIGH</span> |  |
 | [CB-007](#cb-007) | CodeBuild webhook has no filter group | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
@@ -321,13 +321,13 @@ optional:
 
 <div class="pg-rule pg-rule--medium" markdown>
 
-## CA-001: CodeArtifact domain not encrypted with customer KMS CMK { #ca-001 }
+## CA-001: CodeArtifact domain has no KMS encryptionKey configured { #ca-001 }
 
 <div class="pg-rule__tags">
 <span class="pg-sev pg-sev--medium">MEDIUM</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-9</span> <span class="pg-tag pg-tag--cwe">CWE-311</span>
 </div>
 
-AWS-owned encryption (the default ``alias/aws/codeartifact`` key) keeps the key policy under AWS's control, not yours. That's fine for confidentiality but means cross-account auditability of every Decrypt event lives with AWS, and you can't revoke or scope key access without recreating the domain. A customer-managed CMK puts both controls back in your hands.
+When no ``encryptionKey`` is configured on the domain, AWS uses its own managed key, keeping the key policy under AWS's control. That removes your ability to scope or audit Decrypt operations, and you can't revoke key access without recreating the domain. A customer-managed CMK puts those controls back in your hands. Note: the CodeArtifact API returns the resolved KMS key ARN in this field; the check flags only the absent-key case because the ARN alone does not reliably identify whether the key is AWS-managed or customer-managed without a separate ``kms:DescribeKey`` call.
 
 <div class="pg-rule__rec" markdown>
 
@@ -461,7 +461,7 @@ Enable CloudWatch Logs or S3 logging in the CodeBuild project configuration to m
 
 <div class="pg-rule pg-rule--low" markdown>
 
-## CB-004: No build timeout configured { #cb-004 }
+## CB-004: Build timeout missing or at the AWS maximum (480 min) { #cb-004 }
 
 <div class="pg-rule__tags">
 <span class="pg-sev pg-sev--low">LOW</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-7</span> <span class="pg-tag pg-tag--cwe">CWE-400</span>
@@ -656,7 +656,7 @@ Create a CodeCommit approval-rule template requiring at least one approval from 
 <span class="pg-sev pg-sev--medium">MEDIUM</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-9</span> <span class="pg-tag pg-tag--cwe">CWE-311</span>
 </div>
 
-Same shape as CA-001 / ECR-005 / S3 default encryption: the AWS-owned default key keeps the key policy under AWS, removing your ability to scope or audit Decrypt operations. Source code in the repo deserves the same key-policy + CloudTrail story you'd apply to artifacts in S3.
+Same shape as CA-001 / ECR-005 / S3 default encryption: the AWS-owned default key keeps the key policy under AWS, removing your ability to scope or audit Decrypt operations. Source code in the repo deserves the same key-policy + CloudTrail story you'd apply to artifacts in S3. Note: the CodeCommit API returns the resolved KMS key ARN in ``kmsKeyId``; the check flags only the absent-key case because the ARN alone does not reliably identify whether the key is AWS-managed or customer-managed without a separate ``kms:DescribeKey`` call.
 
 <div class="pg-rule__rec" markdown>
 
@@ -846,7 +846,7 @@ The complement to CP-001: this rule fires only on stages whose name contains ``p
 
 **Recommended action**
 
-Add a ``Manual`` approval action immediately before any stage whose name contains ``prod`` / ``production``. CP-001 covers the generic case; this rule specifically looks at production-tagged stages where the blast radius of an unreviewed deploy is largest.
+Add a ``Manual`` approval action immediately before any stage whose name contains ``prod`` / ``production`` / ``live``. CP-001 covers the generic case; this rule specifically looks at production-tagged stages where the blast radius of an unreviewed deploy is largest.
 
 </div>
 
@@ -1020,7 +1020,7 @@ Create an EventBridge rule matching ``detail-type: 'CodePipeline Pipeline Execut
 <span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-8</span> <span class="pg-tag pg-tag--cwe">CWE-441</span>
 </div>
 
-Wildcard target ARNs (e.g. ``arn:aws:lambda:us-east-1:123456789012:function:*``) match every resource that fits the prefix. This is rarely intentional, usually a copy-paste from a more permissive resource ARN, and means the rule fans out to a much larger set of consumers than the author meant.
+Wildcard target ARNs (e.g. ``arn:aws:lambda:us-east-1:123456789012:function:*``) match every resource that fits the prefix. This is rarely intentional, usually a copy-paste from a more permissive resource ARN, and means the rule fans out to a much larger set of consumers than the author meant. A CloudWatch Logs target ARN, whose documented form ends in ``:log-group:/name:*`` (the mandatory log-stream selector), is not treated as a fan-out wildcard.
 
 <div class="pg-rule__rec" markdown>
 
@@ -1200,7 +1200,7 @@ Replace AdministratorAccess with least-privilege policies.
 <span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-2</span> <span class="pg-tag pg-tag--cwe">CWE-269</span>
 </div>
 
-``Action: '*'`` (or service-prefix wildcards like ``s3:*``) on an attached policy is functionally equivalent to AdministratorAccess for that resource. The wildcard absorbs every new IAM action AWS adds, so the role's authority grows without any local change.
+``Action: '*'`` on an attached policy is functionally equivalent to AdministratorAccess: the role can call every API in every service. The wildcard absorbs every new IAM action AWS adds, so the role's authority grows without any local change. Service-prefix wildcards like ``s3:*`` are caught by IAM-006, not this rule.
 
 <div class="pg-rule__rec" markdown>
 
@@ -1320,13 +1320,13 @@ Rotate or delete IAM access keys older than 90 days. Long-lived static credentia
 <span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-2</span> <span class="pg-tag pg-tag--cwe">CWE-284</span>
 </div>
 
-IAM-005 already covers cross-account AWS principals. This rule targets the OIDC federation path specifically because the blast radius of a missed audience/subject pin is the entire identity provider's tenant base (e.g. all GitHub users, not just your org).
+IAM-005 already covers cross-account AWS principals. This rule targets the OIDC federation path specifically because the blast radius of a missed audience/subject pin is the entire identity provider's tenant base (e.g. all GitHub users, not just your org). For GitHub ``repo:`` subjects it also fires when the subject is present but wildcards the repo or ref segment, or trusts the ``pull_request`` context, since a fork PR then mints the role's token.
 
 <div class="pg-rule__rec" markdown>
 
 **Recommended action**
 
-Every Allow statement that trusts a federated OIDC provider (``token.actions.githubusercontent.com``, GitLab, CircleCI, Terraform Cloud, etc.) must pin both the audience (``...:aud = sts.amazonaws.com``) and a subject prefix (``...:sub`` matching ``repo:myorg/*``). Without these, any workflow from any tenant can assume the role.
+Every Allow statement that trusts a federated OIDC provider (``token.actions.githubusercontent.com``, GitLab, CircleCI, Terraform Cloud, etc.) must pin both the audience (``...:aud = sts.amazonaws.com``) and a specific subject (``...:sub`` matching one repo AND ref, e.g. ``repo:myorg/myrepo:ref:refs/heads/main`` or ``...:environment:production``). An org wildcard (``repo:myorg/*``), a ref wildcard (``repo:myorg/myrepo:*``), or the ``pull_request`` context all let an untrusted workflow run (including a fork PR) assume the role.
 
 </div>
 

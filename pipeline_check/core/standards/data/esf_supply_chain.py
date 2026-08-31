@@ -104,8 +104,15 @@ STANDARD = Standard(
         "S3-005":   ["ESF-C-ARTIFACT-AUTHZ"],
         # ── GitHub Actions ─────────────────────────────────────────
         "GHA-001":  ["ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS"],
+        "GHA-110": ["ESF-S-VERIFY-DEPS"],  # CI env disables Go module verification
         "GHA-002":  ["ESF-D-INJECTION", "ESF-D-BUILD-ENV"],
         "GHA-003":  ["ESF-D-INJECTION"],
+        "GHA-119":  ["ESF-D-INJECTION"],# untrusted context into an agentic AI CLI
+        "GHA-120":  ["ESF-D-INJECTION"],# trust_remote_code model load = code exec
+        "GHA-122":  ["ESF-D-INJECTION"],# unsafe pickle deser of fetched artifact = code exec
+        "GHA-121":  ["ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS"],# unpinned model registry ref
+        "GHA-117":  ["ESF-D-INJECTION"],# IaC apply on untrusted PR trigger
+        "GHA-118":  ["ESF-D-INJECTION"],# untrusted content into $GITHUB_ENV / $GITHUB_PATH
         "GHA-004":  ["ESF-C-LEAST-PRIV"],
         "GHA-005":  ["ESF-D-TOKEN-HYGIENE"],
         "GHA-006":  ["ESF-D-SIGN-ARTIFACTS"],
@@ -115,8 +122,10 @@ STANDARD = Standard(
         "GHA-010":  ["ESF-D-INJECTION", "ESF-S-PIN-DEPS"],
         "GHA-011":  ["ESF-D-INJECTION", "ESF-S-VERIFY-DEPS"],
         "GHA-012":  ["ESF-D-BUILD-ENV", "ESF-D-PRIV-BUILD"],
+        "GHA-105":  ["ESF-D-BUILD-ENV", "ESF-D-PRIV-BUILD"],
         "GHA-013":  ["ESF-D-INJECTION"],
         "GHA-014":  ["ESF-C-APPROVAL", "ESF-C-ENV-SEP"],
+        "GHA-123":  ["ESF-C-APPROVAL"],# agentic CLI output lands without review
         "GHA-015":  ["ESF-D-BUILD-TIMEOUT"],
         "GHA-016":  ["ESF-S-VERIFY-DEPS"],
         "GHA-017":  ["ESF-D-BUILD-ENV"],
@@ -134,13 +143,22 @@ STANDARD = Standard(
         "GHA-029":  ["ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS"],
         # ── GitLab CI ──────────────────────────────────────────────
         "GL-001":   ["ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS"],
+        "GL-037": ["ESF-S-VERIFY-DEPS"],  # CI env disables Go module verification
         "GL-002":   ["ESF-D-INJECTION"],
+        "GL-045":   ["ESF-D-INJECTION"],   # trust_remote_code model load = code exec
+        "GL-046":   ["ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS"],   # unpinned model registry ref
+        "GL-047":   ["ESF-D-INJECTION"],   # unsafe pickle deser of fetched artifact = code exec
+        "GL-048":   ["ESF-D-INJECTION"],   # untrusted MR context into agentic CLI = prompt injection
+        "GL-049":   ["ESF-C-APPROVAL"],   # agentic CLI output lands without review
         "GL-003":   ["ESF-D-SECRETS"],
         "GL-004":   ["ESF-C-APPROVAL", "ESF-C-ENV-SEP"],
+        "GL-044":   ["ESF-C-APPROVAL", "ESF-C-ENV-SEP"],  # auto production deploy on an MR pipeline
         "GL-005":   ["ESF-S-PIN-DEPS", "ESF-S-TRUSTED-REG"],
+        "GL-042":   ["ESF-S-PIN-DEPS", "ESF-S-TRUSTED-REG"],    # include: component unpinned
         "GL-006":   ["ESF-D-SIGN-ARTIFACTS"],
         "GL-007":   ["ESF-D-SBOM"],
         "GL-008":   ["ESF-D-SECRETS"],
+        "DEV-008":   ["ESF-D-SECRETS"],   # literal secret in a devenv config
         "GL-009":   ["ESF-S-PIN-DEPS", "ESF-S-IMMUTABLE"],
         "GL-010":   ["ESF-D-INJECTION", "ESF-S-VERIFY-DEPS"],
         "GL-011":   ["ESF-D-INJECTION", "ESF-S-PIN-DEPS"],
@@ -150,8 +168,10 @@ STANDARD = Standard(
         "GL-015":   ["ESF-D-BUILD-TIMEOUT"],
         "GL-016":   ["ESF-S-VERIFY-DEPS"],
         "GL-017":   ["ESF-D-BUILD-ENV"],
+        "GL-039":   ["ESF-D-BUILD-ENV"],# dind daemon TLS disabled / exposed on 2375
         "GL-018":   ["ESF-S-VERIFY-DEPS"],
         "GL-019":   ["ESF-S-VULN-MGMT"],
+        "GL-043":   ["ESF-S-VULN-MGMT"],
         "GL-020":   ["ESF-D-SECRETS"],
         "GL-021":   ["ESF-S-PIN-DEPS"],
         "GL-022":   ["ESF-S-PIN-DEPS"],
@@ -163,6 +183,16 @@ STANDARD = Standard(
         # ── Bitbucket Pipelines ────────────────────────────────────
         "BB-001":   ["ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS"],
         "BB-002":   ["ESF-D-INJECTION"],
+        "BB-035":   ["ESF-D-INJECTION"],   # trust_remote_code model load = code exec
+        "BB-036":   ["ESF-D-INJECTION"],   # untrusted PR context into agentic CLI = prompt injection
+        "BB-037":   ["ESF-D-INJECTION"],   # unsafe pickle deser of fetched artifact = code exec
+        "BB-038":   ["ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS"],   # unpinned model registry ref
+        "BB-039":   ["ESF-C-APPROVAL"],   # agentic CLI output lands without review
+        "JF-038":   ["ESF-C-APPROVAL"],   # agentic CLI output lands without review
+        "JF-039":   ["ESF-D-INJECTION"],   # trust_remote_code model load = code exec
+        "JF-040":   ["ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS"],   # unpinned model registry ref
+        "JF-041":   ["ESF-D-INJECTION"],   # unsafe pickle deser of fetched artifact = code exec
+        "JF-042":   ["ESF-D-SECRETS"],   # secret echoed to Jenkins build log
         "BB-003":   ["ESF-D-SECRETS"],
         "BB-004":   ["ESF-C-APPROVAL", "ESF-C-ENV-SEP"],
         "BB-005":   ["ESF-D-BUILD-TIMEOUT"],
@@ -191,6 +221,11 @@ STANDARD = Standard(
         # ── Azure DevOps Pipelines ─────────────────────────────────
         "ADO-001":  ["ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS"],
         "ADO-002":  ["ESF-D-INJECTION"],
+        "ADO-034":  ["ESF-D-INJECTION"],   # trust_remote_code model load = code exec
+        "ADO-035":  ["ESF-D-INJECTION"],   # untrusted PR context into agentic CLI = prompt injection
+        "ADO-036":  ["ESF-D-INJECTION"],   # unsafe pickle deser of fetched artifact = code exec
+        "ADO-037":  ["ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS"],   # unpinned model registry ref
+        "ADO-038":  ["ESF-C-APPROVAL"],   # agentic CLI output lands without review
         "ADO-003":  ["ESF-D-SECRETS"],
         "ADO-004":  ["ESF-C-APPROVAL", "ESF-C-ENV-SEP"],
         "ADO-005":  ["ESF-S-PIN-DEPS", "ESF-S-TRUSTED-REG"],
@@ -220,6 +255,7 @@ STANDARD = Standard(
         # ── Jenkins ────────────────────────────────────────────────
         "JF-001":   ["ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS"],
         "JF-002":   ["ESF-D-INJECTION"],
+        "JF-037":   ["ESF-D-INJECTION"],   # agentic CLI ingests untrusted context (prompt injection)
         "JF-003":   ["ESF-D-BUILD-ENV", "ESF-D-PRIV-BUILD"],
         "JF-004":   ["ESF-D-TOKEN-HYGIENE"],
         "JF-005":   ["ESF-C-APPROVAL"],
@@ -251,6 +287,7 @@ STANDARD = Standard(
         "JF-031":   ["ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS"],
         # ── CircleCI ───────────────────────────────────────────────
         "CC-001":   ["ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS"],
+        "CC-033": ["ESF-S-VERIFY-DEPS"],  # CI env disables Go module verification
         "CC-002":   ["ESF-D-INJECTION"],
         "CC-003":   ["ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS"],
         "CC-004":   ["ESF-D-SECRETS"],
@@ -277,6 +314,9 @@ STANDARD = Standard(
         "CC-025":   ["ESF-D-INJECTION", "ESF-S-VERIFY-DEPS"],
         "CC-026":   ["ESF-D-INJECTION", "ESF-S-VERIFY-DEPS"],
         "CC-027":   ["ESF-D-INJECTION"],
+        "ARGO-019":  ["ESF-D-INJECTION"],  # Argo dangerous shell idiom
+        "TKN-018":  ["ESF-D-INJECTION"],  # Tekton dangerous shell idiom
+        "HARNESS-014":  ["ESF-D-INJECTION"],  # Harness dangerous shell idiom
         "CC-028":   ["ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS"],
         # ── Buildkite ─────────────────────────────────────────────
         "BK-001":   ["ESF-S-PIN-DEPS"],                            # plugin not pinned
@@ -288,17 +328,27 @@ STANDARD = Standard(
         "BK-007":   ["ESF-C-APPROVAL"],                            # deploy not gated
         "BK-008":   ["ESF-S-TRUSTED-REG"],                         # TLS bypass
         "BK-009":   ["ESF-D-SIGN-ARTIFACTS"],                      # artifact signing
+        "HARNESS-015":  ["ESF-D-SIGN-ARTIFACTS"],  # Harness artifacts not signed
+        "DR-019":  ["ESF-D-SIGN-ARTIFACTS"],  # Drone artifacts not signed
         "BK-010":   ["ESF-D-SBOM"],                                # SBOM
+        "HARNESS-016":  ["ESF-D-SBOM"],  # Harness no SBOM
+        "DR-020":  ["ESF-D-SBOM"],  # Drone no SBOM
         "BK-011":   ["ESF-S-PROVENANCE", "ESF-D-SIGN-ARTIFACTS"],  # SLSA provenance
+        "HARNESS-017":  ["ESF-S-PROVENANCE", "ESF-D-SIGN-ARTIFACTS"],  # Harness no SLSA provenance
+        "DR-021":  ["ESF-S-PROVENANCE", "ESF-D-SIGN-ARTIFACTS"],  # Drone no SLSA provenance
         "BK-012":   ["ESF-S-VULN-MGMT"],                           # vuln scanning
+        "HARNESS-018":  ["ESF-S-VULN-MGMT"],  # Harness no vuln scan
+        "DR-022":  ["ESF-S-VULN-MGMT"],  # Drone no vuln scan
         "BK-013":   ["ESF-C-ENV-SEP"],                             # deploy without branch filter
         # ── Tekton ────────────────────────────────────────────────
         "TKN-001":  ["ESF-S-PIN-DEPS", "ESF-S-IMMUTABLE"],         # step image not digest-pinned
+        "TKN-016": ["ESF-S-PIN-DEPS", "ESF-S-IMMUTABLE"],  # remote resolver / bundle task body not pinned
         "TKN-002":  ["ESF-D-PRIV-BUILD"],                          # step privileged
         "TKN-003":  ["ESF-D-INJECTION"],                           # param injection
         "TKN-004":  ["ESF-D-PRIV-BUILD", "ESF-D-BUILD-ENV"],       # hostPath / namespaces
         "TKN-005":  ["ESF-D-SECRETS"],                             # leaked creds
         "TKN-006":  ["ESF-D-BUILD-TIMEOUT"],                       # no timeout
+        "HARNESS-019":  ["ESF-D-BUILD-TIMEOUT"],  # Harness pipeline lacks an explicit timeout
         "TKN-007":  ["ESF-C-LEAST-PRIV"],                          # default SA
         "TKN-008":  ["ESF-S-VERIFY-DEPS", "ESF-S-TRUSTED-REG"],    # remote install / TLS
         "TKN-009":  ["ESF-D-SIGN-ARTIFACTS"],                      # artifact signing
@@ -310,8 +360,10 @@ STANDARD = Standard(
         "ARGO-001": ["ESF-S-PIN-DEPS", "ESF-S-IMMUTABLE"],         # template image not pinned
         "ARGO-002": ["ESF-D-PRIV-BUILD"],                          # template privileged
         "ARGO-003": ["ESF-C-LEAST-PRIV"],                          # default SA
+        "ARGO-016": ["ESF-C-LEAST-PRIV"],                          # cluster-admin / over-privileged ServiceAccount
         "ARGO-004": ["ESF-D-PRIV-BUILD", "ESF-D-BUILD-ENV"],       # hostPath / namespaces
         "ARGO-005": ["ESF-D-INJECTION"],                           # parameter injection
+        "ARGO-017": ["ESF-D-INJECTION"],                           # resource template manifest injection
         "ARGO-006": ["ESF-D-SECRETS"],                             # leaked creds
         "ARGO-007": ["ESF-D-BUILD-TIMEOUT"],                       # no activeDeadlineSeconds
         "ARGO-008": ["ESF-S-VERIFY-DEPS", "ESF-S-TRUSTED-REG"],    # remote install / TLS
@@ -333,8 +385,23 @@ STANDARD = Standard(
         "HELM-008": ["ESF-S-PIN-DEPS"],                            # stale Chart.lock
         "HELM-009": ["ESF-S-TRUSTED-REG"],                         # non-HTTPS home/sources
         "HELM-010": ["ESF-S-VERIFY-DEPS"],                         # appVersion
+        # ── Helm extended pack ──
+        "HELM-011": ["ESF-D-SECRETS"],
+        "HELM-012": ["ESF-S-VERIFY-DEPS"],
+        "HELM-013": ["ESF-S-VERIFY-DEPS"],
+        "HELM-014": ["ESF-S-VERIFY-DEPS"],
+        "HELM-015": ["ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS"],  # oci:// dependency not digest-pinned
+        "HELM-016": ["ESF-D-SECRETS"],  # default secret in values.yaml
+        "HELM-017": ["ESF-S-VERIFY-DEPS"],  # tpl of an untrusted .Values value
         # ── Dockerfile (image build supply chain) ──────────────────
         "DF-001": ["ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS"],         # FROM not digest-pinned
+        "MODEL-001": ["ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS"],      # unpinned base model
+        "MODEL-002": ["ESF-S-TRUSTED-REG", "ESF-S-VERIFY-DEPS"],   # third-party hub base model
+        "MODEL-003": ["ESF-S-VERIFY-DEPS"],                        # local unverified weights blob
+        "MODEL-006": ["ESF-S-VERIFY-DEPS"],                        # committed unsafe-serialization model artifact
+        "MODEL-004": ["ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS"],      # remote LoRA adapter
+        "MODEL-005": ["ESF-S-VERIFY-DEPS"],                        # config auto_map = custom loader code
+        "DF-031": ["ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS"],         # COPY --from external image not digest-pinned
         "DF-002": ["ESF-D-PRIV-BUILD"],                            # runs as root
         "DF-003": ["ESF-S-VERIFY-DEPS"],                           # ADD remote no integrity
         "DF-004": ["ESF-S-VERIFY-DEPS", "ESF-S-TRUSTED-REG"],      # curl-pipe
@@ -377,6 +444,7 @@ STANDARD = Standard(
         "GCB-024": ["ESF-D-SBOM"],
         "GCB-025": ["ESF-S-PIN-DEPS"],
         "GCB-026": ["ESF-C-ARTIFACT-AUTHZ"],
+        "GCB-027": ["ESF-D-INJECTION", "ESF-S-VERIFY-DEPS"],  # malicious-activity
         # ── SCM posture (governance via the platform REST API) ──────
         # The SCM provider evidences the platform-side controls that
         # gate code into the build pipeline. Map to the Developer
@@ -385,6 +453,27 @@ STANDARD = Standard(
         # rules, the Supplier guide for actions-as-dependencies, and
         # the Customer guide for environment / deployment governance.
         "SCM-001":  ["ESF-D-CODE-REVIEW"],          # default branch unprotected
+        "ORG-001":  ["ESF-C-LEAST-PRIV"],           # org: 2FA not required org-wide
+        "ORG-002":  ["ESF-C-LEAST-PRIV"],           # org: default member permission too broad
+        "ORG-003":  ["ESF-S-VERIFY-DEPS"],          # org: no Actions allow-list (any action runs)
+        "ORG-004":  ["ESF-C-LEAST-PRIV", "ESF-D-TOKEN-HYGIENE"],  # org: default workflow token is write
+        "ORG-005":  ["ESF-D-CODE-REVIEW"],          # org: Actions can approve PRs (review bypass)
+        "ORG-006":  ["ESF-D-SECRETS"],              # org: Actions secret scoped to all repos
+        "ORG-007":  ["ESF-C-LEAST-PRIV"],           # org: private-repo forking allowed (code exfiltration)
+        "GLGRP-001":  ["ESF-C-LEAST-PRIV"],  # gitlab group: 2FA not required
+        "GLGRP-002":  ["ESF-C-LEAST-PRIV"],  # gitlab group: forking outside group allowed
+        "GLGRP-003":  ["ESF-C-LEAST-PRIV"],  # gitlab group: sharing projects outside the hierarchy
+        "GLGRP-004":  ["ESF-D-CODE-REVIEW"],  # gitlab group: default branch protection disabled for new projects
+        "GLGRP-005":  ["ESF-D-SECRETS"],  # gitlab group: group webhook over insecure transport
+        "GLGRP-006":  ["ESF-D-SECRETS"],  # gitlab group: group CI/CD variable holds a secret with a weak control
+        "ORG-008":  ["ESF-C-LEAST-PRIV"],           # org: members can create public repos (code exposure)
+        "ORG-009":  ["ESF-D-BUILD-ENV", "ESF-D-PRIV-BUILD"],  # org: self-hosted runner group exposed to public repos
+        "ORG-010":  ["ESF-D-SECRETS"],              # org: new-repo secret-scanning push-protection default off
+        "ORG-011":  ["ESF-D-SECRETS"],              # org: org webhook over insecure transport
+        "ORG-012":  ["ESF-S-VULN-MGMT"],            # org: new-repo Dependabot security-updates default off
+        "ORG-013":  ["ESF-D-CODE-REVIEW"],          # org: org ruleset not enforced (evaluate/disabled)
+        "ORG-015":  ["ESF-D-CODE-REVIEW"],  # org: immutable releases not enforced org-wide
+        "ORG-014":  ["ESF-D-CODE-REVIEW"],  # org: native SHA-pinning policy not required
         "SCM-002":  ["ESF-D-CODE-REVIEW"],          # required reviews missing
         "SCM-004":  ["ESF-D-SECRETS"],              # secret scanning disabled
         "SCM-005":  ["ESF-S-VULN-MGMT"],            # Dependabot security updates off
@@ -460,6 +549,8 @@ STANDARD = Standard(
         "ECR-007":  ["ESF-S-VULN-MGMT"],            # Inspector v2 enhanced scanning
         "IAM-007":  ["ESF-D-TOKEN-HYGIENE"],        # access key > 90 days
         "IAM-008":  ["ESF-D-TOKEN-HYGIENE", "ESF-C-LEAST-PRIV"],   # OIDC trust missing aud/sub pin
+        "IAM-009":  ["ESF-D-TOKEN-HYGIENE", "ESF-C-LEAST-PRIV"],   # Azure WIF broad subject
+        "IAM-010":  ["ESF-D-TOKEN-HYGIENE", "ESF-C-LEAST-PRIV"],   # GCP WIF no repo condition
         "PBAC-003": ["ESF-D-BUILD-ENV"],            # SG 0.0.0.0/0 egress
         "PBAC-005": ["ESF-C-LEAST-PRIV"],           # stage roles mirror pipeline
         "KMS-001":  ["ESF-C-ARTIFACT-AUTHZ"],       # CMK rotation disabled
@@ -520,11 +611,48 @@ STANDARD = Standard(
         "GHA-059":  ["ESF-S-VERIFY-DEPS"],          # npm install without audit signatures
         "GHA-060":  ["ESF-S-VERIFY-DEPS"],          # pip install without --require-hashes
         "GHA-061":  ["ESF-C-LEAST-PRIV", "ESF-D-TOKEN-HYGIENE"],  # App token without permissions filter
+        "GHA-106":  ["ESF-C-LEAST-PRIV", "ESF-D-TOKEN-HYGIENE"],  # AI agent with write-scoped token
+        "GHA-111":  ["ESF-C-LEAST-PRIV", "ESF-D-PRIV-BUILD"],  # AI agent edits IaC applied in the same job
+        "GHA-112":  ["ESF-C-APPROVAL", "ESF-D-PRIV-BUILD"],  # self-hosted deploy with no environment gate
+        "GHA-113":  ["ESF-D-TOKEN-HYGIENE", "ESF-C-APPROVAL"],  # OIDC trusted-publish w/o env gate
+        "GHA-114":  ["ESF-D-TOKEN-HYGIENE", "ESF-C-APPROVAL"],  # publish workflow on an unrestricted push trigger
+        "GHA-115":  ["ESF-C-LEAST-PRIV"],            # id-token granted workflow-wide, not job-scoped
+        "GHA-116":  ["ESF-D-SECRETS"],               # bulk secrets serialization
+        "GHA-107":  ["ESF-D-BUILD-ENV"],             # harden-runner in audit mode (egress not blocked)
+        "GHA-108":  ["ESF-D-BUILD-ENV"],             # no runtime egress control on OIDC/deploy workflow
+        "GHA-109":  ["ESF-D-BUILD-ENV"],             # harden-runner not the first step
+        "GHA-062":  ["ESF-C-LEAST-PRIV"],            # OIDC trust subject in sibling IaC is overly broad
+        "GHA-063":  ["ESF-D-INJECTION"],             # spoofable bot-actor if-predicate
+        "GHA-064":  ["ESF-D-INJECTION"],             # unsound contains() with comma-string operand
+        "GHA-065":  ["ESF-D-INJECTION"],             # zero-width / bidi unicode in workflow body
+        "GHA-066":  ["ESF-D-SECRETS"],               # upload-artifact wildcard sweeps workspace
+        "GHA-067":  ["ESF-D-SECRETS"],               # cache step publishes credential-shaped paths
+        "GHA-068":  ["ESF-D-BUILD-ENV"],             # runs-on targets a deprecated hosted runner
+        "GHA-069":  ["ESF-C-LEAST-PRIV"],            # orphan id-token: write scope
+        "GHA-070":  ["ESF-S-VERIFY-DEPS"],           # ssh-keyscan / host-key check TOFU
+        "GHA-071":  ["ESF-D-INJECTION"],             # powershell on Linux / macOS step
+        "GHA-072":  ["ESF-D-SECRETS", "ESF-C-LEAST-PRIV"],  # secret env: at wider scope than consumer
+        "GHA-073":  ["ESF-D-SECRETS"],               # unused workflow_call.secrets declaration
+        "GHA-086":  ["ESF-C-APPROVAL", "ESF-C-ENV-SEP"],  # wildcard branch trigger gates env-bound deploy
+        "GHA-087":  ["ESF-D-SECRETS"],               # derived-value of secret printed to log
+        "GHA-088":  ["ESF-S-VERIFY-DEPS"],           # typosquat uses: near-edit of top action
+        "GHA-089":  ["ESF-S-VERIFY-DEPS"],           # archived upstream repo
+        "GHA-090":  ["ESF-S-VERIFY-DEPS"],           # impostor-commit: SHA absent from repo
+        "GHA-091":  ["ESF-S-VERIFY-DEPS"],           # repojacking: action upstream missing
+        "GHA-092":  ["ESF-D-CODE-REVIEW"],            # TOCTOU PR head SHA force-push race
+        "GHA-093":  ["ESF-D-SECRETS", "ESF-D-INJECTION"],  # LOTP indicators
+        "GHA-094":  ["ESF-S-VERIFY-DEPS"],            # stale-action-refs
+        "GHA-096":  ["ESF-S-VERIFY-DEPS", "ESF-S-VULN-MGMT"],   # known-vulnerable action ref (GHSA)
         # ── GitLab CI extras ─────────────────────────────────────
         "GL-028":   ["ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS"],   # services: image not pinned
         "GL-029":   ["ESF-C-APPROVAL"],             # manual deploy allow_failure
         "GL-030":   ["ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS"],   # trigger: include w/o pinned ref
         "GL-031":   ["ESF-D-TOKEN-HYGIENE", "ESF-C-APPROVAL"],  # id_tokens missing audience pin
+        "GL-040":   ["ESF-D-TOKEN-HYGIENE", "ESF-C-APPROVAL"],  # CI_JOB_TOKEN used for cross-project access
+        "GL-041":   ["ESF-D-INJECTION"],  # IaC apply on an untrusted MR trigger
+        "GL-050":   ["ESF-D-TOKEN-HYGIENE"],  # publish job long-lived registry token (GHA-050 analog)
+        "BB-033":   ["ESF-D-INJECTION"],  # IaC apply on a pull-request pipeline
+        "BB-034":   ["ESF-C-APPROVAL", "ESF-C-ENV-SEP"],  # production deploy on a pull-request pipeline
         "GL-032":   ["ESF-D-INJECTION"],            # tags interpolates untrusted
         "GL-033":   ["ESF-D-INJECTION"],            # global before_script taint
         "GL-034":   ["ESF-S-VERIFY-DEPS"],          # npm install without audit signatures
@@ -546,15 +674,56 @@ STANDARD = Standard(
         "JF-033":   ["ESF-D-SECRETS"],              # withCredentials leaked via Groovy ${}
         "JF-034":   ["ESF-D-SECRETS"],              # password() build parameter
         "JF-035":   ["ESF-S-TRUSTED-REG"],          # httpRequest SSL off
+        "JF-036":   ["ESF-D-INJECTION"],            # sh body interpolates params.*
         # ── Buildkite + Tekton + Argo extras ─────────────────────
         "BK-014":   ["ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS"],   # unpinned package install
         "BK-015":   ["ESF-D-INJECTION"],            # agents map untrusted interpolation
+        "BK-016":   ["ESF-D-INJECTION"],            # dangerous shell idiom
         "TKN-014":  ["ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS"],   # unpinned package install
         "TKN-015":  ["ESF-D-INJECTION"],            # workspace subPath param injection
         "ARGO-014": ["ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS"],   # unpinned package install
         "ARGO-015": ["ESF-S-TRUSTED-REG"],          # insecure (non-HTTPS) artifact URL
+        # ── Argo CD ──────────────────────────────────────────────
+        "ARGOCD-001": ["ESF-C-LEAST-PRIV"],                          # AppProject sourceRepos wildcard
+        "ARGOCD-002": ["ESF-C-LEAST-PRIV", "ESF-C-ENV-SEP"],         # AppProject destinations wildcard
+        "ARGOCD-003": ["ESF-C-APPROVAL"],                            # auto-prune without selfHeal
+        "ARGOCD-004": ["ESF-C-LEAST-PRIV"],                          # RBAC wildcard policy
+        "ARGOCD-005": ["ESF-D-SECRETS"],                             # repo plaintext credentials
+        "ARGOCD-006": ["ESF-D-CODE-REVIEW", "ESF-C-LEAST-PRIV"],     # ApplicationSet PR/SCM no allowlist
+        "ARGOCD-007": ["ESF-D-INJECTION"],                           # Helm generator interpolation
+        "ARGOCD-008": ["ESF-S-VERIFY-DEPS"],                         # CMP plugin invocation
+        "ARGOCD-015": ["ESF-S-VERIFY-DEPS"],  # kustomize --enable-helm
+        "ARGOCD-009": ["ESF-C-LEAST-PRIV"],                          # anonymous access enabled
+        "ARGOCD-014": ["ESF-C-LEAST-PRIV"],  # web terminal exec.enabled
+        # ── ArgoCD extended pack ──
+        "ARGOCD-010": ["ESF-S-PIN-DEPS"],
+        "ARGOCD-017": ["ESF-S-PIN-DEPS", "ESF-C-LEAST-PRIV"],  # in-cluster mutable source
+        "ARGOCD-019": ["ESF-C-LEAST-PRIV"],  # drift detection disabled on a sensitive field
+        "ARGOCD-016": ["ESF-S-VERIFY-DEPS"],  # Helm valueFiles from a remote URL
+        "ARGOCD-018": ["ESF-C-LEAST-PRIV"],  # custom resource health / action Lua
+        "ARGOCD-011": ["ESF-C-LEAST-PRIV"],
+        "ARGOCD-012": ["ESF-C-APPROVAL"],
+        "ARGOCD-013": ["ESF-C-AUDIT"],
         # ── Drone CI ─────────────────────────────────────────────
         "DR-001":   ["ESF-S-PIN-DEPS", "ESF-S-IMMUTABLE"],     # step image not digest-pinned
+        "HARNESS-001":   ["ESF-S-PIN-DEPS", "ESF-S-IMMUTABLE"],  # Harness step image not digest-pinned
+        "HARNESS-002":   ["ESF-D-INJECTION"],  # Harness expression injection in step command
+        "HARNESS-003":   ["ESF-D-PRIV-BUILD"],  # Harness privileged step
+        "HARNESS-004":   ["ESF-D-SECRETS"],  # Harness literal credential in variable
+        "HARNESS-005":   ["ESF-S-VERIFY-DEPS"],  # Harness pipe-to-shell
+        "HARNESS-006":   ["ESF-S-TRUSTED-REG"],  # Harness TLS bypass in commands
+        "HARNESS-007":   ["ESF-D-PRIV-BUILD", "ESF-D-BUILD-ENV"],  # Harness sensitive host-path mount
+        "HARNESS-008":   ["ESF-D-INJECTION"],  # Harness agentic-CLI prompt injection
+        "HARNESS-010":   ["ESF-D-INJECTION"],  # Harness model trust_remote_code (code exec)
+        "HARNESS-011":   ["ESF-D-INJECTION"],  # Harness unsafe model deser (pickle RCE)
+        "HARNESS-012":   ["ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS"],  # Harness model pulled without a pinned revision
+        "HARNESS-013":   ["ESF-D-SECRETS"],  # Harness secret echoed to step log
+        "GCB-028":  ["ESF-D-SECRETS"],  # Cloud Build secret echoed to build log
+        "ARGO-018":  ["ESF-D-SECRETS"],  # Argo secret echoed to template log
+        "TKN-017":  ["ESF-D-SECRETS"],  # Tekton secret echoed to step log
+        "DR-018":  ["ESF-D-SECRETS"],  # Drone secret echoed to step log
+        "BK-017":  ["ESF-D-SECRETS"],  # Buildkite secret echoed to step log
+        "HARNESS-009":   ["ESF-C-APPROVAL"],  # Harness agentic-CLI output autolands without review
         "DR-002":   ["ESF-D-PRIV-BUILD"],           # privileged step
         "DR-003":   ["ESF-D-INJECTION"],            # Drone variable injection
         "DR-004":   ["ESF-D-SECRETS"],              # literal credential
@@ -565,6 +734,13 @@ STANDARD = Standard(
         "DR-009":   ["ESF-D-INJECTION"],            # cache key tainted
         "DR-010":   ["ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS"],   # unpinned package install
         "DR-011":   ["ESF-D-INJECTION"],            # node map interpolates untrusted
+        # ── Drone extended pack ──
+        "DR-012":   ["ESF-S-PIN-DEPS", "ESF-S-IMMUTABLE"],   # service image not pinned
+        "DR-013":   ["ESF-C-APPROVAL"],             # no trigger event filter
+        "DR-014":   ["ESF-S-VERIFY-DEPS"],          # pipe-to-shell
+        "DR-015":   ["ESF-S-VERIFY-DEPS"],          # clone recursive
+        "DR-016":   ["ESF-D-INJECTION", "ESF-S-PIN-DEPS"],   # image field interpolation
+        "DR-017":   ["ESF-D-INJECTION"],            # dangerous shell idiom
         # ── NPM / PyPI / Maven dep supply-chain ──────────────────
         # Per-package pinning / integrity / non-registry source →
         # ESF-S-PIN-DEPS (+ ESF-S-VERIFY-DEPS). Compromised pkgs add
@@ -579,11 +755,19 @@ STANDARD = Standard(
         "NPM-006":  ["ESF-S-VERIFY-DEPS", "ESF-S-VULN-MGMT"],
         "NPM-007":  ["ESF-D-BUILD-ENV"],
         "NPM-011":  ["ESF-D-SECRETS"],
+        "NPM-013":  ["ESF-D-SECRETS"],
         "PYPI-001": ["ESF-S-PIN-DEPS"],
         "PYPI-002": ["ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS"],
         "PYPI-003": ["ESF-S-TRUSTED-REG"],
+        "PYPI-018": ["ESF-S-VERIFY-DEPS"],  # --no-binary forces sdist build
+        "PYPI-019": ["ESF-S-VERIFY-DEPS"],  # missing PEP 740 build provenance
+        "PYPI-020": ["ESF-S-VERIFY-DEPS"],  # low OpenSSF Scorecard upstream
+        "PYPI-021": ["ESF-S-VERIFY-DEPS"],  # provenance built from a non-release ref
         "PYPI-004": ["ESF-S-PIN-DEPS"],
+        "PYPI-015": ["ESF-S-VERIFY-DEPS"],  # direct artifact URL
         "PYPI-005": ["ESF-S-TRUSTED-REG"],
+        "PYPI-017": ["ESF-S-TRUSTED-REG", "ESF-S-VERIFY-DEPS"],  # remote --find-links
+        "PYPI-016": ["ESF-S-TRUSTED-REG", "ESF-S-VERIFY-DEPS"],  # primary index repointed
         "PYPI-006": ["ESF-S-VERIFY-DEPS", "ESF-S-VULN-MGMT"],
         "MVN-001":  ["ESF-S-PIN-DEPS"],
         "MVN-002":  ["ESF-S-PIN-DEPS"],
@@ -592,6 +776,132 @@ STANDARD = Standard(
         "MVN-005":  ["ESF-S-VERIFY-DEPS"],
         "MVN-006":  ["ESF-S-VERIFY-DEPS", "ESF-S-VULN-MGMT"],
         "MVN-007":  ["ESF-S-TRUSTED-REG"],
+        "MVN-008":  ["ESF-S-VERIFY-DEPS"],
+        "MVN-009":  ["ESF-S-VERIFY-DEPS"],
+        # ── Maven extended pack ──
+        "MVN-010":  ["ESF-D-SECRETS"],
+        "MVN-011":  ["ESF-D-SECRETS"],
+        "MVN-012":  ["ESF-S-VERIFY-DEPS"],
+        "MVN-013":  ["ESF-S-VERIFY-DEPS"],
+        "MVN-014":  ["ESF-S-VERIFY-DEPS"],
+        "MVN-015": ["ESF-S-VERIFY-DEPS"],  # build-time plugin exec bound to lifecycle
+        "MVN-016": ["ESF-S-TRUSTED-REG", "ESF-S-VERIFY-DEPS"],  # gradle allowInsecureProtocol
+        "MVN-017": ["ESF-D-SECRETS"],  # settings.xml privateKey + plaintext passphrase
+        "MVN-018": ["ESF-S-VERIFY-DEPS"],  # distributionManagement release accepts snapshots
+        "NPM-008":  ["ESF-S-VERIFY-DEPS"],
+        "NPM-009":  ["ESF-S-VERIFY-DEPS"],
+        "NPM-010":  ["ESF-S-VERIFY-DEPS"],
+        "NPM-014":  ["ESF-S-VERIFY-DEPS"],
+        "NPM-015":  ["ESF-S-VERIFY-DEPS"],
+        "NPM-017":  ["ESF-S-VERIFY-DEPS"],  # provenance built from a non-release ref
+        "NPM-018":  ["ESF-S-VERIFY-DEPS"],  # latest release from a new publisher
+        "NPM-019":  ["ESF-S-VERIFY-DEPS"],  # overrides / resolutions redirect
+        "NPM-020":  ["ESF-S-TRUSTED-REG", "ESF-S-VERIFY-DEPS"],  # .npmrc registry repoint
+        "NPM-016":  ["ESF-S-VERIFY-DEPS"],
+        "PYPI-008": ["ESF-S-VERIFY-DEPS"],
+        "PYPI-009": ["ESF-S-VERIFY-DEPS"],
+        # ── PyPI extended pack ──
+        "PYPI-010": ["ESF-D-SECRETS"],
+        "PYPI-011": ["ESF-S-TRUSTED-REG", "ESF-S-VERIFY-DEPS"],
+        "PYPI-012": ["ESF-S-VERIFY-DEPS"],
+        "PYPI-013": ["ESF-S-VERIFY-DEPS"],
+        "PYPI-014": ["ESF-S-TRUSTED-REG"],
+        # nuget (csproj + NuGet.config static analysis)
+        "NUGET-001": ["ESF-S-VERIFY-DEPS"],
+        "NUGET-002": ["ESF-S-VERIFY-DEPS"],
+        "NUGET-003": ["ESF-S-VERIFY-DEPS"],
+        "NUGET-004": ["ESF-S-VERIFY-DEPS"],
+        "NUGET-005": ["ESF-S-VERIFY-DEPS"],
+        "NUGET-006": ["ESF-S-VERIFY-DEPS"],
+        "NUGET-007": ["ESF-S-VERIFY-DEPS"],
+        "NUGET-008": ["ESF-S-VERIFY-DEPS"],
+        "NUGET-009": ["ESF-S-VERIFY-DEPS"],
+        "NUGET-010": ["ESF-D-SECRETS"],
+        # ── NuGet extended pack ──
+        "NUGET-011": ["ESF-S-VERIFY-DEPS"],
+        "NUGET-012": ["ESF-S-VERIFY-DEPS", "ESF-S-PROVENANCE"],
+        "NUGET-013": ["ESF-S-VERIFY-DEPS"],
+        "NUGET-014": ["ESF-D-SECRETS"],
+        "NUGET-015": ["ESF-S-VERIFY-DEPS"],
+        "NUGET-016": ["ESF-S-VERIFY-DEPS"],  # missing <clear/> inherits public gallery
+        "NUGET-017": ["ESF-S-VERIFY-DEPS"],  # public gallery active alongside private feed, not disabled
+        "NUGET-018": ["ESF-S-VERIFY-DEPS"],  # build-time MSBuild execution
+        "NUGET-019": ["ESF-S-VERIFY-DEPS", "ESF-S-PROVENANCE"],  # require mode, no trusted signers
+        # ── Go modules ──
+        "GOMOD-001": ["ESF-S-VERIFY-DEPS"],
+        "GOMOD-002": ["ESF-S-VERIFY-DEPS"],
+        "GOMOD-003": ["ESF-S-VERIFY-DEPS"],
+        "GOMOD-004": ["ESF-S-VERIFY-DEPS"],
+        "GOMOD-005": ["ESF-S-VERIFY-DEPS"],
+        "GOMOD-006": ["ESF-S-VERIFY-DEPS"],
+        # ── Go modules extended pack ──
+        "GOMOD-007": ["ESF-S-VERIFY-DEPS"],
+        "GOMOD-008": ["ESF-S-VERIFY-DEPS"],
+        "GOMOD-009": ["ESF-S-VERIFY-DEPS"],
+        "GOMOD-010": ["ESF-S-VERIFY-DEPS"],
+        "GOMOD-011": ["ESF-S-VERIFY-DEPS"],  # tool directive build-time exec
+        "GOMOD-012": ["ESF-S-TRUSTED-REG", "ESF-S-VERIFY-DEPS"],  # insecure / non-canonical module host
+        # ── Cargo ──
+        "CARGO-001": ["ESF-S-VERIFY-DEPS"],
+        "CARGO-002": ["ESF-S-VERIFY-DEPS"],
+        "CARGO-003": ["ESF-S-VERIFY-DEPS"],
+        "CARGO-004": ["ESF-S-VERIFY-DEPS"],
+        "CARGO-005": ["ESF-S-VERIFY-DEPS"],
+        "CARGO-006": ["ESF-S-VERIFY-DEPS"],
+        # ── Cargo extended pack ──
+        "CARGO-007": ["ESF-S-VERIFY-DEPS"],
+        "CARGO-008": ["ESF-S-VERIFY-DEPS"],
+        "CARGO-009": ["ESF-S-VERIFY-DEPS"],
+        "CARGO-010": ["ESF-S-VERIFY-DEPS"],
+        "CARGO-011": ["ESF-S-VERIFY-DEPS"],  # build.rs compile-time egress / exec
+        "CARGO-012": ["ESF-S-TRUSTED-REG", "ESF-S-VERIFY-DEPS"],  # .cargo/config.toml source override / build flags
+        "CARGO-013": ["ESF-S-VERIFY-DEPS"],  # Cargo.lock off-crates.io source
+        "CARGO-014": ["ESF-S-VERIFY-DEPS"],  # no supply-chain audit-gate config
+        # ── Composer / PHP ──
+        "COMPOSER-001": ["ESF-S-VERIFY-DEPS"],
+        "COMPOSER-002": ["ESF-S-VERIFY-DEPS"],
+        "COMPOSER-003": ["ESF-S-TRUSTED-REG", "ESF-S-VERIFY-DEPS"],
+        "COMPOSER-012": ["ESF-S-TRUSTED-REG", "ESF-S-VERIFY-DEPS"],  # disables Packagist / marks custom repo canonical
+        "COMPOSER-011": ["ESF-S-TRUSTED-REG", "ESF-S-VERIFY-DEPS"],  # external VCS repository re-points a package
+        "COMPOSER-004": ["ESF-D-SECRETS"],
+        "COMPOSER-005": ["ESF-S-VERIFY-DEPS"],
+        "COMPOSER-014": ["ESF-S-VERIFY-DEPS"],  # minimum-stability without prefer-stable
+        "COMPOSER-006": ["ESF-S-VERIFY-DEPS"],
+        "COMPOSER-007": ["ESF-S-VERIFY-DEPS"],
+        "COMPOSER-008": ["ESF-S-VERIFY-DEPS"],
+        "COMPOSER-009": ["ESF-D-SECRETS"],
+        "COMPOSER-010": ["ESF-S-TRUSTED-REG", "ESF-S-VERIFY-DEPS"],
+        "COMPOSER-013": ["ESF-S-TRUSTED-REG", "ESF-S-VERIFY-DEPS"],  # config.disable-tls
+        # ── RubyGems / Bundler ──
+        "GEM-001": ["ESF-S-VERIFY-DEPS"],
+        "GEM-002": ["ESF-S-VERIFY-DEPS"],
+        "GEM-003": ["ESF-S-TRUSTED-REG", "ESF-S-VERIFY-DEPS"],
+        "GEM-004": ["ESF-D-SECRETS"],
+        "GEM-005": ["ESF-S-VERIFY-DEPS"],
+        "GEM-006": ["ESF-S-VERIFY-DEPS"],
+        "GEM-007": ["ESF-S-TRUSTED-REG"],
+        "GEM-008": ["ESF-S-VERIFY-DEPS"],
+        "GEM-009": ["ESF-D-SECRETS"],
+        "GEM-010": ["ESF-S-VERIFY-DEPS"],
+        "GEM-011": ["ESF-S-VERIFY-DEPS"],  # Bundler plugin install-time exec
+        "GEM-012": ["ESF-S-TRUSTED-REG", "ESF-S-VERIFY-DEPS"],  # per-gem :source override
+        "GEM-013": ["ESF-S-TRUSTED-REG", "ESF-S-VERIFY-DEPS"],  # insecure git transport
+        # ── Pulumi ──
+        "PULUMI-001": ["ESF-D-SECRETS"],
+        "PULUMI-002": ["ESF-D-SECRETS"],
+        "PULUMI-003": ["ESF-D-SECRETS"],
+        "PULUMI-011": ["ESF-S-PROVENANCE"],  # plugin from custom download server
+        "PULUMI-004": ["ESF-S-PROVENANCE"],
+        "PULUMI-005": ["ESF-C-LEAST-PRIV"],
+        "PULUMI-006": ["ESF-C-LEAST-PRIV"],
+        # ── Pulumi extended pack ──
+        "PULUMI-007": ["ESF-C-LEAST-PRIV"],
+        "PULUMI-008": ["ESF-C-LEAST-PRIV"],
+        "PULUMI-013": ["ESF-D-INJECTION"],  # dynamic provider deploy-time code
+        "PULUMI-014": ["ESF-S-VERIFY-DEPS"],  # ESC environment imported without a qualifier
+        "PULUMI-009": ["ESF-S-VERIFY-DEPS"],
+        "PULUMI-012": ["ESF-S-PROVENANCE"],  # plugin version unpinned
+        "PULUMI-010": ["ESF-D-SECRETS"],
         # ── OCI image manifest gaps ──────────────────────────────
         # Provenance metadata + integrity → ESF-S-PROVENANCE +
         # ESF-D-SBOM. Foreign-layer URL → ESF-S-TRUSTED-REG. Schema
@@ -604,6 +914,7 @@ STANDARD = Standard(
         "OCI-006":  ["ESF-D-BUILD-ENV"],           # excessive layer count
         "OCI-007":  ["ESF-S-IMMUTABLE", "ESF-S-VERIFY-DEPS"],   # legacy schemaVersion 1
         "OCI-008":  ["ESF-S-IMMUTABLE", "ESF-S-VERIFY-DEPS"],   # weak digest algorithm
+        "OCI-009":  ["ESF-S-PROVENANCE"],                      # missing base-image annotations
         # ── SLSA / in-toto attestation content ───────────────────
         "ATTEST-001": ["ESF-S-PROVENANCE", "ESF-D-SIGN-ARTIFACTS"],   # untrusted SLSA builder identity
         "ATTEST-002": ["ESF-S-PROVENANCE"],         # source-repo claim unverifiable
@@ -623,6 +934,7 @@ STANDARD = Standard(
         "TAINT-006": ["ESF-D-INJECTION"],
         "TAINT-007": ["ESF-D-INJECTION"],
         "TAINT-008": ["ESF-D-INJECTION"],
+        "TAINT-009": ["ESF-D-SECRETS"],            # env-protected secret flows to unprotected job
         # ── Dockerfile extras ───────────────────────────────────
         "DF-009":   ["ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS"],   # ADD where COPY suffices
         "DF-011":   ["ESF-D-BUILD-ENV"],            # apt cache not cleaned
@@ -682,6 +994,7 @@ STANDARD = Standard(
         "K8S-021":  ["ESF-C-LEAST-PRIV"],           # wildcard RBAC verbs
         "K8S-022":  ["ESF-D-BUILD-ENV"],            # SSH service exposed
         "K8S-023":  ["ESF-D-PRIV-BUILD"],           # PSA enforce missing
+        "K8S-044":  ["ESF-D-PRIV-BUILD"],           # admission webhook fail-open / unscoped mutating
         "K8S-024":  ["ESF-C-DEPLOY-MON"],           # missing health probes
         "K8S-025":  ["ESF-D-BUILD-ENV"],            # system priority class
         "K8S-026":  ["ESF-D-BUILD-ENV"],            # LB without source ranges
@@ -704,5 +1017,143 @@ STANDARD = Standard(
         "K8S-043":  ["ESF-D-BUILD-ENV"],            # Ingress wildcard host
         # S3-000 is already mapped above (line 60) as part of the
         # original ``-000`` block at the top of the dict.
+        # supply-chain posture pack
+        "GHA-097":  ["ESF-D-CODE-REVIEW"],           # recursive PR auto-merge loop
+        "GHA-098":  ["ESF-D-BUILD-ENV"],            # deploy without security scan gate
+        "GHA-099":  ["ESF-D-SECRETS"],             # deploy env plaintext secret
+        "GHA-100":  ["ESF-D-SIGN-ARTIFACTS"],     # cosign verify no identity binding
+        "GHA-102":  ["ESF-D-INJECTION"],           # submodule checkout on PR trigger
+        "GHA-103":  ["ESF-D-CODE-REVIEW", "ESF-D-INJECTION"],  # AI review bot on untrusted trigger
+        "GHA-104":  ["ESF-D-CODE-REVIEW"],        # AI agent auto-push without PR review
+        # Secrets-in-logs (cross-provider)
+        "GL-036":   ["ESF-D-SECRETS"],             # secret echoed to GitLab CI log
+        "GL-038":   ["ESF-D-SECRETS"],             # CI_DEBUG_TRACE dumps secrets to GitLab CI log
+        "BB-032":   ["ESF-D-SECRETS"],             # secret echoed to Bitbucket log
+        "ADO-031":  ["ESF-D-SECRETS"],             # secret echoed to Azure DevOps log
+        "ADO-032":  ["ESF-D-SECRETS"],             # checkout persistCredentials leaks token to .git/config
+        "ADO-033":  ["ESF-D-INJECTION"],           # IaC apply on a PR-validated pipeline
+        "CC-032":   ["ESF-D-SECRETS"],             # secret echoed to CircleCI log
+        "CC-034":   ["ESF-D-INJECTION"],           # trust_remote_code model load = code exec
+        "CC-035":   ["ESF-S-PIN-DEPS", "ESF-S-VERIFY-DEPS"],   # unpinned model registry ref
+        "CC-036":   ["ESF-D-INJECTION"],           # unsafe pickle deser of fetched artifact = code exec
+        "CC-037":   ["ESF-D-INJECTION"],           # agentic CLI ingests untrusted context (prompt injection)
+        "CC-038":   ["ESF-C-APPROVAL"],            # agentic CLI output lands without review
+        "SCM-048":  ["ESF-D-SECRETS"],             # org codespace secret scoped to all repos
+        "SCM-049":  ["ESF-D-SECRETS"],             # classic PAT where fine-grained suffices
+        "NPM-012":  ["ESF-D-SECRETS", "ESF-S-VERIFY-DEPS"],  # publish token lacking restrictions
+        # ── Azure Cloud (Entra ID / Storage / Key Vault / ACR / Monitor) ──
+        "ENTRA-001": ["ESF-C-LEAST-PRIV"],                 # SP assigned Global Administrator
+        "ENTRA-002": ["ESF-D-TOKEN-HYGIENE"],              # app credential beyond 180 days
+        "ENTRA-003": ["ESF-D-TOKEN-HYGIENE"],              # SP uses password credential
+        "AZST-001":  ["ESF-C-ARTIFACT-AUTHZ"],             # public blob access
+        "AZST-002":  ["ESF-S-TRUSTED-REG"],                # non-HTTPS traffic
+        "AZST-003":  ["ESF-C-ARTIFACT-AUTHZ"],             # no CMK encryption
+        "AKV-001":   ["ESF-C-ARTIFACT-AUTHZ"],             # soft delete not enabled
+        "AKV-002":   ["ESF-C-ARTIFACT-AUTHZ"],             # purge protection not enabled
+        "AKV-003":   ["ESF-C-ARTIFACT-AUTHZ"],             # network ACLs allow all
+        "ACR-001":   ["ESF-C-LEAST-PRIV"],                 # admin user enabled
+        "ACR-002":   ["ESF-C-ARTIFACT-AUTHZ"],             # public network access
+        "ACR-003":   ["ESF-D-SIGN-ARTIFACTS"],             # content trust not enabled
+        "AZMON-001": ["ESF-C-AUDIT"],                      # no diagnostic setting
+        "AZMON-002": ["ESF-C-AUDIT"],                      # log retention < 365 days
+        "AZMON-003": ["ESF-C-DEPLOY-MON"],                 # no alert rule
+        # ── GCP (IAM / GCS / KMS / Artifact Registry / Cloud Logging) ────
+        "GCIAM-001": ["ESF-C-LEAST-PRIV"],                 # SA has Owner/Editor role
+        "GCIAM-002": ["ESF-D-TOKEN-HYGIENE"],              # user-managed SA key
+        "GCIAM-003": ["ESF-C-LEAST-PRIV"],                 # token creator without condition
+        "GCS-001":   ["ESF-C-ARTIFACT-AUTHZ"],             # public bucket
+        "GCS-002":   ["ESF-C-ARTIFACT-AUTHZ"],             # no uniform access
+        "GCS-003":   ["ESF-S-IMMUTABLE"],                  # versioning not enabled
+        "GCKMS-001": ["ESF-C-ARTIFACT-AUTHZ"],             # key rotation > 365 days
+        "GCKMS-002": ["ESF-C-LEAST-PRIV"],                 # public KMS key access
+        "GCKMS-003": ["ESF-C-ARTIFACT-AUTHZ"],             # no HSM protection
+        "GAR-001":   ["ESF-S-VULN-MGMT"],                  # no vulnerability scanning
+        "GAR-002":   ["ESF-C-ARTIFACT-AUTHZ"],             # publicly readable repo
+        "GAR-003":   ["ESF-D-BUILD-ENV"],                  # no cleanup policy
+        "GCLOG-001": ["ESF-C-AUDIT"],                      # audit logs not enabled
+        "GCLOG-002": ["ESF-C-AUDIT"],                      # no log sink
+        "GCLOG-003": ["ESF-C-AUDIT"],                      # log retention < 365 days
+        # ── Azure Cloud phase-2 ──────────────────────────────────────
+        "ENTRA-004": ["ESF-D-TOKEN-HYGIENE"],              # cond access MFA
+        "ENTRA-005": ["ESF-C-LEAST-PRIV"],                 # ext user restrict
+        "ENTRA-006": ["ESF-C-AUDIT"],                      # risky signin
+        "AZST-004":  ["ESF-S-TRUSTED-REG"],                # min TLS
+        "AZST-005":  ["ESF-D-BUILD-ENV"],                  # lifecycle
+        "AZST-006":  ["ESF-D-TOKEN-HYGIENE"],              # key rotation
+        "AKV-004":   ["ESF-D-TOKEN-HYGIENE"],              # key expiry
+        "AKV-005":   ["ESF-D-TOKEN-HYGIENE"],              # secret expiry
+        "AKV-006":   ["ESF-C-LEAST-PRIV"],                 # RBAC
+        "ACR-004":   ["ESF-S-VULN-MGMT"],                  # defender scan
+        "ACR-005":   ["ESF-S-IMMUTABLE"],                   # tag immutability
+        "AZMON-004": ["ESF-C-AUDIT"],                      # KV diagnostics
+        "AZMON-005": ["ESF-C-AUDIT"],                      # NSG flow retention
+        "AZMON-006": ["ESF-C-AUDIT"],                      # LAW retention
+        "AZMON-007": ["ESF-C-DEPLOY-MON"],                 # svc health alert
+        "AZNW-001":  ["ESF-D-BUILD-ENV"],                  # SSH/RDP internet (CRITICAL)
+        "AZNW-002":  ["ESF-C-AUDIT"],                      # flow logs
+        "AZNW-003":  ["ESF-D-BUILD-ENV"],                  # WAF
+        "AZNW-004":  ["ESF-D-BUILD-ENV"],                  # deny-all
+        "AZNW-005":  ["ESF-D-BUILD-ENV"],                  # public IP VM
+        "AZAPP-001": ["ESF-S-TRUSTED-REG"],                # HTTPS
+        "AZAPP-002": ["ESF-S-TRUSTED-REG"],                # TLS
+        "AZAPP-003": ["ESF-D-TOKEN-HYGIENE"],              # managed identity
+        "AZAPP-004": ["ESF-D-BUILD-ENV"],                  # remote debug
+        "AZAPP-005": ["ESF-D-BUILD-ENV"],                  # FTP
+        "AZSQL-001": ["ESF-C-ARTIFACT-AUTHZ"],             # TDE CMK
+        "AZSQL-002": ["ESF-C-AUDIT"],                      # auditing
+        "AZSQL-003": ["ESF-D-BUILD-ENV"],                  # public access
+        "AZSQL-004": ["ESF-C-LEAST-PRIV"],                 # AAD admin
+        "AZSQL-005": ["ESF-S-VULN-MGMT"],                  # threat detect
+        "AZVM-001":  ["ESF-C-ARTIFACT-AUTHZ"],             # disk encrypt
+        "AZVM-002":  ["ESF-D-BUILD-ENV"],                  # public IP
+        "AZVM-003":  ["ESF-D-BUILD-ENV"],                  # JIT
+        "AZVM-004":  ["ESF-S-VULN-MGMT"],                  # OS patch
+        "AZVM-005":  ["ESF-D-TOKEN-HYGIENE"],              # managed identity
+        # ── GCP phase-2 ──────────────────────────────────────────────
+        "GCIAM-004": ["ESF-C-LEAST-PRIV"],                 # default SA
+        "GCIAM-005": ["ESF-C-LEAST-PRIV"],                 # domain restrict
+        "GCIAM-006": ["ESF-D-TOKEN-HYGIENE"],              # SA key age
+        "GCS-004":   ["ESF-C-ARTIFACT-AUTHZ"],             # CMEK
+        "GCS-005":   ["ESF-C-AUDIT"],                      # access logging
+        "GCLOG-004": ["ESF-C-AUDIT"],                      # VPC flow logs
+        "GCLOG-005": ["ESF-C-AUDIT"],                      # firewall logging
+        "GCLOG-006": ["ESF-C-AUDIT"],                      # data access
+        "GCLOG-007": ["ESF-C-AUDIT"],                      # metric filter IAM
+        "GCLOG-008": ["ESF-C-AUDIT"],                      # metric filter firewall
+        "GCLOG-009": ["ESF-C-AUDIT"],                      # metric filter route
+        "GCLOG-010": ["ESF-C-AUDIT"],                      # metric filter SQL
+        "GCLOG-011": ["ESF-C-AUDIT"],                      # metric filter custom role
+        "GCNET-001": ["ESF-D-BUILD-ENV"],                  # default network
+        "GCNET-002": ["ESF-D-BUILD-ENV"],                  # deny-all
+        "GCNET-003": ["ESF-D-BUILD-ENV"],                  # SSH/RDP (CRITICAL)
+        "GCNET-004": ["ESF-D-BUILD-ENV"],                  # private access
+        "GCNET-005": ["ESF-D-BUILD-ENV"],                  # Cloud NAT
+        "GCCE-001":  ["ESF-D-BUILD-ENV"],                  # shielded VM
+        "GCCE-002":  ["ESF-D-TOKEN-HYGIENE"],              # OS Login
+        "GCCE-003":  ["ESF-D-BUILD-ENV"],                  # serial port
+        "GCCE-004":  ["ESF-D-BUILD-ENV"],                  # public IP
+        "GCCE-005":  ["ESF-D-BUILD-ENV"],                  # project SSH keys
+        "GCSQL-001": ["ESF-D-BUILD-ENV"],                  # public IP
+        "GCSQL-002": ["ESF-C-ROLLBACK"],                   # backups
+        "GCSQL-003": ["ESF-S-TRUSTED-REG"],                # SSL
+        "GCSQL-004": ["ESF-C-LEAST-PRIV"],                 # IAM auth
+        "GCSQL-005": ["ESF-C-ROLLBACK"],                   # PITR
+        "GCRUN-001": ["ESF-D-BUILD-ENV"],                  # unauth
+        "GCRUN-002": ["ESF-C-LEAST-PRIV"],                 # custom SA
+        "GCRUN-003": ["ESF-C-DEPLOY-MON"],                 # min instances
+        "GCRUN-004": ["ESF-D-BUILD-ENV"],                  # VPC connector
+        "GCKMS-004": ["ESF-C-LEAST-PRIV"],                 # keyring IAM
+        "GCKMS-005": ["ESF-C-ARTIFACT-AUTHZ"],             # destroy sched
+        "GCKMS-006": ["ESF-C-ARTIFACT-AUTHZ"],             # imported key
+        # Developer-environment auto-execution
+        "DEV-001":   ["ESF-D-INJECTION"],                  # vscode folderOpen task
+        "DEV-006":   ["ESF-D-INJECTION"],                  # vscode settings exec-path / env injection
+        "DEV-007":   ["ESF-D-INJECTION"],                  # committed MCP config auto-launches a command server
+        "DEV-009":   ["ESF-D-INJECTION"],   # remote MCP config over plaintext HTTP
+        "DEV-010":   ["ESF-D-INJECTION"],   # committed MCP config blanket tool auto-approve
+        "DEV-002":   ["ESF-D-INJECTION"],                  # devcontainer lifecycle
+        "DEV-003":   ["ESF-D-INJECTION"],                  # committed claude hook
+        "DEV-004":   ["ESF-S-VERIFY-DEPS", "ESF-D-INJECTION"],  # remote fetch+exec
+        "DEV-005":   ["ESF-D-INJECTION"],                  # initializeCommand on host
     },
 )

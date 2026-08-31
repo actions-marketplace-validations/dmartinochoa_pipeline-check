@@ -10,7 +10,7 @@ import json
 from typing import Any
 
 from ..base import Finding, Severity
-from .base import CloudFormationBaseCheck, as_str, is_true
+from .base import CloudFormationBaseCheck, as_map, as_str, is_true
 
 
 class ECRChecks(CloudFormationBaseCheck):
@@ -61,6 +61,28 @@ def _ecr002_tag_mutability(properties: dict[str, Any], name: str) -> Finding:
     )
 
 
+def _is_public_principal(principal: Any) -> bool:
+    """Return True when *principal* is an anonymous / wildcard value.
+
+    Handles the three forms that CloudFormation policy documents allow:
+    - bare ``"*"``
+    - ``{"AWS": "*"}`` or ``{"Service": "*"}``  (scalar)
+    - ``{"AWS": ["*", ...]}`` or ``{"Service": ["*", ...]}``  (list)
+    - bare ``["*"]`` (rare but valid)
+    """
+    if principal == "*":
+        return True
+    if isinstance(principal, list):
+        return "*" in principal
+    if isinstance(principal, dict):
+        for v in principal.values():
+            if v == "*":
+                return True
+            if isinstance(v, list) and "*" in v:
+                return True
+    return False
+
+
 def _ecr003_public_policy(properties: dict[str, Any], name: str) -> Finding:
     policy_text = properties.get("RepositoryPolicyText")
     if not policy_text:
@@ -92,16 +114,10 @@ def _ecr003_public_policy(properties: dict[str, Any], name: str) -> Finding:
     else:
         policy = {}
     public = [
-        s for s in policy.get("Statement", [])
+        s for s in policy.get("Statement") or []
         if isinstance(s, dict)
         and s.get("Effect") == "Allow"
-        and (
-            s.get("Principal") == "*"
-            or (isinstance(s.get("Principal"), dict) and (
-                s["Principal"].get("AWS") == "*"
-                or s["Principal"].get("Service") == "*"
-            ))
-        )
+        and _is_public_principal(s.get("Principal"))
     ]
     passed = not public
     desc = (
@@ -141,7 +157,7 @@ def _ecr004_lifecycle_policy(properties: dict[str, Any], name: str) -> Finding:
 
 
 def _ecr005_kms_encryption(properties: dict[str, Any], name: str) -> Finding:
-    enc = properties.get("EncryptionConfiguration") or {}
+    enc = as_map(properties.get("EncryptionConfiguration"))
     enc_type = as_str(enc.get("EncryptionType")) or "AES256"
     kms_key = enc.get("KmsKey")
     passed = enc_type == "KMS" and bool(kms_key)

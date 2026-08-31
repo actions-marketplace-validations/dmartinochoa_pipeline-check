@@ -23,6 +23,9 @@ from collections.abc import Iterable
 from typing import Any
 
 from .._iam_policy import (
+    _ADMIN_POLICY_SUFFIX,
+)
+from .._iam_policy import (
     ADMIN_POLICY_ARN as _ADMIN_POLICY_ARN,
 )
 from .._iam_policy import (
@@ -33,6 +36,9 @@ from .._iam_policy import (
 )
 from .._iam_policy import (
     iter_allow as _iter_allow_statements,
+)
+from .._iam_policy import (
+    iter_statements as _iter_statements,
 )
 from .._iam_policy import (
     parse_doc as _parse,
@@ -49,11 +55,17 @@ from .base import TerraformBaseCheck, TerraformResource
 
 def _role_is_cicd(values: dict[str, Any]) -> bool:
     doc = _parse(values.get("assume_role_policy"))
-    for stmt in doc.get("Statement", []):
-        principal = stmt.get("Principal", {}) or {}
+    for stmt in _iter_statements(doc):
+        principal = stmt.get("Principal")
+        if not isinstance(principal, dict):
+            # A string ``Principal: "*"`` (public trust) or a list can't
+            # name a CI/CD service principal, so skip instead of crashing.
+            continue
         services = principal.get("Service", [])
         if isinstance(services, str):
             services = [services]
+        if not isinstance(services, list):
+            continue
         if any(s in _CICD_SERVICE_PRINCIPALS for s in services):
             return True
     return False
@@ -127,7 +139,14 @@ class IAMChecks(TerraformBaseCheck):
 
 
 def _iam001_admin_access(arns: Iterable[str], role_name: str) -> Finding:
-    has_admin = _ADMIN_POLICY_ARN in arns
+    # Match the standard ``aws`` partition ARN and the GovCloud / China
+    # partition forms (``arn:aws-us-gov:...`` / ``arn:aws-cn:...``) by
+    # suffix, mirroring the AWS-runtime rule.
+    arn_list = list(arns)
+    has_admin = _ADMIN_POLICY_ARN in arn_list or any(
+        isinstance(a, str) and a.endswith(_ADMIN_POLICY_SUFFIX)
+        for a in arn_list
+    )
     desc = (
         f"Role '{role_name}' has the AWS-managed AdministratorAccess policy "
         f"attached, granting unrestricted access to all AWS services and "

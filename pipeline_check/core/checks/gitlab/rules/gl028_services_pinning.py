@@ -36,6 +36,26 @@ RULE = Rule(
         "extraction and evaluated with the same floating-tag regex "
         "GL-001 uses for ``image:``."
     ),
+    exploit_example=(
+        "# Vulnerable: ``services:`` references mutable image\n"
+        "# tags. A publisher repoint (or namespace takeover) on\n"
+        "# the services image swaps the code that runs alongside\n"
+        "# every job using the service.\n"
+        "integration:\n"
+        "  image: app@sha256:abc123...\n"
+        "  services:\n"
+        "    - postgres:15\n"
+        "    - redis:7\n"
+        "  script: [pytest]\n"
+        "\n"
+        "# Safe: pin every services image to its digest.\n"
+        "integration:\n"
+        "  image: app@sha256:abc123...\n"
+        "  services:\n"
+        "    - postgres@sha256:def456...   # postgres:15.4\n"
+        "    - redis@sha256:fed987...      # redis:7.2.4\n"
+        "  script: [pytest]"
+    ),
 )
 
 
@@ -70,6 +90,10 @@ def check(path: str, doc: dict[str, Any]) -> Finding:
         tag = ref.rsplit(":", 1)[1]
         if tag == "latest" or not VERSION_TAG_RE.search(ref):
             unpinned.append(f"{where}: {ref}")
+        elif tag.isdigit():
+            # A digit-only tag (``:16``) is a rolling major, not a pin;
+            # the next major release silently moves it.
+            unpinned.append(f"{where}: {ref} (bare-major tag)")
 
     for ref in _service_refs(doc.get("services")):
         _inspect(ref, "<top-level>")

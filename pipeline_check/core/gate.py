@@ -46,24 +46,59 @@ import sys
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import yaml
 
 from ._yaml_strict import DupKeyLoader as _DupKeyIgnoreLoader
 from .chains import Chain
 from .checks.base import Finding, Severity, severity_rank
+from .inline_ignore import InlineIgnoreIndex
 from .scorer import ScoreResult
 
 # Grade ordering. A is best, D is worst. Kept inline rather than imported
 # from the scorer so this module has no upward coupling.
 _GRADES = ("A", "B", "C", "D")
 
-#: Forewarning window for soon-to-expire suppressions. An ignore rule
-#: with ``expires`` within this many days of today shows up under
+#: Default forewarning window for soon-to-expire suppressions. An ignore
+#: rule with ``expires`` within this many days of today shows up under
 #: :attr:`GateResult.expiring_soon` so the operator schedules a revisit
 #: before the gate flips. Two-week default chosen so a Friday afternoon
-#: scan still gives the team a sprint's notice.
+#: scan still gives the team a sprint's notice. Tunable per-run via
+#: ``--warn-expiring-suppressions`` (see :func:`parse_expiry_window`).
 EXPIRY_WARNING_DAYS = 14
+
+#: Words that disable the expiry forewarning entirely when passed to
+#: ``--warn-expiring-suppressions`` (alongside a bare ``0`` / ``0d``).
+_EXPIRY_DISABLE_WORDS = frozenset({"off", "none", "never", "no"})
+
+
+def parse_expiry_window(raw: str) -> int | None:
+    """Parse a ``--warn-expiring-suppressions`` value into a day count.
+
+    Accepts a bare integer (``"7"``) or a day-suffixed form (``"7d"``);
+    ``"0"`` / ``"0d"`` and the words ``off`` / ``none`` / ``never`` / ``no``
+    disable the forewarning and return ``None``. Raises ``ValueError`` on a
+    negative or non-numeric value so the CLI can surface a clean error.
+    """
+    s = raw.strip().lower()
+    if s in _EXPIRY_DISABLE_WORDS:
+        return None
+    if s.endswith("d"):
+        s = s[:-1]
+    try:
+        days = int(s)
+    except ValueError:
+        raise ValueError(
+            f"expiry window must be an integer number of days "
+            f"(e.g. '7' or '7d'), or one of "
+            f"{sorted(_EXPIRY_DISABLE_WORDS)} to disable; got {raw!r}"
+        ) from None
+    if days < 0:
+        raise ValueError(
+            f"expiry window cannot be negative; got {raw!r}"
+        )
+    return None if days == 0 else days
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,6 +151,10 @@ class GateConfig:
     #: at the CLI layer; if both are set here, file wins.
     baseline_from_git: tuple[str, str] | None = None  # (ref, path)
     ignore_rules: list[IgnoreRule] = field(default_factory=list)
+    #: Inline ignore index built from ``# pipeline-check: ignore[...]``
+    #: comments in the scanned source files. ``None`` means inline
+    #: ignores are disabled (``--no-inline-ignore``).
+    inline_ignores: InlineIgnoreIndex | None = None
     #: Specific attack-chain IDs that should fail the gate when matched.
     #: Use ``{"AC-001", "AC-007"}`` to gate only on chains the team has
     #: explicitly opted in to.
@@ -123,6 +162,26 @@ class GateConfig:
     #: When True, fail the gate if *any* attack chain matched. Useful as
     #: a blanket "no correlated attack paths" guard for high-trust repos.
     fail_on_any_chain: bool = False
+    #: When True, fail the gate if any file the scan tried to read could
+    #: not be parsed (the ``parse_error_count`` passed to
+    #: :func:`evaluate_gate`). Additive: it does NOT disable the default
+    #: ``--fail-on CRITICAL`` floor, so it layers a "the scan must have
+    #: read everything" requirement on top. Set by ``--fail-on-parse-error``.
+    fail_on_parse_error: bool = False
+    #: Forewarning window (days) for soon-to-expire ignore rules. An
+    #: ignore rule expiring within this many days is reported under
+    #: :attr:`GateResult.expiring_soon`. ``None`` disables the forewarning
+    #: (already-expired rules are still reported via ``expired_rules``).
+    #: Defaults to :data:`EXPIRY_WARNING_DAYS`; set by
+    #: ``--warn-expiring-suppressions``.
+    expiry_warning_days: int | None = EXPIRY_WARNING_DAYS
+    #: Parsed OpenVEX statements from ``--vex``. When set, an OSV advisory
+    #: finding whose ``(vulnerability, product)`` a maintainer marked
+    #: ``not_affected`` / ``fixed`` is partitioned out of the gated set
+    #: (still reported), the same baseline-style handling ``baseline_path``
+    #: gets. ``None`` means no VEX document was supplied. Typed loosely to
+    #: avoid a core import cycle; it is a ``core.openvex.VexIndex``.
+    vex_index: Any = None
 
     def any_explicit_gate(self) -> bool:
         """True when at least one gate condition is explicitly configured.
@@ -154,6 +213,11 @@ class GateResult:
     suppressed: list[Finding]
     #: Failing findings already present in the baseline.
     baseline_matched: list[Finding]
+    #: Advisory findings suppressed by an OpenVEX document (``--vex``): a
+    #: maintainer marked the ``(vulnerability, product)`` ``not_affected``
+    #: or ``fixed``. Excluded from the gated set like ``baseline_matched``,
+    #: still reported. Empty when no VEX document was supplied.
+    vex_suppressed: list[Finding] = field(default_factory=list)
     #: Ignore rules whose ``expires`` date has passed. Reported to the
     #: user so stale suppressions surface instead of rotting silently.
     expired_rules: list[IgnoreRule] = field(default_factory=list)
@@ -214,7 +278,15 @@ def load_ignore_file(path: str | Path) -> list[IgnoreRule]:
 
 def _load_ignore_flat(p: Path) -> list[IgnoreRule]:
     rules: list[IgnoreRule] = []
-    for raw in p.read_text(encoding="utf-8").splitlines():
+    try:
+        text = p.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        print(
+            f"[ignore-file] could not read {p}: {exc}. No rules loaded.",
+            file=sys.stderr,
+        )
+        return []
+    for raw in text.splitlines():
         line = raw.split("#", 1)[0].strip()
         if not line:
             continue
@@ -239,7 +311,7 @@ def _load_ignore_flat(p: Path) -> list[IgnoreRule]:
 def _load_ignore_yaml(p: Path) -> list[IgnoreRule]:
     try:
         doc = yaml.load(p.read_text(encoding="utf-8"), Loader=_DupKeyIgnoreLoader)
-    except yaml.YAMLError as exc:
+    except (yaml.YAMLError, RecursionError, MemoryError) as exc:
         # Surface the parse error, a typo here silently removes every
         # suppression and the user has no way to tell without diffing
         # findings against a prior run.
@@ -248,7 +320,7 @@ def _load_ignore_yaml(p: Path) -> list[IgnoreRule]:
             file=sys.stderr,
         )
         return []
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         print(
             f"[ignore-file] could not read {p}: {exc}. No rules loaded.",
             file=sys.stderr,
@@ -308,7 +380,11 @@ def load_baseline(path: str | Path) -> set[tuple[str, str]]:
         return set()
     try:
         doc = json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, RecursionError, MemoryError):
+        # A non-UTF-8 baseline raises ``UnicodeDecodeError`` (a
+        # ``ValueError``, not an ``OSError``); without it this loader
+        # crashes CI despite the docstring's "empty set rather than
+        # raising" promise. Mirrors the ignore-file loaders above.
         return set()
     return _baseline_from_doc(doc)
 
@@ -327,7 +403,7 @@ def load_baseline_from_git(ref: str, path: str, cwd: str | Path = ".") -> set[tu
         return set()
     try:
         doc = json.loads(content)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, RecursionError, MemoryError):
         return set()
     return _baseline_from_doc(doc)
 
@@ -369,7 +445,12 @@ def _norm_resource(s: str) -> str:
     return s.replace("\\", "/")
 
 
-def _is_ignored(f: Finding, rules: Iterable[IgnoreRule], today: _dt.date) -> bool:
+def _is_ignored(
+    f: Finding,
+    rules: Iterable[IgnoreRule],
+    today: _dt.date,
+    inline_ignores: InlineIgnoreIndex | None = None,
+) -> bool:
     norm_resource = _norm_resource(f.resource)
     for r in rules:
         if r.is_expired(today):
@@ -378,6 +459,10 @@ def _is_ignored(f: Finding, rules: Iterable[IgnoreRule], today: _dt.date) -> boo
             continue
         if r.resource is None or _norm_resource(r.resource) == norm_resource:
             return True
+    if inline_ignores and inline_ignores.matches(
+        f.check_id, f.resource, f.locations,
+    ):
+        return True
     return False
 
 
@@ -386,6 +471,7 @@ def evaluate_gate(
     score_result: ScoreResult,
     config: GateConfig,
     chains: list[Chain] | None = None,
+    parse_error_count: int = 0,
 ) -> GateResult:
     """Apply ``config`` to the scan's findings + score and decide pass/fail.
 
@@ -398,8 +484,28 @@ def evaluate_gate(
     to the gate result. Chains never apply baseline/ignore filtering;
     the rationale is that a correlated attack path is intrinsically a
     new finding even when the constituent legs were baselined.
+
+    *parse_error_count* is the number of files the scan could not parse
+    (from ``cli._scan_status``). When ``config.fail_on_parse_error`` is
+    set and the count is non-zero, the gate fails: a security gate should
+    be able to refuse a scan that silently skipped part of its input.
     """
     failing = [f for f in findings if not f.passed]
+
+    # Filter: OpenVEX (``--vex``). An OSV advisory finding a maintainer
+    # marked ``not_affected`` / ``fixed`` is partitioned out before the
+    # baseline / ignore passes, so it never reaches the gated set. Only
+    # advisory findings carry ``vulnerabilities``, so this can't touch a
+    # misconfiguration finding.
+    vex_suppressed: list[Finding] = []
+    if config.vex_index:
+        after_vex: list[Finding] = []
+        for f in failing:
+            if config.vex_index.match(f) is not None:
+                vex_suppressed.append(f)
+            else:
+                after_vex.append(f)
+        failing = after_vex
 
     # Filter: baseline, file wins over git-ref when both set.
     if config.baseline_path:
@@ -409,10 +515,14 @@ def evaluate_gate(
         baseline_pairs = load_baseline_from_git(ref, path)
     else:
         baseline_pairs = set()
+    # Normalize resource path separators so a baseline written on one OS
+    # (``.github\workflows\x.yml``) still suppresses the same finding on
+    # another (``.github/workflows/x.yml``).
+    baseline_pairs = {(cid, _norm_resource(res)) for cid, res in baseline_pairs}
     baseline_matched: list[Finding] = []
     after_baseline: list[Finding] = []
     for f in failing:
-        if (f.check_id.upper(), f.resource) in baseline_pairs:
+        if (f.check_id.upper(), _norm_resource(f.resource)) in baseline_pairs:
             baseline_matched.append(f)
         else:
             after_baseline.append(f)
@@ -423,7 +533,7 @@ def evaluate_gate(
     suppressed: list[Finding] = []
     effective: list[Finding] = []
     for f in after_baseline:
-        if _is_ignored(f, config.ignore_rules, today):
+        if _is_ignored(f, config.ignore_rules, today, config.inline_ignores):
             suppressed.append(f)
         else:
             effective.append(f)
@@ -503,14 +613,24 @@ def evaluate_gate(
                     f"--fail-on-chain"
                 )
 
+    if config.fail_on_parse_error:
+        conditions.append("no unparseable files, --fail-on-parse-error")
+        if parse_error_count > 0:
+            reasons.append(
+                f"{parse_error_count} file(s) could not be parsed, "
+                f"--fail-on-parse-error"
+            )
+
     expired_rules = [r for r in config.ignore_rules if r.is_expired(today)]
     expiring_soon: list[IgnoreRule] = []
-    for r in config.ignore_rules:
-        if r.expires is None or r.is_expired(today):
-            continue
-        days = r.days_until_expiry(today)
-        if days is not None and days <= EXPIRY_WARNING_DAYS:
-            expiring_soon.append(r)
+    window = config.expiry_warning_days
+    if window is not None:
+        for r in config.ignore_rules:
+            if r.expires is None or r.is_expired(today):
+                continue
+            days = r.days_until_expiry(today)
+            if days is not None and days <= window:
+                expiring_soon.append(r)
 
     return GateResult(
         passed=not reasons,
@@ -518,6 +638,7 @@ def evaluate_gate(
         effective=effective,
         suppressed=suppressed,
         baseline_matched=baseline_matched,
+        vex_suppressed=vex_suppressed,
         expired_rules=expired_rules,
         expiring_soon=expiring_soon,
         conditions_evaluated=conditions,

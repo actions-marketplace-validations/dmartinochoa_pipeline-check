@@ -1,10 +1,9 @@
 """CC-023. TLS / certificate verification bypass."""
 from __future__ import annotations
 
-from typing import Any
-
 from ..._primitives import tls_bypass
-from ...base import Finding, Severity, blob_lower
+from ..._primitives.blob_rule import yaml_blob_check
+from ...base import Severity
 from ...rule import Rule
 
 RULE = Rule(
@@ -27,20 +26,46 @@ RULE = Rule(
         "`GOINSECURE=`. Disabling TLS verification allows MITM injection "
         "of malicious packages, repositories, or build tools."
     ),
+    exploit_example=(
+        "# Vulnerable: ``npm config set strict-ssl false`` disables\n"
+        "# certificate verification for every subsequent npm call.\n"
+        "# An attacker on the network path MITMs the registry and\n"
+        "# ships substituted tarballs that npm installs without\n"
+        "# any integrity signal.\n"
+        "version: 2.1\n"
+        "jobs:\n"
+        "  install:\n"
+        "    docker:\n"
+        "      - image: cimg/node@sha256:abc123...\n"
+        "    steps:\n"
+        "      - run: |\n"
+        "          npm config set strict-ssl false\n"
+        "          npm install\n"
+        "\n"
+        "# Safe: install the missing CA into the image trust\n"
+        "# store and keep strict-ssl on. Fix the registry's\n"
+        "# certificate rather than silencing the alarm.\n"
+        "version: 2.1\n"
+        "jobs:\n"
+        "  install:\n"
+        "    docker:\n"
+        "      - image: cimg/node@sha256:abc123...\n"
+        "    steps:\n"
+        "      - run: |\n"
+        "          cp /etc/ssl/internal-ca.crt /usr/local/share/ca-certificates/\n"
+        "          sudo update-ca-certificates\n"
+        "          npm install"
+    ),
 )
 
 
-def check(path: str, doc: dict[str, Any]) -> Finding:
-    hits = tls_bypass.scan(blob_lower(doc))
-    passed = not hits
-    desc = (
-        "No TLS verification bypass patterns detected."
-        if passed else
+check = yaml_blob_check(
+    RULE,
+    scanner=tls_bypass.scan,
+    pass_desc="No TLS verification bypass patterns detected.",
+    fail_desc=lambda hits: (
         f"TLS verification bypass detected: "
         f"{', '.join(h.snippet for h in hits[:3])}"
-    )
-    return Finding(
-        check_id=RULE.id, title=RULE.title, severity=RULE.severity,
-        resource=path, description=desc,
-        recommendation=RULE.recommendation, passed=passed,
-    )
+    ),
+    lowercase=False,
+)

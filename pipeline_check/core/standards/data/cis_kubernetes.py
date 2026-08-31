@@ -117,6 +117,7 @@ STANDARD = Standard(
         # ── 5.7 General Policies ─────────────────────────────────
         "K8S-019":  ["5.7.1", "5.7.4"],                          # default namespace = no admin boundary
         "K8S-023":  ["5.7.1", "5.7.3"],                          # PSA enforce missing = no admission boundary
+        "K8S-044":  ["5.7.1", "5.7.3"],                          # admission webhook fail-open / unscoped mutating
         "K8S-031":  ["5.7.1", "5.7.3"],                          # PSA warn missing
         "K8S-025":  ["5.7.1"],                                   # system priority class outside kube-system
         "K8S-030":  ["5.7.1"],                                   # schedules onto control-plane node
@@ -140,6 +141,7 @@ STANDARD = Standard(
         # rationale as Tekton.
         "ARGO-002": ["5.2.2", "5.2.7", "5.7.3"],                 # template privileged / root
         "ARGO-003": ["5.1.5"],                                   # default ServiceAccount
+        "ARGO-016": ["5.1.5"],                                   # cluster-admin / over-privileged ServiceAccount
         "ARGO-004": ["5.2.5", "5.2.12"],                         # hostPath / host namespaces
         "ARGO-006": ["5.1.2", "5.4.1", "5.4.2"],                 # leaked creds in env / param
         "ARGO-013": ["5.1.6"],                                   # SA token automount default

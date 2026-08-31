@@ -1,11 +1,25 @@
 """LMB-003. Lambda function env vars contain secret-like plaintext values."""
 from __future__ import annotations
 
+import re
+
 from ..._patterns import SECRET_NAME_RE, SECRET_VALUE_RE
 from ..._primitives.anchors import iam_role, lambda_fn
 from ...base import Finding, ResourceAnchor, Severity
 from ...rule import Rule
 from .._catalog import ResourceCatalog
+
+# Env-var names ending in these suffixes store a *reference* to a secret
+# (ARN, parameter name, path, etc.) rather than the secret value itself.
+# ``DB_SECRET_ARN``, ``API_KEY_SECRET_ARN``, ``TOKEN_NAME``, ``PASSWORD_PATH``
+# are all the AWS-recommended pattern for Lambda functions that retrieve the
+# real credential at runtime via Secrets Manager / SSM Parameter Store.
+# We skip the name-based heuristic for these; the value-based detector still
+# runs so a genuine plaintext credential stored under such a key will fire.
+_REFERENCE_SUFFIX_RE = re.compile(
+    r"_(?:ARN|NAME|PARAM|PATH|REF)$",
+    re.IGNORECASE,
+)
 
 RULE = Rule(
     id="LMB-003",
@@ -27,6 +41,34 @@ RULE = Rule(
         "events. A secret in a Lambda env var is essentially "
         "exposed to anyone with read access to the account."
     ),
+    exploit_example=(
+        "# Vulnerable: a Lambda function carries credentials in\n"
+        "# its environment variables in plaintext. The values\n"
+        "# are visible to anyone with ``lambda:GetFunction``\n"
+        "# (a wider permission than secrets-manager access),\n"
+        "# logged into CloudTrail, and lifted into\n"
+        "# ``UpdateFunctionConfiguration`` events.\n"
+        "import boto3\n"
+        "lambdacli = boto3.client('lambda')\n"
+        "lambdacli.update_function_configuration(\n"
+        "    FunctionName='process-payment',\n"
+        "    Environment={'Variables': {\n"
+        "        'DB_PASSWORD': 'hunter2-prod-pw',\n"
+        "        'API_KEY': 'sk_live_abc123def456ghi789',\n"
+        "    }},\n"
+        ")\n"
+        "\n"
+        "# Safe: store credentials in Secrets Manager and fetch\n"
+        "# them at runtime via the Lambda's role. Env carries\n"
+        "# only the secret's name / ARN, not the value.\n"
+        "lambdacli.update_function_configuration(\n"
+        "    FunctionName='process-payment',\n"
+        "    Environment={'Variables': {\n"
+        "        'DB_SECRET_ARN': 'arn:aws:secretsmanager:us-east-1:123:secret:prod/db-AbCdEf',\n"
+        "        'API_KEY_SECRET_ARN': 'arn:aws:secretsmanager:us-east-1:123:secret:prod/api-Ab2Cd3',\n"
+        "    }},\n"
+        ")"
+    ),
 )
 
 
@@ -40,7 +82,7 @@ def check(catalog: ResourceCatalog) -> list[Finding]:
         for k, v in env.items():
             if not isinstance(k, str):
                 continue
-            if SECRET_NAME_RE.search(k):
+            if SECRET_NAME_RE.search(k) and not _REFERENCE_SUFFIX_RE.search(k):
                 suspicious_names.append(k)
             elif isinstance(v, str) and SECRET_VALUE_RE.match(v):
                 suspicious_values.append(k)

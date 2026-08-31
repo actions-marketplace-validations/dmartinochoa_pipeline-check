@@ -37,10 +37,10 @@ RULE = Rule(
         "``$BUILDKITE_COMMIT``). The pattern matches what GHA-036, "
         "GL-032, JF-032, ADO-030, and CC-031 already enforce on the "
         "other CI providers; closes parity for Buildkite.\n\n"
-        "Quote-state aware in the same way BK-003 is. ``\"$BUILDKITE_"
-        "BRANCH\"`` doesn't fire (Buildkite doesn't shell-eval the "
-        "agents map anyway, but the value still substitutes), only "
-        "the unquoted single-token interpolation does."
+        "The ``agents:`` map is scanned regardless of quoting; "
+        "Buildkite substitutes the value either way, so a quoted "
+        "``\"$BUILDKITE_BRANCH\"`` fires the same as the unquoted "
+        "form."
     ),
     known_fp=(
         "Some teams use a static prefix plus a CI-controlled tail "
@@ -49,6 +49,29 @@ RULE = Rule(
         "is not pusher-controllable so it isn't on the tainted "
         "list, but if your team has its own conventions for "
         "trusted Buildkite vars, suppress on the specific step.",
+    ),
+    exploit_example=(
+        "# Vulnerable: ``queue: $BUILDKITE_BRANCH`` lets the pusher\n"
+        "# decide which agent pool runs their step. A PR branch\n"
+        "# named ``production`` routes its build to the production\n"
+        "# queue, which typically has elevated permissions (deploy\n"
+        "# tokens, prod-only secrets) the PR was never meant to\n"
+        "# reach.\n"
+        "steps:\n"
+        "  - label: \":rocket: deploy\"\n"
+        "    command: ./deploy.sh\n"
+        "    agents:\n"
+        "      queue: $BUILDKITE_BRANCH\n"
+        "\n"
+        "# Safe: pin the queue to a static literal. Production\n"
+        "# agents should ALSO enforce the queue tag server-side\n"
+        "# (``buildkite-agent start --tags 'queue=production'``) so\n"
+        "# the rule is one layer of a defense-in-depth posture.\n"
+        "steps:\n"
+        "  - label: \":rocket: deploy\"\n"
+        "    command: ./deploy.sh\n"
+        "    agents:\n"
+        "      queue: production"
     ),
 )
 
@@ -60,11 +83,11 @@ _TAINTED_VARS = (
     "BUILDKITE_BRANCH",
     "BUILDKITE_TAG",
     "BUILDKITE_MESSAGE",
-    "BUILDKITE_BUILD_MESSAGE",
     "BUILDKITE_PULL_REQUEST",
     "BUILDKITE_PULL_REQUEST_BASE_BRANCH",
     "BUILDKITE_PULL_REQUEST_DEFAULT_BRANCH",
     "BUILDKITE_PULL_REQUEST_REPO",
+    "BUILDKITE_PULL_REQUEST_TITLE",
     "BUILDKITE_BUILD_AUTHOR",
     "BUILDKITE_BUILD_AUTHOR_EMAIL",
     "BUILDKITE_COMMIT",

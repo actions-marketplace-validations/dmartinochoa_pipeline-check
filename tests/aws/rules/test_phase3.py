@@ -158,12 +158,34 @@ def test_eb002_specific_target_passes(make_catalog):
     assert eb002_wildcard_target.check(cat) == []
 
 
+def test_eb002_cloudwatch_logs_target_passes(make_catalog):
+    # A CloudWatch Logs target ARN is documented to end in ``:*`` (the
+    # log-stream selector); that trailing wildcard is mandatory, not a
+    # fan-out, so EB-002 must not flag it.
+    client = FakeClient()
+    client.set_paginator("list_rules", [{"Rules": [{"Name": "r"}]}])
+    client._responses["list_targets_by_rule"] = {"Targets": [
+        {"Id": "t",
+         "Arn": "arn:aws:logs:us-east-1:1:log-group:/aws/events/r:*"},
+    ]}
+    cat = make_catalog(events=client)
+    assert eb002_wildcard_target.check(cat) == []
+
+
 # ---------- CW-001 ----------
+
+def _cw001_cb_client():
+    # A minimal CodeBuild client that reports one project so the
+    # "no projects → skip" guard in CW-001 does not suppress the result.
+    cb = FakeClient(batch_get_projects={"projects": [{"name": "build"}]})
+    cb.set_paginator("list_projects", [{"projects": ["build"]}])
+    return cb
+
 
 def test_cw001_no_alarm_fails(make_catalog):
     client = MagicMock()
     client.describe_alarms.return_value = {"MetricAlarms": []}
-    cat = make_catalog(cloudwatch=client)
+    cat = make_catalog(cloudwatch=client, codebuild=_cw001_cb_client())
     assert cw001_failed_build_alarm.check(cat)[0].passed is False
 
 
@@ -172,7 +194,7 @@ def test_cw001_has_alarm_passes(make_catalog):
     client.describe_alarms.return_value = {"MetricAlarms": [{
         "Namespace": "AWS/CodeBuild", "MetricName": "FailedBuilds",
     }]}
-    cat = make_catalog(cloudwatch=client)
+    cat = make_catalog(cloudwatch=client, codebuild=_cw001_cb_client())
     assert cw001_failed_build_alarm.check(cat)[0].passed is True
 
 

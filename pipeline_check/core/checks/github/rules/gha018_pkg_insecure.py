@@ -1,9 +1,8 @@
 """GHA-018, package install from insecure source."""
 from __future__ import annotations
 
-from typing import Any
-
-from ...base import PKG_INSECURE_RE, Finding, Severity, blob_lower
+from ..._primitives.blob_rule import yaml_blob_check
+from ...base import PKG_INSECURE_RE, Severity
 from ...rule import Rule
 
 RULE = Rule(
@@ -32,20 +31,50 @@ RULE = Rule(
         "deliberately doesn't fire (the source is HTTPS), GHA-016 "
         "does (the Codecov-2021 lesson)."
     ),
+    exploit_example=(
+        "# Vulnerable: pip resolves and downloads packages over\n"
+        "# plaintext HTTP, so any network attacker between the\n"
+        "# runner and the registry (compromised proxy, malicious\n"
+        "# VPN exit, BGP hijack on an internal mirror) can swap a\n"
+        "# wheel for a malicious one whose ``setup.py`` runs at\n"
+        "# install time. ``--trusted-host`` then silences the very\n"
+        "# error that would have caught the swap.\n"
+        "jobs:\n"
+        "  build:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - uses: actions/checkout@<sha>\n"
+        "      - run: |\n"
+        "          pip install \\\n"
+        "            --index-url http://internal-pypi.example.com/simple \\\n"
+        "            --trusted-host internal-pypi.example.com \\\n"
+        "            -r requirements.txt\n"
+        "\n"
+        "# Safe: HTTPS with the registry's certificate validated.\n"
+        "# If the internal index uses a private CA, install the CA\n"
+        "# into the runner trust store, never ``--trusted-host`` or\n"
+        "# ``--no-verify``.\n"
+        "jobs:\n"
+        "  build:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - uses: actions/checkout@<sha>\n"
+        "      - run: |\n"
+        "          sudo cp ./ci/internal-ca.crt /usr/local/share/ca-certificates/\n"
+        "          sudo update-ca-certificates\n"
+        "      - run: |\n"
+        "          pip install \\\n"
+        "            --index-url https://internal-pypi.example.com/simple \\\n"
+        "            --require-hashes -r requirements.txt"
+    ),
 )
 
 
-def check(path: str, doc: dict[str, Any]) -> Finding:
-    blob = blob_lower(doc)
-    matches = PKG_INSECURE_RE.findall(blob)
-    passed = not matches
-    desc = (
-        "No insecure package install patterns detected in this workflow."
-        if passed else
+check = yaml_blob_check(
+    RULE,
+    scanner=PKG_INSECURE_RE.findall,
+    pass_desc="No insecure package install patterns detected in this workflow.",
+    fail_desc=lambda matches: (
         f"Insecure package install detected: {', '.join(matches[:3])}"
-    )
-    return Finding(
-        check_id=RULE.id, title=RULE.title, severity=RULE.severity,
-        resource=path, description=desc,
-        recommendation=RULE.recommendation, passed=passed,
-    )
+    ),
+)

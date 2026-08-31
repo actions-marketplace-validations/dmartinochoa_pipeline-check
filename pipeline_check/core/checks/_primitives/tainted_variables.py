@@ -13,7 +13,7 @@ provider differences are entirely in the *vocabulary*:
   GitHub ``${{ env.VAR }}``).
 
 The *algorithm*, "scan script lines, treat double-quoted segments as
-neutralised, treat ``VAR="...$X..."`` assignments as safe, otherwise
+neutralized, treat ``VAR="...$X..."`` assignments as safe, otherwise
 flag", is identical. This module owns that algorithm so every
 provider rule collapses to a thin adapter passing in the right regex.
 
@@ -33,11 +33,18 @@ from collections.abc import Callable, Iterable
 
 from ..base import is_quoted_assignment
 
-#: Strip every double-quoted segment from a line before re-checking
-#: for a variable reference. Bash double-quotes prevent re-evaluation,
-#: so ``cmd "$X"`` is safe even if ``$X`` carries shell
-#: metacharacters, the value is treated as a single literal argument.
-_DQ_SEGMENT_RE = re.compile(r'"[^"]*"')
+#: Strip every quoted segment from a line before re-checking for a
+#: variable reference. Bash double-quotes prevent re-evaluation, so
+#: ``cmd "$X"`` is safe even if ``$X`` carries shell metacharacters,
+#: the value is treated as a single literal argument. Single-quotes are
+#: stronger still, they suppress expansion entirely, so ``echo '$X'``
+#: is a literal and never references ``$X`` at all. Both must be removed
+#: before a surviving (unquoted) reference can be called unsafe;
+#: stripping only double-quotes flagged the recommended single-quote
+#: idiom as an injection. The double-quote alternative is tried first
+#: so a literal ``'`` inside a double-quoted span (``"it's $X"``) is
+#: consumed as part of that span, not treated as a single-quote opener.
+_QUOTED_SEGMENT_RE = re.compile(r"\"[^\"]*\"|'[^']*'")
 
 
 #: Compile-cache for per-name reference patterns. ``has_unsafe_reference``
@@ -53,17 +60,24 @@ def _compile_cached(pattern: str) -> re.Pattern[str]:
 
 
 def has_direct_taint(
-    lines: Iterable[str], untrusted_re: re.Pattern[str]
+    lines: Iterable[str],
+    untrusted_re: re.Pattern[str],
+    *,
+    paren_is_macro: bool = False,
 ) -> bool:
     """Return True if any *line* directly interpolates an untrusted-
     context expression and is not a defensively-quoted assignment.
 
     ``untrusted_re`` is the provider-specific catalog of attacker-
     controllable shapes. ``is_quoted_assignment`` is the cross-provider
-    safe-idiom recogniser owned by ``checks.base``.
+    safe-idiom recogniser owned by ``checks.base``. ``paren_is_macro``
+    is forwarded to it (set by Azure, where ``$(Name)`` is a pre-shell
+    macro substitution, not a runtime command substitution).
     """
     for line in lines:
-        if untrusted_re.search(line) and not is_quoted_assignment(line):
+        if untrusted_re.search(line) and not is_quoted_assignment(
+            line, paren_is_macro=paren_is_macro
+        ):
             return True
     return False
 
@@ -73,6 +87,7 @@ def has_unsafe_reference(
     names: set[str],
     *,
     ref_pattern: Callable[[str], str],
+    paren_is_macro: bool = False,
 ) -> bool:
     """Return True if any *line* references one of *names* unquoted.
 
@@ -93,9 +108,9 @@ def has_unsafe_reference(
         for line in lines:
             if not rx.search(line):
                 continue
-            if is_quoted_assignment(line):
+            if is_quoted_assignment(line, paren_is_macro=paren_is_macro):
                 continue
-            stripped = _DQ_SEGMENT_RE.sub("", line)
+            stripped = _QUOTED_SEGMENT_RE.sub("", line)
             if rx.search(stripped):
                 return True
     return False

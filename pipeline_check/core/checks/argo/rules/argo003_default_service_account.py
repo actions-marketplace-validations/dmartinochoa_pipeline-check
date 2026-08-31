@@ -4,9 +4,9 @@ from __future__ import annotations
 from typing import Any
 
 from ..._primitives.anchors import k8s_sa
-from ...base import Finding, ResourceAnchor, Severity
+from ...base import Finding, Location, ResourceAnchor, Severity
 from ...rule import Rule
-from ..base import ArgoContext, workflow_spec
+from ..base import ArgoContext, doc_location, workflow_spec
 
 RULE = Rule(
     id="ARGO-003",
@@ -32,6 +32,38 @@ RULE = Rule(
         "them. An explicit ``serviceAccountName: default`` is "
         "treated the same as omission."
     ),
+    exploit_example=(
+        "# Vulnerable: a Workflow with no serviceAccountName, so it\n"
+        "# runs as the namespace `default` ServiceAccount.\n"
+        "apiVersion: argoproj.io/v1alpha1\n"
+        "kind: Workflow\n"
+        "metadata: { name: ci }\n"
+        "spec:\n"
+        "  entrypoint: build\n"
+        "  templates:\n"
+        "    - name: build\n"
+        "      container:\n"
+        "        image: ci-tools@sha256:abc123...\n"
+        "        command: [./build.sh]\n"
+        "\n"
+        "# Attack: with no serviceAccountName the workflow pod mounts\n"
+        "# the `default` SA's token. `default` accretes RoleBindings\n"
+        "# over a cluster's life (an operator quickstart, a Helm chart\n"
+        "# that bound it cluster-wide). A compromised build step reads\n"
+        "# the mounted token and calls the Kubernetes API with whatever\n"
+        "# `default` was ever granted, far more than a CI workflow\n"
+        "# should hold.\n"
+        "\n"
+        "# Safe: bind a dedicated least-privilege ServiceAccount.\n"
+        "spec:\n"
+        "  entrypoint: build\n"
+        "  serviceAccountName: ci-workflow-sa\n"
+        "  templates:\n"
+        "    - name: build\n"
+        "      container:\n"
+        "        image: ci-tools@sha256:abc123...\n"
+        "        command: [./build.sh]"
+    ),
 )
 
 
@@ -46,6 +78,7 @@ def _missing_or_default(spec: dict[str, Any]) -> bool:
 
 def check(ctx: ArgoContext) -> Finding:
     offenders: list[str] = []
+    locations: list[Location] = []
     examined = 0
     # ResourceAnchor phase 1: emit one k8s_sa anchor per
     # ``(namespace, default)`` pair the offending workflow runs as.
@@ -62,6 +95,7 @@ def check(ctx: ArgoContext) -> Finding:
         spec = workflow_spec(doc)
         if _missing_or_default(spec):
             offenders.append(f"{doc.kind}/{doc.name}")
+            locations.append(doc_location(doc))
             built = k8s_sa(doc.namespace or None, "default")
             if built is not None:
                 anchor_set[built.identity] = built
@@ -85,5 +119,6 @@ def check(ctx: ArgoContext) -> Finding:
         check_id=RULE.id, title=RULE.title, severity=RULE.severity,
         resource="argo", description=desc,
         recommendation=RULE.recommendation, passed=passed,
+        locations=locations,
         resource_anchors=tuple(anchor_set.values()),
     )

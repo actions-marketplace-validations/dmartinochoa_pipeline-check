@@ -5,6 +5,9 @@ include:
   - remote: 'https://gitlab.example.com/snippets/42/raw'
   # GL-011 — local include resolved from the MR branch.
   - local: 'ci/local-helpers.yml'
+  # GL-042 — CI/CD component pinned to a mutable version (~latest). The
+  # component project can re-point it and ship arbitrary pipeline code.
+  - component: 'gitlab.example.com/ci/templates/build@~latest'
 
 image: python:latest
 
@@ -19,11 +22,24 @@ before_script:
 # GL-028 — top-level services image not pinned.
 services:
   - postgres:latest
+  # GL-039 — Docker-in-Docker daemon; TLS disabled via DOCKER_TLS_CERTDIR below.
+  - name: docker:27-dind
+    command: ["--host=tcp://0.0.0.0:2375"]
 
 variables:
-  AWS_ACCESS_KEY_ID: AKIAIOSFODNN7EXAMPLE
+  AWS_ACCESS_KEY_ID: AKIAZ3MHALF2TESTHIJK
   DATABASE_PASSWORD: hunter2
+  # GL-043 — a GitLab-managed security scanner switched off pipeline-wide.
+  SECRET_DETECTION_DISABLED: "true"
   DEPLOY_TARGET: production
+  # GL-037 — Go module checksum / sum-db verification disabled.
+  GOSUMDB: "off"
+  GOFLAGS: -insecure
+  # GL-038 — debug trace dumps every variable (incl. masked secrets) to the log.
+  CI_DEBUG_TRACE: "true"
+  # GL-039 — empty cert dir reverts the dind daemon to the plaintext 2375 socket.
+  DOCKER_TLS_CERTDIR: ""
+  DOCKER_HOST: "tcp://docker:2375"
 
 # GL-011 — opt the pipeline into MR triggering so include: local fires.
 workflow:
@@ -48,6 +64,21 @@ unit-tests:
   script:
     - echo "Running tests for MR ${CI_MERGE_REQUEST_TITLE}"
     - npm test
+    # GL-045 — model loaded with trust_remote_code (executes the model
+    # repo's own Python at load time = code execution in CI).
+    - python -c "from transformers import AutoModel; AutoModel.from_pretrained('acme/m', trust_remote_code=True)"
+    # GL-046 — model pulled from a registry by a mutable ref (no pinned
+    # revision), so the registry can serve swapped weights next pipeline.
+    - python -c "from huggingface_hub import snapshot_download; snapshot_download('vendor/llm')"
+    # GL-047 — unsafe deserialization of a fetched artifact: weights_only=False
+    # unpickles arbitrary Python embedded in the downloaded checkpoint.
+    - python -c "import torch; torch.load('model.pt', weights_only=False)"
+    # GL-048 — untrusted MR context reaches an agentic CLI (prompt injection):
+    # the model ingests the MR title as instructions and then acts.
+    - claude -p "Triage this failure for MR $CI_MERGE_REQUEST_TITLE"
+    # GL-049 — the agentic CLI's edits land with no human review: pushed
+    # straight to a branch in the same job.
+    - git push origin HEAD:main
 
 # GL-010 — multi-project artifact ingestion without verification.
 ingest-upstream:
@@ -58,6 +89,8 @@ ingest-upstream:
       ref: main
       artifacts: true
   script:
+    # GL-040 — CI_JOB_TOKEN used to clone a DIFFERENT project.
+    - git clone https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.example.com/platform/internal-libs.git
     - ./package/install.sh
 
 deploy-prod:
@@ -73,6 +106,20 @@ deploy-prod:
   # defaults to allow_failure:true, so the pipeline reports success
   # even when an operator never clicks the button.
   when: manual
+  script:
+    # GL-041 — IaC apply reachable from the MR-triggered pipeline. The
+    # workflow: rules above admit merge_request_event and this job
+    # declares no rules:/only:, so it inherits MR reachability; applying
+    # the MR branch's Terraform runs its code with the deploy creds.
+    - terraform apply -auto-approve
+    - ./scripts/deploy.sh
+
+# GL-044 — a job bound to the production environment runs automatically
+# on the MR pipeline (inherits the merge_request_event workflow: rule,
+# no when: manual), so every MR ships its unreviewed branch to prod.
+deploy-prod-auto:
+  stage: deploy
+  environment: production
   script:
     - ./scripts/deploy.sh
 
@@ -162,3 +209,13 @@ deploy-from-extends:
   extends: .tainted-base
   script:
     - echo Deploying branch $BRANCH
+    - echo "Token is $DEPLOY_TOKEN"
+
+# GL-050 — npm publish authenticated by a long-lived NPM_TOKEN instead of
+# OIDC trusted publishing. The static token is worm-propagation fuel: any
+# postinstall in a build dependency can read it and re-publish packages.
+publish-npm:
+  stage: deploy
+  script:
+    - echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
+    - npm publish

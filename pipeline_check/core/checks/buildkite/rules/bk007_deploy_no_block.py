@@ -25,10 +25,11 @@ RULE = Rule(
     ),
     docs_note=(
         "A step is treated as a deploy when its label, key, or any "
-        "command line contains a deploy keyword (``deploy``, ``ship``, "
-        "``release``, ``promote``, ``apply``, ``rollout``, ``terraform "
-        "apply``, ``kubectl apply``, ``helm upgrade``, ``aws ecs "
-        "update-service``). The check passes when at least one "
+        "command line contains a deploy keyword (``deploy``, ``ship-"
+        "it``, ``release``, ``promote``, ``rollout``, ``terraform "
+        "apply``, ``kubectl apply``, ``helm upgrade``, ``helm "
+        "install``, ``aws ecs update-service``). The check passes "
+        "when at least one "
         "preceding step in the same pipeline file is a ``block:`` or "
         "``input:`` flow-control step."
     ),
@@ -37,6 +38,24 @@ RULE = Rule(
         "pipeline rather than the local file, the local pipeline "
         "looks ungated even though the actual deploy is gated "
         "downstream. Add a no-op ``block:`` to silence.",
+    ),
+    exploit_example=(
+        "# Vulnerable: a deploy step with no preceding manual block.\n"
+        "steps:\n"
+        "  - label: \":rocket: Deploy prod\"\n"
+        "    command: \"aws s3 sync ./dist s3://prod-site\"\n"
+        "\n"
+        "# Attack: there's no `block:` ahead of the deploy, so every\n"
+        "# build that reaches this step ships to production\n"
+        "# automatically. An unreviewed merge (or a compromised branch)\n"
+        "# deploys with no human in the loop.\n"
+        "\n"
+        "# Safe: gate the deploy behind a manual block.\n"
+        "steps:\n"
+        "  - block: \"Deploy to prod?\"\n"
+        "    branches: \"main\"\n"
+        "  - label: \":rocket: Deploy prod\"\n"
+        "    command: \"aws s3 sync ./dist s3://prod-site\""
     ),
 )
 

@@ -1,11 +1,12 @@
 """TKN-006, ``Pipeline`` / ``PipelineRun`` / ``TaskRun`` lacks a timeout."""
 from __future__ import annotations
 
+import re
 from typing import Any
 
-from ...base import Finding, Severity
+from ...base import Finding, Location, Severity
 from ...rule import Rule
-from ..base import TektonContext
+from ..base import TektonContext, doc_location
 
 RULE = Rule(
     id="TKN-006",
@@ -35,13 +36,22 @@ def _is_meaningful_timeout(value: Any) -> bool:
 
     YAML ``timeout: ""`` / ``timeout: null`` / ``timeouts: { pipeline: "" }``
     parse as the key being present but the value being effectively
-    unset; the controller falls back to its default. Treat those as
-    "no timeout".
+    unset; the controller falls back to its default. A ``"0"`` / ``"0s"``
+    duration is Tekton's explicit "no timeout" (runs forever), which is
+    exactly the DoS condition the rule targets, so it's not meaningful
+    either. Treat all of those as "no timeout".
     """
     if value is None:
         return False
     if isinstance(value, str):
-        return value.strip() != ""
+        v = value.strip()
+        if not v:
+            return False
+        # A meaningful duration has a non-zero component; ``0``/``0h0m0s``
+        # disables the timeout.
+        return bool(re.search(r"[1-9]", v))
+    if isinstance(value, (int, float)):
+        return value != 0
     return True
 
 
@@ -77,6 +87,7 @@ def _pipeline_has_per_task_timeouts(spec: dict[str, Any]) -> bool:
 
 def check(ctx: TektonContext) -> Finding:
     offenders: list[str] = []
+    locations: list[Location] = []
     examined = 0
     for doc in ctx.docs:
         if doc.kind not in ("PipelineRun", "TaskRun", "Pipeline"):
@@ -91,6 +102,7 @@ def check(ctx: TektonContext) -> Finding:
             ok = _has_run_timeout(spec) or _pipeline_has_per_task_timeouts(spec)
         if not ok:
             offenders.append(f"{doc.kind}/{doc.name}")
+            locations.append(doc_location(doc))
     if examined == 0:
         return Finding(
             check_id=RULE.id, title=RULE.title, severity=RULE.severity,
@@ -111,4 +123,5 @@ def check(ctx: TektonContext) -> Finding:
         check_id=RULE.id, title=RULE.title, severity=RULE.severity,
         resource="tekton", description=desc,
         recommendation=RULE.recommendation, passed=passed,
+        locations=locations,
     )

@@ -77,6 +77,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..base import TaintFlow
 from .base import ArgoDoc, iter_templates, workflow_spec
 
 
@@ -106,6 +107,25 @@ class TaintPath:
         chain.append(f"sink@{self.sink_location}({self.sink_consumer})")
         return " -> ".join(chain)
 
+    def to_flow(self, anchor_prefix: str = "") -> TaintFlow:
+        """Structured ``source_job -> sink_job`` edge for the chain engine.
+
+        ``source.location`` / ``sink_location`` are ``<template>.script``
+        breadcrumbs; the template name is the part before ``.script``.
+        ARGO-002 / ARGO-005 anchor templates as
+        ``<Kind>/<name>:<template>``, so TAINT-007's rule passes the
+        document's ``<Kind>/<name>:`` prefix here to land the edge in the
+        same namespace (and to keep same-named templates in different
+        workflow documents distinct within the shared ``argo`` corpus).
+        """
+        producer = self.source.location.removesuffix(".script")
+        consumer = self.sink_location.removesuffix(".script")
+        return TaintFlow(
+            source_job=f"{anchor_prefix}{producer}",
+            sink_job=f"{anchor_prefix}{consumer}",
+            rendered=self.render(),
+        )
+
 
 # ── Detectors ─────────────────────────────────────────────────────
 
@@ -117,11 +137,13 @@ _INPUTS_PARAM_RE = re.compile(
     r"\{\{\s*inputs\.parameters\.(?P<name>[A-Za-z_][A-Za-z0-9_-]*)\s*\}\}"
 )
 
-# ``{{tasks.<task>.outputs.parameters.<output>}}`` cross-task
-# substitution that forward a template's output parameter into
-# a downstream task's argument list.
+# Cross-step substitution that passes a template's output parameter
+# into a downstream argument list. A ``dag:`` orchestrator references a
+# producer as ``{{tasks.<task>.outputs.parameters.<output>}}``; a
+# ``steps:`` orchestrator uses ``{{steps.<step>...}}``. Both are walked
+# the same way, so accept either prefix.
 _TASKS_OUT_REF_RE = re.compile(
-    r"\{\{\s*tasks\.(?P<task>[A-Za-z_][A-Za-z0-9_-]*)"
+    r"\{\{\s*(?:tasks|steps)\.(?P<task>[A-Za-z_][A-Za-z0-9_-]*)"
     r"\.outputs\.parameters\.(?P<output>[A-Za-z_][A-Za-z0-9_-]*)"
     r"\s*\}\}"
 )

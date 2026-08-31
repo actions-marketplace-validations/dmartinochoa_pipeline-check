@@ -68,7 +68,14 @@ def _parse_generated(value: object) -> datetime | None:
     ``2024-01-02T15:04:05.000Z`` or
     ``2024-01-02T15:04:05+00:00``. We accept both common forms by
     normalizing the trailing ``Z`` to ``+00:00`` before parsing.
+
+    ``yaml.safe_load`` turns an *unquoted* ISO-8601 timestamp (valid
+    YAML) straight into a ``datetime``, so accept that directly —
+    otherwise the staleness check silently skipped every lock whose
+    ``generated:`` field wasn't quoted (the Helm default).
     """
+    if isinstance(value, datetime):
+        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
     if not isinstance(value, str):
         return None
     s = value.strip()
@@ -77,7 +84,7 @@ def _parse_generated(value: object) -> datetime | None:
     # ``Z`` -> ``+00:00`` for fromisoformat. 3.11+ parses ``Z``
     # natively, but the normalization is idempotent and keeps the
     # branch ordering obvious.
-    if s.endswith("Z") or s.endswith("z"):
+    if s.endswith(("Z", "z")):
         s = s[:-1] + "+00:00"
     try:
         dt = datetime.fromisoformat(s)
@@ -91,7 +98,7 @@ def _parse_generated(value: object) -> datetime | None:
 
 
 def check(ctx: HelmContext, *, _now: datetime | None = None) -> Finding:
-    """Check is parameterised on ``_now`` so tests inject a frozen clock."""
+    """Check is parameterized on ``_now`` so tests inject a frozen clock."""
     now = _now or datetime.now(UTC)
     offenders: list[str] = []
     locations: list[Location] = []

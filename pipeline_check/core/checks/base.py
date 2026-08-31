@@ -1,7 +1,8 @@
 import abc
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, Generic, TypeVar
 
 import yaml as _yaml
 
@@ -26,13 +27,16 @@ from .tokens import (
 # old names resolvable here so existing imports don't need to churn.
 __all__ = [
     "safe_load_yaml",
+    "summarize_offenders",
     "Severity",
     "severity_rank",
+    "VALID_SEVERITY_NAMES",
     "Confidence",
     "confidence_rank",
     "Finding",
     "Location",
     "ResourceAnchor",
+    "VulnRef",
     "ControlRef",
     "BaseCheck",
     # re-exported from blob
@@ -56,7 +60,16 @@ __all__ = [
     "DEP_UPDATE_RE",
     "has_dep_update",
     "is_quoted_assignment",
+    "NO_ARTIFACT_DESC",
 ]
+
+#: Standard ``description`` for an artifact-pack rule (signing, SBOM,
+#: vuln-scanning, SLSA provenance) that short-circuits to passed=True
+#: because the pipeline doesn't produce build artifacts in the first
+#: place. Imported by every rule in the GHA-006/007 family across the
+#: provider pack so the wording stays consistent and a future reword
+#: lands in one place.
+NO_ARTIFACT_DESC: str = "No artifact production detected, check not applicable."
 
 # Use the C-accelerated YAML loader when available (libyaml bindings).
 # CSafeLoader is functionally identical to SafeLoader but ~30-50x faster,
@@ -95,6 +108,26 @@ _SEVERITY_RANK: dict["Severity", int] = {
 
 def severity_rank(s: "Severity") -> int:
     return _SEVERITY_RANK[s]
+
+
+#: Severity names accepted in config / policy ``overrides:`` blocks and
+#: gate thresholds, derived from the canonical :class:`Severity` enum so the
+#: two loaders (``config.py`` / ``policies.py``) can't drift from it or from
+#: each other.
+VALID_SEVERITY_NAMES: frozenset[str] = frozenset(s.value for s in Severity)
+
+
+def summarize_offenders(items: Iterable[str], *, limit: int = 5) -> str:
+    """Join the first *limit* offenders with ``", "``, appending ``"…"``
+    when more were dropped.
+
+    Standardizes the ``", ".join(xs[:N]) + ("…" if len(xs) > N else "")``
+    tail hand-rolled across the rule pack (which drifted between a 3- and
+    a 5-item cap). Callers pass an already-sorted / deduplicated sequence;
+    this only formats it.
+    """
+    items = list(items)
+    return ", ".join(items[:limit]) + ("…" if len(items) > limit else "")
 
 
 class Confidence(str, Enum):
@@ -198,6 +231,79 @@ class ResourceAnchor:
         return {"kind": self.kind, "identity": self.identity}
 
 
+@dataclass(frozen=True, slots=True)
+class TaintFlow:
+    """A structured untrusted-input dataflow edge a finding evidences.
+
+    The machine-readable counterpart to ``Finding.path_evidence`` (which
+    is the human-rendered ``source -> hop -> sink`` string). Where
+    ``job_anchors`` exposes only the *sink* job, this carries both ends
+    of the flow so the attack-chain engine can walk a real source-to-sink
+    graph between two legs (phase-2 reachability) rather than intersecting
+    coarse job sets.
+
+    ``source_job`` / ``sink_job`` are the execution units (job ids) the
+    untrusted value enters and is consumed in. ``cross_document`` marks a
+    flow whose sink leaves the current workflow file (e.g. forwarded into
+    a reusable workflow via ``with:``), in which case ``sink_job`` is the
+    callee reference rather than a local job id. ``rendered`` is the same
+    one-line path string that lands in ``path_evidence``, reused verbatim
+    so the chain engine can quote the exact connecting path.
+    """
+
+    source_job: str
+    sink_job: str
+    rendered: str
+    cross_document: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "source_job": self.source_job,
+            "sink_job": self.sink_job,
+            "rendered": self.rendered,
+        }
+        if self.cross_document:
+            out["cross_document"] = True
+        return out
+
+
+@dataclass(frozen=True, slots=True)
+class VulnRef:
+    """A structured known-vulnerability the finding evidences.
+
+    Carried by the OSV-advisory rules (``NPM-010`` / ``PYPI-009`` /
+    ``MVN-009`` / ``NUGET-009``), the CVE-shaped subset of the catalog.
+    Where the free-text ``description`` reads ``lodash@4.17.20
+    (GHSA-xxxx, CVE-yyyy)``, this exposes the same facts as machine
+    data so the OpenVEX reporter can emit one statement per
+    ``(vulnerability, product)`` pair and a consumed VEX document can
+    match and suppress a finding without parsing prose.
+
+    ``vuln_id`` is the primary advisory id (a GHSA / CVE / OSV id).
+    ``aliases`` are the other ids OSV lists for the same advisory (a
+    GHSA and its CVE cross-reference each other), so a VEX statement
+    keyed on either form still matches. ``purl`` is the affected
+    product in canonical Package-URL form (``pkg:npm/lodash@4.17.20``),
+    built via the ``core.sbom`` ``make_*_purl`` helpers so it agrees
+    with the SBOM reporters' component identities.
+
+    ``(vuln_id, purl)`` is the equality key; the VEX matcher treats a
+    finding's ``vulnerabilities`` as a set and looks for a statement
+    whose vulnerability (by ``vuln_id`` or any alias, either direction)
+    and product ``purl`` overlap.
+    """
+
+    vuln_id: str
+    purl: str
+    aliases: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"vuln_id": self.vuln_id, "purl": self.purl}
+        if self.aliases:
+            out["aliases"] = list(self.aliases)
+        return out
+
+
 @dataclass(slots=True)
 class Finding:
     check_id: str
@@ -277,6 +383,25 @@ class Finding:
     #: ``checks/_primitives/anchors.py`` to build entries so both
     #: legs agree on a canonical form.
     resource_anchors: tuple[ResourceAnchor, ...] = ()
+    #: Structured untrusted-input dataflow edges (source job -> sink job)
+    #: the finding evidences. Populated by the TAINT-NNN family alongside
+    #: the rendered ``path_evidence`` strings. The reachability-aware
+    #: chain engine (phase 2) walks these as a directed graph between two
+    #: legs to confirm a real source-to-sink connection, where
+    #: ``job_anchors`` alone gives only the sink side. Empty for non-taint
+    #: rules; engine-internal, not serialized into reports (the
+    #: human-readable form is ``path_evidence``).
+    taint_flows: tuple[TaintFlow, ...] = ()
+    #: Structured known-vulnerability references the finding evidences.
+    #: Populated only by the OSV-advisory rules (``NPM-010`` /
+    #: ``PYPI-009`` / ``MVN-009`` / ``NUGET-009``), the CVE-shaped
+    #: subset of the catalog. Consumed by the OpenVEX reporter (one
+    #: statement per ``(vulnerability, product)`` pair) and by the
+    #: ``--vex`` ingest path, which suppresses a finding whose
+    #: ``(vuln, product)`` a maintainer marked ``not_affected`` /
+    #: ``fixed``. Empty for every misconfiguration rule, so VEX
+    #: matching is automatically scoped to the advisory subset.
+    vulnerabilities: tuple[VulnRef, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -303,23 +428,69 @@ class Finding:
             out["path_evidence"] = list(self.path_evidence)
         if self.resource_anchors:
             out["resource_anchors"] = [a.to_dict() for a in self.resource_anchors]
+        if self.vulnerabilities:
+            out["vulnerabilities"] = [v.to_dict() for v in self.vulnerabilities]
         return out
 
 
-class BaseCheck(abc.ABC):
+def inline_exploit(finding: Finding, inline_explain: bool) -> str | None:
+    """Return the finding's ``exploit_example`` when ``--inline-explain`` is on.
+
+    Centralizes the ``--inline-explain`` gate so every reporter makes the
+    same include/skip decision: the rstripped ``exploit_example`` when the
+    flag is set and the finding records one, otherwise ``None``. Each
+    reporter formats the returned text for its own shape (terminal panel,
+    SARIF ``help``, JUnit ``<failure>`` body, markdown section, Code
+    Quality ``description``). JSON and HTML carry ``exploit_example``
+    unconditionally and don't consult this gate.
+    """
+    if inline_explain and finding.exploit_example:
+        return finding.exploit_example.rstrip()
+    return None
+
+
+def markdown_code_fence(text: str) -> str:
+    """Return a backtick fence long enough to wrap *text* safely.
+
+    A fenced code block must open and close with a backtick run longer
+    than any run inside its body, otherwise a ``` embedded in the
+    snippet closes the block early and corrupts the rest of the
+    document. Returns three backticks in the common case (no embedded
+    backticks), one more than the longest run otherwise. Shared by the
+    markdown and SARIF reporters, which both fence ``exploit_example``
+    snippets.
+    """
+    longest = 0
+    run = 0
+    for ch in text:
+        if ch == "`":
+            run += 1
+            longest = max(longest, run)
+        else:
+            run = 0
+    return "`" * max(3, longest + 1)
+
+
+_ContextT = TypeVar("_ContextT")
+
+
+class BaseCheck(abc.ABC, Generic[_ContextT]):
     """Provider-agnostic base for all check modules.
 
     Subclasses declare a PROVIDER class attribute so the Scanner can route
-    them to the correct pipeline environment, and accept whatever context
-    object their provider requires (e.g. a boto3 Session for AWS, a
-    google-auth credential for GCP, a token for GitHub).
+    them to the correct pipeline environment, and parameterize the generic
+    on whatever context object their provider requires (e.g.
+    ``BaseCheck[boto3.Session]`` for AWS, ``BaseCheck[GitHubContext]`` for
+    GitHub, ``BaseCheck[JenkinsContext]`` for Jenkins). The generic param
+    pins ``self.context`` to the concrete type so subclass methods reading
+    it get type-narrowing without needing to re-assert via a local cast.
     """
 
     #: Pipeline environment this check targets.  Override in subclasses.
     PROVIDER: str = ""
 
-    def __init__(self, context: Any, target: str | None = None) -> None:
-        self.context = context
+    def __init__(self, context: _ContextT, target: str | None = None) -> None:
+        self.context: _ContextT = context
         #: Optional resource name to scope the scan to (e.g. a pipeline name).
         self.target = target
         # NB: clearing per-instance guards against id() reuse, a doc
@@ -348,11 +519,15 @@ import re as _re
 #: ``docker run --privileged`` or ``-v /…:/…``, container escape via
 #: host mount, privileged mode, namespace sharing, or socket mount.
 DOCKER_INSECURE_RE = _re.compile(
-    r"docker\s+run\s[^;&]*(?:--privileged|--cap-add|--net[= ]host"
-    r"|--pid[= ]host|--userns[= ]host"                              # namespace sharing
-    r"|-v\s+/var/run/docker\.sock:/var/run/docker\.sock"            # socket mount
-    r"|-v\s+/:/)"                                                   # root mount
-    r"|docker\s+compose\s[^;&]*--privileged",                       # compose
+    # ``[^;&\n]*`` excludes the newline so the filler can't span the
+    # concatenated document blob and pair a benign ``docker run`` with an
+    # unrelated ``--privileged`` mention on another line.
+    r"docker\s+run\s[^;&\n]*(?:--privileged|--cap-add"
+    r"|--(?:net(?:work)?|pid|ipc|userns)[= ]host"                   # namespace sharing
+    r"|--security-opt[= ]\s*(?:seccomp|apparmor)=unconfined"        # sandbox disabled
+    r"|(?:-v|--volume)\s+/var/run/docker\.sock:"                    # socket mount (any target)
+    r"|(?:-v|--volume)\s+/:/)"                                      # root mount
+    r"|docker\s+compose\s[^;&\n]*--privileged",                     # compose
 )
 
 #: ``pip install --index-url http://`` or ``npm install --registry=http://``
@@ -360,11 +535,12 @@ DOCKER_INSECURE_RE = _re.compile(
 #: Covers pip, npm, yarn, gem, nuget, and cargo.
 PKG_INSECURE_RE = _re.compile(
     r"(?:pip3?\s+install)"                                           # pip / pip3
-    r"[^;&]*(?:--index-url\s+http[^s]|-i\s+http[^s]"               # -i short form
-    r"|--extra-index-url\s+http[^s]"                                 # extra index
+    r"[^;&]*(?:--index-url[= ]\s*http[^s]|-i\s+http[^s]"           # -i short form, = or space
+    r"|--extra-index-url[= ]\s*http[^s]"                             # extra index
     r"|--trusted-host|--no-verify)"
     r"|(?:npm\s+install|yarn\s+add)"
-    r"[^;&]*(?:--registry[= ]http[^s]|--no-verify)"
+    # ``--strict-ssl=false`` disables TLS cert verification for the install.
+    r"[^;&]*(?:--registry[= ]http[^s]|--strict-ssl[= ]\s*false|--no-verify)"
     r"|gem\s+(?:install|sources\s+--add)\s[^;&]*(?:--source\s+http[^s]|http[^s])"  # gem
     r"|nuget\s+(?:install|restore)\s[^;&]*-Source\s+http[^s]"       # nuget
     r"|cargo\s+install\s[^;&]*--index\s+http[^s]",                  # cargo
@@ -381,21 +557,27 @@ PKG_NO_LOCKFILE_RE = _re.compile(
     r"(?![^\n]*(?:-r\s|--require-hashes|--requirement))"
     # yarn install without --frozen-lockfile / --immutable
     r"|\byarn\s+install\b(?![^\n]*(?:--frozen-lockfile|--immutable))"
+    # bare ``yarn`` (no subcommand) implicitly runs ``yarn install``.
+    r"|\byarn(?![ \t]*\S)"
     # bundle install without --frozen / --deployment
     r"|\bbundle\s+install\b(?![^\n]*(?:--frozen|--deployment))"
-    # cargo install (always risky in CI without lockfile)
-    r"|\bcargo\s+install\s"
-    # go install without @vN.N version pin
-    r"|\bgo\s+install\s+(?!.*@v\d+\.\d+)\S+(?:\s|$)"
-    # poetry install without --no-update
-    r"|\bpoetry\s+install\b(?![^\n]*--no-update)",
+    # cargo install without --locked (--locked enforces Cargo.lock)
+    r"|\bcargo\s+install\s(?![^\n]*--locked)"
+    # go install without @vN.N version pin.
+    # NB: ``poetry install`` is intentionally NOT flagged — it installs
+    # from ``poetry.lock`` when present (the lockfile-enforcing analog of
+    # ``npm ci``); the lock-bypassing command is ``poetry update``.
+    # A local-path target (``./cmd/tool``, ``../x``, ``/abs``, ``.``)
+    # builds from the repo's own go.mod/go.sum, so it's lockfile-enforced
+    # and exempt (the ``(?![./])`` guard).
+    r"|\bgo\s+install\s+(?!.*@v\d+\.\d+)(?![./])\S+(?:\s|$)",
     _re.MULTILINE,
 )
 
 
 #: Dependency-update commands that bypass lockfile pins.
 DEP_UPDATE_RE = _re.compile(
-    r"\bpip3?\s+install\s+[^\n]*(?:--upgrade|-U)\b"
+    r"\bpip3?\s+install\s+[^\n]*(?:--upgrade|-[uU])\b"
     r"|\bnpm\s+update\b"
     r"|\byarn\s+upgrade\b"
     r"|\bbundle\s+update\b"
@@ -406,60 +588,91 @@ DEP_UPDATE_RE = _re.compile(
 
 #: Tooling upgrades that are safe.
 #:
-#: Two categories:
+#: Three categories:
 #:
 #:   * Build-system tools, ``pip``, ``setuptools``, ``wheel``,
-#:     ``virtualenv``, ``build``. These are used to produce / install
-#:     the artifact, not to ship inside it.
-#:   * Security-tooling installs, ``pip-audit``, ``cyclonedx-bom``,
-#:     ``cyclonedx-py``, ``safety``, ``bandit``, ``semgrep``. These
-#:     are CI scanners that lint or attest the artifact; the version
-#:     pin churn is irrelevant to the supply chain because their
-#:     output never lands in the wheel.
+#:     ``virtualenv``, ``build``, ``poetry``, ``pipx``, ``uv``,
+#:     ``twine``, ``flit``, ``hatch``. These are used to produce /
+#:     install the artifact, not to ship inside it.
+#:   * Security and quality tooling installs, ``pip-audit``,
+#:     ``cyclonedx-bom``, ``safety``, ``bandit``, ``semgrep``, ``ruff``,
+#:     ``mypy``, ``black``, ``isort``, ``flake8``, ``pylint``,
+#:     ``pytest``, ``tox``, ``nox``, ``pre-commit``, ``commitizen``.
+#:     These are CI scanners/linters that lint or attest the artifact;
+#:     the version pin churn is irrelevant to the supply chain because
+#:     their output never lands in the wheel.
+#:   * Package-manager self-upgrades, ``npm install -g npm``,
+#:     ``npm install -g yarn/pnpm/corepack``, ``corepack enable``.
+#:     These upgrade the build toolchain, not the shipped artifact.
 _DEP_UPDATE_TOOL_EXEMPT_RE = _re.compile(
-    r"\bpip3?\s+install\s+(?:--upgrade|-U)\s+(?:"
-    r"pip|setuptools|wheel|virtualenv|build"
+    r"\bpip3?\s+install\s+(?:"
+    r"(?:--upgrade|-[uU])\s+(?:pip|setuptools|wheel|virtualenv|build"
     r"|pip-audit|cyclonedx-bom|cyclonedx-py|safety|bandit|semgrep|ruff|mypy"
-    r")\b"
+    r"|poetry|pipx|uv|twine|flit|hatch|black|isort|flake8|pylint"
+    r"|pytest|tox|nox|pre-commit|commitizen)\b"
+    r"|(?:pip|setuptools|wheel|virtualenv|build"
+    r"|pip-audit|cyclonedx-bom|cyclonedx-py|safety|bandit|semgrep|ruff|mypy"
+    r"|poetry|pipx|uv|twine|flit|hatch|black|isort|flake8|pylint"
+    r"|pytest|tox|nox|pre-commit|commitizen)"
+    r"\s+(?:--upgrade|-[uU]))"
+    # npm/yarn global installs of the package manager itself or CLI tools.
+    r"|\bnpm\s+(?:install|i)\s+(?:-g|--global)\s+npm\b"
+    r"|\bnpm\s+(?:install|i)\s+(?:-g|--global)\s+(?:yarn|pnpm|corepack)\b"
+    r"|\bcorepack\s+enable\b"
 )
+
+
+# Matches any shell command separator so that the exemption test can
+# be scoped to the individual command, not the whole line.  This
+# prevents an exempt tooling upgrade earlier on the same line (e.g.
+# ``pip install --upgrade pip && npm update``) from suppressing a
+# real dependency-update command later on that line.
+_CMD_SEP_RE = _re.compile(r"[;&|\n]")
 
 
 def has_dep_update(blob: str) -> bool:
     """Return True if *blob* contains a non-exempt dependency-update command."""
     for m in DEP_UPDATE_RE.finditer(blob):
-        # Extract the full line so the exemption regex can see the
-        # trailing package name (e.g. "pip install --upgrade pip").
-        line_start = blob.rfind("\n", 0, m.start()) + 1
-        line_end = blob.find("\n", m.end())
-        if line_end == -1:
-            line_end = len(blob)
-        full_line = blob[line_start:line_end]
-        if not _DEP_UPDATE_TOOL_EXEMPT_RE.search(full_line):
+        # Extract from the start of the match to the next command
+        # separator (or end of string) to capture the full token
+        # including any trailing package name (e.g. ``pip install
+        # --upgrade pip``). This scopes the exemption to the individual
+        # command rather than the whole line, so an exempt tooling
+        # upgrade earlier on the same line cannot suppress a real
+        # dependency-update command later on that line.
+        tail = blob[m.start():]
+        sep = _CMD_SEP_RE.search(tail)
+        cmd_seg = tail[:sep.start()] if sep else tail
+        if not _DEP_UPDATE_TOOL_EXEMPT_RE.search(cmd_seg):
             return True
     return False
 
 
 # A shell *assignment* like ``VAR="$UNTRUSTED"`` captures the value
 # into a variable; the untrusted content is not executed unless a
-# later command inlines the resulting ``$VAR`` unquoted. All four
-# workflow-provider script-injection checks skip lines that match
-# this pattern so the obvious "safe idiom" doesn't false-positive.
+# later command inlines the resulting ``$VAR`` unquoted. The
+# script-injection checks skip lines that match this pattern so the
+# obvious "safe idiom" doesn't false-positive.
 #
-# Matches shell-style ``${VAR}``, ADO-style ``$(VAR)``, and
-# GitHub-style ``${{ ... }}`` expression interpolations inside the
-# quoted string so every provider can share one helper.
+# This safe idiom only holds for *runtime* expansions the shell layer
+# performs itself: shell-style ``${VAR}`` / ``$VAR`` and ADO-style
+# ``$(VAR)``. It deliberately does NOT cover GitHub ``${{ ... }}``.
+# GitHub substitutes those into the script text BEFORE the shell parses
+# it, so ``VAR="${{ github.event.pull_request.title }}"`` is still
+# injectable: a ``"`` in the title closes the assignment string and the
+# rest of the value runs as shell. Those lines must stay flagged
+# (GHA-003); the only safe handling is routing through an ``env:`` block.
 _QUOTED_ASSIGNMENT_RE = _re.compile(
     r'\s*\w+="[^"]*'
     r'(?:'
-    r'\$\{\{[^}]*\}\}'     # GitHub ${{ ... }}
-    r'|\$\{?\w+\}?'        # shell ${VAR} / $VAR
+    r'\$\{?\w+\}?'        # shell ${VAR} / $VAR
     r'|\$\([^)]+\)'        # ADO $(VAR)
     r')'
     r'[^"]*"\s*$'
 )
 
 
-def is_quoted_assignment(line: str) -> bool:
+def is_quoted_assignment(line: str, *, paren_is_macro: bool = False) -> bool:
     """Return True if *line* is a ``VAR="…$X…"`` assignment (a safe idiom).
 
     Shared between the GitHub, GitLab, Bitbucket, and Azure
@@ -469,13 +682,37 @@ def is_quoted_assignment(line: str) -> bool:
     **Not** safe when the RHS contains a command substitution like
     ``$( … )`` wrapping untrusted input, the substitution executes
     the content even inside double quotes.
+
+    ``paren_is_macro`` is for Azure Pipelines, where ``$(Name)`` is an
+    ADO *macro* that the agent text-substitutes into the script BEFORE
+    the shell parses it (identical to GitHub ``${{ }}``), not a runtime
+    shell command substitution. With the flag set, any ``$( … )`` in the
+    value makes the capture unsafe: a ``"`` in the expanded macro closes
+    the assignment string and the rest runs as shell.
     """
     if not _QUOTED_ASSIGNMENT_RE.match(line):
         return False
-    # Extract the RHS after the first '=' and strip the surrounding quotes.
-    rhs = line.split("=", 1)[1].strip().strip('"')
+    # Extract the RHS after the first '=' and strip exactly one
+    # surrounding quote pair.
+    rhs = line.split("=", 1)[1].strip()
+    if rhs.startswith('"') and rhs.endswith('"'):
+        rhs = rhs[1:-1]
+    # GitHub ``${{ ... }}`` expressions are substituted into the script
+    # text before the shell parses it, so double-quoting the assignment
+    # does not neutralize them: a ``"`` in the expanded value closes the
+    # string and the rest runs as shell. A co-occurring ordinary ``$VAR``
+    # must not make the line look safe (that bypassed GHA-003 / GHA-119).
+    if "${{" in rhs:
+        return False
+    # ADO macros are pre-shell text substitution, so a quoted ``$(Name)``
+    # capture is still injectable -- never a safe idiom.
+    if paren_is_macro and _re.search(r"\$\([^)]*\)", rhs):
+        return False
     # If the RHS contains $(...) that itself embeds an untrusted
     # interpolation (${{ ... }}, ${VAR}, or bare $VAR), it is NOT safe.
     if _re.search(r"\$\(.*(?:\$\{\{|\$\{?\w|\$\()", rhs):
+        return False
+    # Backtick command substitution is equally dangerous.
+    if _re.search(r"`.*(?:\$\{\{|\$\{?\w|\$\()", rhs):
         return False
     return True

@@ -9,7 +9,7 @@ pr:
 
 variables:
   - name: AWS_ACCESS_KEY_ID
-    value: AKIAIOSFODNN7EXAMPLE
+    value: AKIAZ3MHALF2TESTHIJK
   - name: DATABASE_PASSWORD
     value: hunter2
 
@@ -51,6 +51,9 @@ stages:
         pool:
           name: $(Build.SourceBranchName)
         steps:
+          # ADO-032 — persists the pipeline token into .git/config.
+          - checkout: self
+            persistCredentials: true
           - task: DotNetCoreCLI@2
             inputs:
               command: 'build'
@@ -72,6 +75,9 @@ stages:
     jobs:
       - job: InsecureSetup
         steps:
+          # ADO-034: model loaded with trust_remote_code (executes the
+          # model repo's own Python at load time = code execution).
+          - script: python -c "from transformers import AutoModel; AutoModel.from_pretrained('acme/m', trust_remote_code=True)"
           - script: curl https://example.com/install.sh | bash
           - script: docker run --privileged myimage
           - script: pip install --trusted-host pypi.internal.com package
@@ -88,6 +94,17 @@ stages:
           - script: eval "$BUILD_CMD"
           # ADO-028: pip install from an unpinned git URL.
           - script: pip install git+https://example.com/internal/helper.git
+          # ADO-033: IaC apply on a PR-validated pipeline (pr: set above).
+          - script: terraform apply -auto-approve
+          # ADO-035: untrusted PR commit message fed into an agentic AI CLI prompt.
+          - script: claude -p "Triage this PR from commit $(Build.SourceVersionMessage)"
+          # ADO-036: fetched artifact deserialized through pickle (RCE at load).
+          - script: python -c "import torch; torch.load('model.bin', weights_only=False)"
+          # ADO-037: model fetched from a registry with no pinned revision.
+          - script: huggingface-cli download vendor/llm
+          # ADO-038: agentic CLI output (claude step above) pushed straight
+          # to a branch in the same job, with no review gate.
+          - script: git push origin HEAD
 
   - stage: Deploy
     dependsOn: Build
@@ -119,3 +136,5 @@ stages:
                   --resource-group rg-prod \
                   --name my-web-app \
                   --slot staging
+          # ADO-031 — secret echoed to log.
+          - bash: echo "Token is $(DEPLOY_TOKEN)"

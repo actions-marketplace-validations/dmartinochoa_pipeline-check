@@ -44,18 +44,18 @@ RULE = Rule(
     esf=("ESF-D-INJECTION",),
     cwe=("CWE-78", "CWE-829"),
     recommendation=(
-        "Sanitise the value at the producer job before it lands "
+        "Sanitize the value at the producer job before it lands "
         "in the dotenv file. The canonical safe pattern is to "
         "copy the ``$CI_COMMIT_*`` / ``$CI_MERGE_REQUEST_*`` "
         "source into an intermediate shell variable, run a "
-        "sanitiser (``tr -dc 'a-zA-Z0-9 '`` is enough for a "
+        "sanitizer (``tr -dc 'a-zA-Z0-9 '`` is enough for a "
         "freeform title), and only then write the cleaned value "
         "to dotenv. The consuming job should still treat the "
         "auto-imported variable as tainted, reference it quoted "
         "(``\"$TITLE\"``) and never inline into a command "
         "without re-quoting. Removing the dotenv entirely is "
         "the strongest fix; if the value genuinely needs to "
-        "flow downstream, validate the sanitiser is doing what "
+        "flow downstream, validate the sanitizer is doing what "
         "you think before relying on it."
     ),
     docs_note=(
@@ -75,15 +75,49 @@ RULE = Rule(
         "glob expansion is performed."
     ),
     known_fp=(
-        "If the producer job runs a sanitiser between the "
+        "If the producer job runs a sanitizer between the "
         "tainted source interpolation and the dotenv write "
         "(``echo \"$CI_COMMIT_TITLE\" | tr -dc 'a-zA-Z0-9 ' "
         "> taint.env``), the consumer is no longer exploitable "
         "but TAINT-004 still fires. Suppress via ignore-file "
         "scoped to the consumer job's pipeline file when this "
-        "is the deliberate shape; the sanitiser is then "
+        "is the deliberate shape; the sanitizer is then "
         "load-bearing and any future regression in it would "
         "re-expose the consumer.",
+    ),
+    exploit_example=(
+        "# Vulnerable: an ``extract`` job writes an untrusted\n"
+        "# source (``$CI_COMMIT_MESSAGE``) into a dotenv report\n"
+        "# artifact. GitLab automatically loads dotenv reports\n"
+        "# as env vars in dependent jobs; the consumer job then\n"
+        "# inlines the value into a shell command unquoted, and\n"
+        "# any metacharacters in the source execute there.\n"
+        "extract:\n"
+        "  script:\n"
+        "    - echo \"MSG=$CI_COMMIT_MESSAGE\" > deploy.env\n"
+        "  artifacts:\n"
+        "    reports:\n"
+        "      dotenv: deploy.env\n"
+        "use:\n"
+        "  needs: [extract]\n"
+        "  script:\n"
+        "    - ./gen-notes --message $MSG\n"
+        "\n"
+        "# Safe: sanitize at the producer before writing the\n"
+        "# dotenv file, and quote at the consumer. The cleaned\n"
+        "# value is safe to inline; the consumer's env binding\n"
+        "# is properly quoted.\n"
+        "extract:\n"
+        "  script:\n"
+        "    - clean=$(echo \"$CI_COMMIT_MESSAGE\" | tr -dc 'a-zA-Z0-9 -')\n"
+        "    - echo \"MSG=$clean\" > deploy.env\n"
+        "  artifacts:\n"
+        "    reports:\n"
+        "      dotenv: deploy.env\n"
+        "use:\n"
+        "  needs: [extract]\n"
+        "  script:\n"
+        "    - ./gen-notes --message \"$MSG\""
     ),
 )
 
@@ -123,4 +157,5 @@ def check(path: str, doc: dict[str, Any]) -> Finding:
         recommendation=RULE.recommendation, passed=False,
         job_anchors=tuple(anchor_jobs),
         path_evidence=tuple(rendered),
+        taint_flows=tuple(p.to_flow() for p in paths),
     )

@@ -28,7 +28,13 @@ Design calls:
 from __future__ import annotations
 
 from .chains import Chain
-from .checks.base import Finding, Severity, severity_rank
+from .checks.base import (
+    Finding,
+    Severity,
+    inline_exploit,
+    markdown_code_fence,
+)
+from .report_view import ReportView
 from .scorer import ScoreResult
 
 _SEVERITY_EMOJI: dict[Severity, str] = {
@@ -68,8 +74,11 @@ def _esc(s: str) -> str:
 
 def _row(f: Finding) -> str:
     sev = f"{_SEVERITY_EMOJI.get(f.severity, '')} {f.severity.value}".strip()
-    title = _esc(f.title)[:120]
-    resource = _esc(f.resource or "")[:80]
+    # Truncate the raw text first, THEN escape: slicing the escaped string
+    # can cut a two-char escape (``\\``) in half and leave a dangling
+    # backslash that escapes the trailing ``|`` cell separator.
+    title = _esc(f.title[:120])
+    resource = _esc((f.resource or "")[:80])
     controls = ""
     if f.controls:
         tags = [f"`{c.standard}:{c.control_id}`" for c in f.controls[:6]]
@@ -83,6 +92,7 @@ def report_markdown(
     findings: list[Finding],
     score_result: ScoreResult,
     chains: list[Chain] | None = None,
+    inline_explain: bool = False,
 ) -> str:
     """Render *findings* as a GitHub-Flavored Markdown report string.
 
@@ -90,18 +100,22 @@ def report_markdown(
     between the summary line and the Failures table, the chain
     narrative is the highest-signal artifact in the report and
     should be the first thing a PR comment reader sees.
+
+    When *inline_explain* is set, a collapsible Proof-of-exploit
+    section follows the Failures table, one fenced snippet per
+    failing finding that records an ``exploit_example``. The failures
+    table is a fixed five-column grid, so the snippets live in their
+    own section rather than an extra column.
     """
     grade = score_result.get("grade", "?")
     score_value = score_result.get("score", 0)
-    failed = sum(1 for f in findings if not f.passed)
-    passed = sum(1 for f in findings if f.passed)
+    view = ReportView(findings)
+    failed = view.failed_count
+    passed = view.passed_count
 
     grade_emoji = _GRADE_EMOJI.get(grade, "")
-    # Sort: failures first, then by severity rank desc, then by check_id.
-    sorted_findings = sorted(
-        findings,
-        key=lambda f: (f.passed, -severity_rank(f.severity), f.check_id),
-    )
+    # Failures first, then by severity rank desc, then by check_id.
+    sorted_findings = view.ordered
     fails = [f for f in sorted_findings if not f.passed]
     passes = [f for f in sorted_findings if f.passed]
 
@@ -142,7 +156,16 @@ def report_markdown(
                 + " ".join(f"`{cid}`" for cid in c.triggering_check_ids)
             )
             if c.confirmed_reachable:
-                badge = ":white_check_mark: **Reachability confirmed**"
+                # A proven dataflow path and a structural-identity link
+                # (same artifact / role / SA / repo) are both confirmed
+                # signals; the shared-job fallback is only co-location, so
+                # it gets a caution badge, not a confident "confirmed".
+                if c.via_dataflow:
+                    badge = ":white_check_mark: **Reachability confirmed (dataflow)**"
+                elif c.via_structural:
+                    badge = ":white_check_mark: **Reachability confirmed (structural)**"
+                else:
+                    badge = ":warning: **Co-located** (shared job, unverified)"
                 if c.reachability_note:
                     badge += f": {c.reachability_note}"
                 lines.append(badge)
@@ -164,6 +187,31 @@ def report_markdown(
         for f in fails:
             lines.append(_row(f))
         lines.append("")
+
+        # ``--inline-explain``: proof-of-exploit snippets for the
+        # failing findings that record one, in a collapsible block so
+        # they don't crowd the table.
+        exploits: list[tuple[Finding, str]] = []
+        for f in fails:
+            ex = inline_exploit(f, inline_explain)
+            if ex:
+                exploits.append((f, ex))
+        if exploits:
+            lines.append(
+                f"<details><summary>Proof of exploit ({len(exploits)})"
+                "</summary>"
+            )
+            lines.append("")
+            for f, ex in exploits:
+                fence = markdown_code_fence(ex)
+                lines.append(f"**`{f.check_id}` {f.title}**")
+                lines.append("")
+                lines.append(fence)
+                lines.extend(ex.splitlines())
+                lines.append(fence)
+                lines.append("")
+            lines.append("</details>")
+            lines.append("")
     else:
         lines.append("## No failures")
         lines.append("")

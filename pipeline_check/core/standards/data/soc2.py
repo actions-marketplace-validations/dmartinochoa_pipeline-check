@@ -73,12 +73,15 @@ STANDARD = Standard(
         "IAM-005":  ["CC6.2", "CC6.3"],    # relaxed external trust = weak provisioning
         "IAM-007":  ["CC6.3"],             # stale access keys = untimely revocation
         "IAM-008":  ["CC6.2"],             # OIDC audience pin = federated authz
+        "IAM-009":  ["CC6.2"],             # Azure WIF broad subject
+        "IAM-010":  ["CC6.2"],             # GCP WIF no repo condition
         "CB-006":   ["CC6.3"],             # long-lived source token
         "CP-004":   ["CC6.3"],             # legacy OAuth = non-revocable token
         "GHA-005":  ["CC6.2", "CC6.3"],
         "GHA-008":  ["CC6.2"],
         "GL-003":   ["CC6.2"],
         "GL-008":   ["CC6.2"],
+        "DEV-008":   ["CC6.2"],   # literal secret in a devenv config
         "GL-013":   ["CC6.2", "CC6.3"],
         "BB-003":   ["CC6.2"],
         "BB-008":   ["CC6.2"],
@@ -103,13 +106,18 @@ STANDARD = Standard(
         "CB-002":   ["CC6.6"],             # privileged mode breaks sandbox boundary
         "GHA-017":  ["CC6.6"],
         "GL-017":   ["CC6.6"],
+        "GL-039":   ["CC6.6"],# dind daemon TLS disabled / exposed on 2375
         "BB-013":   ["CC6.6"],
         "ADO-017":  ["CC6.6"],
         "JF-017":   ["CC6.6"],
         "CC-017":   ["CC6.6"],
         "JF-025":   ["CC6.6"],             # k8s privileged
         "GHA-026":  ["CC6.6"],             # container egress
+        "GHA-107":  ["CC6.6"],             # harden-runner in audit mode (egress not blocked)
+        "GHA-108":  ["CC6.6"],             # no runtime egress control on OIDC/deploy workflow
+        "GHA-109":  ["CC6.6"],             # harden-runner not the first step
         "GHA-012":  ["CC6.6"],             # self-hosted runner
+        "GHA-105":  ["CC6.6"],             # self-hosted runner on PR trigger
         "GL-014":   ["CC6.6"],
         "BB-016":   ["CC6.6"],
         "ADO-013":  ["CC6.6"],
@@ -141,26 +149,50 @@ STANDARD = Standard(
         # ── CC6.8. Malicious software prevention / detection ───────
         "CB-011":   ["CC6.8"],
         "GHA-003":  ["CC6.8"],             # script injection = malware vector
+        "GHA-119":  ["CC6.8"],             # untrusted context into an agentic AI CLI
+        "GHA-120":  ["CC6.8"],             # trust_remote_code model load = code exec
+        "GHA-122":  ["CC6.8"],             # unsafe pickle deser of fetched artifact = code exec
+        "GHA-117":  ["CC6.8"],             # IaC apply on untrusted PR trigger
+        "GHA-118":  ["CC6.8"],             # untrusted content into $GITHUB_ENV / $GITHUB_PATH
         "GHA-016":  ["CC6.8"],             # curl|bash = malware vector
         "GHA-020":  ["CC6.8"],             # vuln scanning
         "GHA-027":  ["CC6.8"],             # malicious activity
         "GHA-028":  ["CC6.8"],             # shell eval
         "GL-002":   ["CC6.8"],
+        "GL-045":   ["CC6.8"],   # trust_remote_code model load = code exec
+        "GL-047":   ["CC6.8"],   # unsafe pickle deser of fetched artifact = code exec
+        "GL-048":   ["CC6.8"],   # untrusted MR context into agentic CLI = prompt injection
+        "GL-049":   ["CC8.1"],   # agentic CLI output lands without review
         "GL-016":   ["CC6.8"],
         "GL-019":   ["CC6.8"],
+        "GL-043":   ["CC6.8"],
         "GL-025":   ["CC6.8"],
         "GL-026":   ["CC6.8"],
         "BB-002":   ["CC6.8"],
+        "BB-035":   ["CC6.8"],   # trust_remote_code model load = code exec
+        "BB-036":   ["CC6.8"],   # untrusted PR context into agentic CLI = prompt injection
+        "BB-037":   ["CC6.8"],   # unsafe pickle deser of fetched artifact = code exec
+        "BB-039":   ["CC8.1"],   # agentic CLI output lands without review
+        "JF-038":   ["CC8.1"],   # agentic CLI output lands without review
+        "JF-039":   ["CC6.8"],   # trust_remote_code model load = code exec
+        "JF-040":   ["CC8.1"],   # model pulled without a pinned revision
+        "JF-041":   ["CC6.8"],   # unsafe pickle deser of fetched artifact = code exec
+        "JF-042":   ["CC6.1"],   # secret echoed to Jenkins build log
         "BB-012":   ["CC6.8"],
         "BB-015":   ["CC6.8"],
         "BB-025":   ["CC6.8"],
         "BB-026":   ["CC6.8"],
         "ADO-002":  ["CC6.8"],
+        "ADO-034":  ["CC6.8"],   # trust_remote_code model load = code exec
+        "ADO-035":  ["CC6.8"],   # untrusted PR context into agentic CLI = prompt injection
+        "ADO-036":  ["CC6.8"],   # unsafe pickle deser of fetched artifact = code exec
+        "ADO-038":  ["CC8.1"],   # agentic CLI output lands without review
         "ADO-016":  ["CC6.8"],
         "ADO-020":  ["CC6.8"],
         "ADO-026":  ["CC6.8"],
         "ADO-027":  ["CC6.8"],
         "JF-002":   ["CC6.8"],
+        "JF-037":   ["CC6.8"],   # agentic CLI ingests untrusted context (prompt injection)
         "JF-016":   ["CC6.8"],
         "JF-020":   ["CC6.8"],
         "JF-029":   ["CC6.8"],
@@ -170,6 +202,9 @@ STANDARD = Standard(
         "CC-020":   ["CC6.8"],
         "CC-026":   ["CC6.8"],
         "CC-027":   ["CC6.8"],
+        "ARGO-019":  ["CC6.8"],  # Argo dangerous shell idiom
+        "TKN-018":  ["CC6.8"],  # Tekton dangerous shell idiom
+        "HARNESS-014":  ["CC6.8"],  # Harness dangerous shell idiom
         "GCB-006":  ["CC6.8"],
         "GCB-008":  ["CC6.8"],
         "ECR-001":  ["CC6.8"],
@@ -209,9 +244,12 @@ STANDARD = Standard(
         "CCM-001":  ["CC8.1"],
         "CB-008":   ["CC8.1"],
         "GHA-014":  ["CC8.1"],
+        "GHA-123":  ["CC8.1"],
         "GL-004":   ["CC8.1"],
+        "GL-044":   ["CC8.1"],
         "GL-029":   ["CC8.1"],
         "BB-004":   ["CC8.1"],
+        "BB-034":   ["CC8.1"],
         "ADO-004":  ["CC8.1"],
         "JF-005":   ["CC8.1"],
         "JF-024":   ["CC8.1"],
@@ -220,14 +258,18 @@ STANDARD = Standard(
         "CC-013":   ["CC8.1"],
         # Pinning (changes require explicit review, not silent drift)
         "GHA-001":  ["CC8.1"],
+        "GHA-110": ["CC8.1"],  # CI env disables Go module verification
         "GHA-025":  ["CC8.1"],
         "GL-001":   ["CC8.1"],
+        "GL-037": ["CC8.1"],  # CI env disables Go module verification
         "GL-005":   ["CC8.1"],
+        "GL-042":   ["CC8.1"],
         "BB-001":   ["CC8.1"],
         "ADO-001":  ["CC8.1"],
         "ADO-025":  ["CC8.1"],
         "JF-001":   ["CC8.1"],
         "CC-001":   ["CC8.1"],
+        "CC-033": ["CC8.1"],  # CI env disables Go module verification
         "GCB-001":  ["CC8.1"],
         # Integrity / attestation (change record)
         "SIGN-001": ["CC8.1"],
@@ -268,6 +310,7 @@ STANDARD = Standard(
         "K8S-021":  ["CC6.1"],            # wildcard verbs
         "K8S-022":  ["CC6.6"],            # SSH service exposed
         "K8S-023":  ["CC7.1"],            # PSA enforce missing
+        "K8S-044":  ["CC7.1"],            # admission webhook fail-open / unscoped mutating
         "K8S-024":  ["CC7.2"],            # readiness/liveness probes
         "K8S-015":  ["CC6.6"],            # no memory limit (availability boundary)
         "K8S-016":  ["CC6.6"],            # no CPU limit (availability boundary)
@@ -306,6 +349,13 @@ STANDARD = Standard(
         # covers data-in-transit (curl-pipe / TLS bypass). CC8.1
         # covers change management (pinning, version drift).
         "DF-001": ["CC8.1"],                # FROM not digest-pinned
+        "MODEL-001": ["CC8.1"],             # unpinned base model
+        "MODEL-002": ["CC8.1"],             # third-party hub base model
+        "MODEL-003": ["CC8.1"],             # local unverified weights blob
+        "MODEL-006": ["CC8.1"],             # committed unsafe-serialization model artifact
+        "MODEL-004": ["CC8.1"],             # remote LoRA adapter
+        "MODEL-005": ["CC8.1"],             # config auto_map = custom loader code
+        "DF-031": ["CC8.1"],                # COPY --from external image not digest-pinned
         "DF-002": ["CC6.1", "CC6.8"],       # runs as root
         "DF-003": ["CC6.7", "CC8.1"],       # ADD remote no integrity
         "DF-004": ["CC6.7", "CC8.1"],       # curl-pipe
@@ -340,9 +390,17 @@ STANDARD = Standard(
         "BK-007": ["CC8.1"],                # no manual deploy gate
         "BK-008": ["CC6.7"],                # TLS bypass
         "BK-009": ["CC8.1"],                # no signing
+        "HARNESS-015":  ["CC8.1"],  # Harness artifacts not signed
+        "DR-019":  ["CC8.1"],  # Drone artifacts not signed
         "BK-010": ["CC8.1"],                # no SBOM
+        "HARNESS-016":  ["CC8.1"],  # Harness no SBOM
+        "DR-020":  ["CC8.1"],  # Drone no SBOM
         "BK-011": ["CC8.1"],                # no SLSA provenance
+        "HARNESS-017":  ["CC8.1"],  # Harness no SLSA provenance
+        "DR-021":  ["CC8.1"],  # Drone no SLSA provenance
         "BK-012": ["CC7.1"],                # no vuln scan
+        "HARNESS-018":  ["CC7.1"],  # Harness no vuln scan
+        "DR-022":  ["CC7.1"],  # Drone no vuln scan
         "BK-013": ["CC8.1"],                # no branches filter
         "BK-014": ["CC8.1"],                # unpinned package install
         "BK-015": ["CC6.8"],                # agents map untrusted interpolation
@@ -375,6 +433,18 @@ STANDARD = Standard(
         "CF-003":  ["CC6.6"],               # CodeBuild VPC shares public subnet
         # ── GitHub Actions ───────────────────────────────────────
         "GHA-002":  ["CC6.6", "CC6.8"],     # pull_request_target + PR head
+        "RUN-001":  ["CC6.6", "CC6.8"],     # forensics: fork PR ran on privileged trigger
+        "RUN-002":  ["CC6.6", "CC6.8"],     # forensics: privileged trigger fired
+        "GLRUN-001": ["CC6.6", "CC6.8"],  # gitlab forensics: merge-request pipeline executed
+        "GLRUN-002": ["CC6.6", "CC6.8"],  # gitlab forensics: fork merge-request pipeline executed
+        "GLRUN-003": ["CC6.6", "CC6.8"],  # gitlab forensics: secret leaked in fork pipeline trace
+        "GLRUN-004": ["CC6.6", "CC6.8"],  # gitlab forensics: fork pipeline minted a cloud OIDC token
+        "GLRUN-005": ["CC6.6", "CC6.8"],  # gitlab forensics: fork pipeline ran on a self-managed runner
+        "RUN-003":  ["CC6.6", "CC6.8"],     # forensics: secret leaked in run logs
+        "RUN-004":  ["CC6.6", "CC6.8"],     # forensics: fork run minted a cloud OIDC token
+        "RUN-005":  ["CC6.6", "CC6.8"],     # forensics: fork run on a self-hosted runner
+        "RUN-006":  ["CC6.8", "CC8.1"],     # forensics: known-compromised action executed
+        "RUN-007":  ["CC6.8", "CC8.1"],     # forensics: unpinned third-party action ran with secrets
         "GHA-006":  ["CC8.1"],              # unsigned artifacts
         "GHA-007":  ["CC8.1"],              # no SBOM
         "GHA-009":  ["CC6.6", "CC6.8"],     # workflow_run upstream artifact unverified
@@ -418,6 +488,35 @@ STANDARD = Standard(
         "GHA-059":  ["CC8.1"],              # npm install without audit signatures
         "GHA-060":  ["CC8.1"],              # pip install without --require-hashes
         "GHA-061":  ["CC6.1", "CC6.3"],     # App token minted without permissions filter
+        "GHA-106":  ["CC6.1", "CC6.3"],     # AI agent with write-scoped token
+        "GHA-111":  ["CC6.1", "CC6.3"],  # AI agent edits IaC applied in the same job
+        "GHA-112":  ["CC6.6", "CC8.1"],  # self-hosted deploy with no environment gate
+        "GHA-113":  ["CC6.1", "CC8.1"],  # OIDC trusted-publish w/o env gate
+        "GHA-114":  ["CC6.1", "CC8.1"],  # publish workflow on an unrestricted push trigger
+        "GHA-115":  ["CC6.1"],              # id-token granted workflow-wide, not job-scoped
+        "GHA-116":  ["CC6.1"],              # bulk secrets serialization
+        "GHA-062":  ["CC6.1", "CC6.3"],     # OIDC trust subject in sibling IaC is overly broad
+        "GHA-063":  ["CC6.1"],              # spoofable bot-actor if-predicate
+        "GHA-064":  ["CC8.1"],              # unsound contains() with comma-string operand
+        "GHA-065":  ["CC8.1"],              # zero-width / bidi unicode in workflow body
+        "GHA-066":  ["CC6.1"],              # upload-artifact wildcard sweeps workspace
+        "GHA-067":  ["CC6.1"],              # cache step publishes credential-shaped paths
+        "GHA-068":  ["CC8.1"],              # runs-on targets a deprecated hosted runner
+        "GHA-069":  ["CC6.1"],              # orphan id-token: write scope
+        "GHA-070":  ["CC6.1"],              # ssh-keyscan / host-key check TOFU
+        "GHA-071":  ["CC8.1"],              # powershell on Linux / macOS step
+        "GHA-072":  ["CC6.1"],              # secret env: at wider scope than consumer
+        "GHA-073":  ["CC6.1"],              # unused workflow_call.secrets declaration
+        "GHA-086":  ["CC8.1"],              # wildcard branch trigger + environment binding
+        "GHA-087":  ["CC6.1"],              # derived-value of secret printed to log
+        "GHA-088":  ["CC6.8", "CC8.1"],     # typosquat uses: near-edit of top action
+        "GHA-089":  ["CC6.8", "CC8.1"],     # archived upstream repo
+        "GHA-090":  ["CC6.8", "CC8.1"],     # impostor-commit: SHA absent from repo
+        "GHA-091":  ["CC6.8", "CC8.1"],     # repojacking: action upstream missing
+        "GHA-092":  ["CC6.8"],              # TOCTOU PR head SHA force-push race
+        "GHA-093":  ["CC6.1"],              # LOTP indicators
+        "GHA-094":  ["CC6.8", "CC8.1"],     # stale-action-refs
+        "GHA-096":  ["CC6.8", "CC8.1"],     # known-vulnerable action ref (GHSA)
         # ── GitLab CI ─────────────────────────────────────────────
         "GL-006":   ["CC8.1"],              # unsigned artifacts
         "GL-007":   ["CC8.1"],              # no SBOM
@@ -433,6 +532,13 @@ STANDARD = Standard(
         "GL-028":   ["CC8.1"],              # services: image not pinned
         "GL-030":   ["CC8.1"],              # trigger: include w/o pinned ref
         "GL-031":   ["CC6.1", "CC8.1"],     # id_tokens missing audience pin
+        "GL-040":   ["CC6.1", "CC8.1"],     # CI_JOB_TOKEN used for cross-project access
+        "GL-041":   ["CC6.8"],              # IaC apply on an untrusted MR trigger
+        "GL-050":   ["CC6.1", "CC6.3"],  # publish job long-lived registry token (GHA-050 analog)
+        "BB-033":   ["CC6.8"],              # IaC apply on a PR pipeline
+        "ADO-033":  ["CC6.8"],              # IaC apply on a PR-validated pipeline
+        "BK-016":   ["CC6.8"],              # dangerous shell idiom
+        "JF-036":   ["CC6.8"],              # shell step interpolates params.*
         "GL-032":   ["CC6.8"],              # tags interpolates untrusted
         "GL-033":   ["CC6.8"],              # global before_script taint
         "GL-034":   ["CC8.1"],              # npm install without audit signatures
@@ -454,6 +560,7 @@ STANDARD = Standard(
         "BB-029":   ["CC8.1"],              # step + service image not pinned
         "BB-030":   ["CC8.1"],              # npm install without audit signatures
         "BB-031":   ["CC8.1"],              # pip install without --require-hashes
+        "BB-038":   ["CC8.1"],              # model pulled without a pinned revision
         # ── Azure DevOps Pipelines ───────────────────────────────
         "ADO-005":  ["CC8.1"],              # unpinned container
         "ADO-006":  ["CC8.1"],              # unsigned artifacts
@@ -470,6 +577,7 @@ STANDARD = Standard(
         "ADO-028":  ["CC8.1"],              # install bypasses registry integrity
         "ADO-029":  ["CC8.1"],              # service-conn job w/o env gate
         "ADO-030":  ["CC6.8"],              # pool interpolates untrusted
+        "ADO-037":  ["CC8.1"],              # model pulled without a pinned revision
         # ── CircleCI ──────────────────────────────────────────────
         "CC-003":   ["CC8.1"],              # image not pinned to digest
         "CC-004":   ["CC6.1"],              # unrestricted context
@@ -501,6 +609,24 @@ STANDARD = Standard(
         "JF-032":   ["CC6.8"],              # agent label interpolates untrusted
         # ── Drone CI ─────────────────────────────────────────────
         "DR-001":   ["CC8.1"],              # step image not digest-pinned
+        "HARNESS-001":   ["CC8.1"],  # Harness step image not digest-pinned
+        "HARNESS-002":   ["CC6.8"],  # Harness expression injection in step command
+        "HARNESS-003":   ["CC6.1", "CC6.8"],  # Harness privileged step
+        "HARNESS-004":   ["CC6.1"],  # Harness literal credential in variable
+        "HARNESS-005":   ["CC8.1"],  # Harness pipe-to-shell
+        "HARNESS-006":   ["CC6.7"],  # Harness TLS bypass in commands
+        "HARNESS-007":   ["CC6.6", "CC6.8"],  # Harness sensitive host-path mount
+        "HARNESS-008":   ["CC6.8"],  # Harness agentic-CLI prompt injection
+        "HARNESS-010":   ["CC6.8"],  # Harness model trust_remote_code (code exec)
+        "HARNESS-011":   ["CC6.8"],  # Harness unsafe model deser (pickle RCE)
+        "HARNESS-012":   ["CC8.1"],  # Harness model pulled without a pinned revision
+        "HARNESS-013":   ["CC6.1"],  # Harness secret echoed to step log
+        "GCB-028":  ["CC6.1"],  # Cloud Build secret echoed to build log
+        "ARGO-018":  ["CC6.1"],  # Argo secret echoed to template log
+        "TKN-017":  ["CC6.1"],  # Tekton secret echoed to step log
+        "DR-018":  ["CC6.1"],  # Drone secret echoed to step log
+        "BK-017":  ["CC6.1"],  # Buildkite secret echoed to step log
+        "HARNESS-009":   ["CC8.1"],  # Harness agentic-CLI output autolands without review
         "DR-002":   ["CC6.1", "CC6.8"],     # privileged step
         "DR-003":   ["CC6.8"],              # Drone variable injection
         "DR-004":   ["CC6.1"],              # literal credential
@@ -511,13 +637,22 @@ STANDARD = Standard(
         "DR-009":   ["CC6.6", "CC6.8"],     # cache key tainted
         "DR-010":   ["CC8.1"],              # unpinned package install
         "DR-011":   ["CC6.8"],              # node map interpolates untrusted
+        # ── Drone extended pack ──
+        "DR-012":   ["CC8.1"],              # service image not pinned
+        "DR-013":   ["CC8.1"],              # no trigger event filter
+        "DR-014":   ["CC8.1"],              # pipe-to-shell
+        "DR-015":   ["CC8.1"],              # clone recursive
+        "DR-016":   ["CC8.1"],              # image field interpolation
+        "DR-017":   ["CC6.8"],              # dangerous shell idiom
         # ── Tekton (K8s-native pipeline kinds) ────────────────────
         "TKN-001":  ["CC8.1"],              # step image not digest-pinned
+        "TKN-016": ["CC8.1"],  # remote resolver / bundle task body not pinned
         "TKN-002":  ["CC6.1", "CC6.8"],     # step privileged / root
         "TKN-003":  ["CC6.8"],              # param injection in script
         "TKN-004":  ["CC6.6", "CC6.8"],     # hostPath / host namespaces
         "TKN-005":  ["CC6.1"],              # leaked creds
         "TKN-006":  ["CC6.6"],              # no explicit timeout
+        "HARNESS-019":  ["CC6.6"],  # Harness pipeline lacks an explicit timeout
         "TKN-007":  ["CC6.1"],              # default ServiceAccount
         "TKN-008":  ["CC6.7", "CC8.1"],     # remote install / TLS bypass
         "TKN-009":  ["CC8.1"],              # artifacts not signed
@@ -531,8 +666,10 @@ STANDARD = Standard(
         "ARGO-001": ["CC8.1"],              # template image not digest-pinned
         "ARGO-002": ["CC6.1", "CC6.8"],     # template privileged / root
         "ARGO-003": ["CC6.1"],              # default ServiceAccount
+        "ARGO-016": ["CC6.1"],              # cluster-admin / over-privileged ServiceAccount
         "ARGO-004": ["CC6.6", "CC6.8"],     # hostPath / host namespaces
         "ARGO-005": ["CC6.8"],              # parameter injection
+        "ARGO-017": ["CC6.8"],              # resource template manifest injection
         "ARGO-006": ["CC6.1"],              # leaked creds
         "ARGO-007": ["CC6.6"],              # missing activeDeadlineSeconds
         "ARGO-008": ["CC6.7", "CC8.1"],     # remote install / TLS bypass
@@ -543,6 +680,15 @@ STANDARD = Standard(
         "ARGO-013": ["CC6.1"],              # SA token automount default
         "ARGO-014": ["CC8.1"],              # unpinned package install
         "ARGO-015": ["CC6.7"],              # insecure (non-HTTPS) artifact URL
+        # ── Argo CD (GitOps deployment) ──
+        "ARGOCD-010": ["CC8.1"],            # mutable targetRevision
+        "ARGOCD-017": ["CC8.1"],  # in-cluster mutable source
+        "ARGOCD-019": ["CC8.1"],  # drift detection disabled on a sensitive field
+        "ARGOCD-016": ["CC8.1"],  # Helm valueFiles from a remote URL
+        "ARGOCD-018": ["CC8.1"],  # custom resource health / action Lua
+        "ARGOCD-011": ["CC6.1"],            # cluster-resource wildcard
+        "ARGOCD-012": ["CC8.1"],            # no sync windows
+        "ARGOCD-013": ["CC8.1"],            # no revision history cap
         # ── Cloud Build extras ───────────────────────────────────
         "GCB-004": ["CC8.1"],               # community step not SHA-pinned
         "GCB-005": ["CC6.6"],               # build timeout unset
@@ -563,6 +709,7 @@ STANDARD = Standard(
         "GCB-024": ["CC8.1"],               # images: missing for docker push
         "GCB-025": ["CC7.2"],               # tags: empty (audit/discoverability)
         "GCB-026": ["CC8.1"],               # waitFor unknown step id
+        "GCB-027": ["CC6.8"],               # malicious-activity indicators
         # ── NPM / PyPI / Maven dep supply-chain ──────────────────
         # Dep-supply-chain rules land on CC8.1 (change management).
         # Compromised packages also evidence CC6.8 (malicious software)
@@ -578,11 +725,19 @@ STANDARD = Standard(
         "NPM-006":  ["CC6.8", "CC7.1", "CC8.1"],
         "NPM-007":  ["CC6.8"],
         "NPM-011":  ["CC6.1"],
+        "NPM-013":  ["CC6.1"],
         "PYPI-001": ["CC8.1"],
         "PYPI-002": ["CC8.1"],
         "PYPI-003": ["CC6.7", "CC8.1"],
+        "PYPI-018": ["CC6.7", "CC8.1"],  # --no-binary forces sdist build
+        "PYPI-019": ["CC6.8", "CC7.1", "CC8.1"],  # missing PEP 740 build provenance
+        "PYPI-020": ["CC6.8", "CC7.1", "CC8.1"],  # low OpenSSF Scorecard upstream
+        "PYPI-021": ["CC6.8", "CC7.1", "CC8.1"],  # provenance built from a non-release ref
         "PYPI-004": ["CC8.1"],
+        "PYPI-015": ["CC8.1"],  # direct artifact URL
         "PYPI-005": ["CC8.1"],
+        "PYPI-017": ["CC8.1"],  # remote --find-links
+        "PYPI-016": ["CC8.1"],  # primary index repointed
         "PYPI-006": ["CC6.8", "CC7.1", "CC8.1"],
         "MVN-001":  ["CC8.1"],
         "MVN-002":  ["CC8.1"],
@@ -591,6 +746,132 @@ STANDARD = Standard(
         "MVN-005":  ["CC8.1"],
         "MVN-006":  ["CC6.8", "CC7.1", "CC8.1"],
         "MVN-007":  ["CC8.1"],
+        "MVN-008":  ["CC6.8", "CC7.1", "CC8.1"],
+        "MVN-009":  ["CC6.8", "CC7.1", "CC8.1"],
+        # ── Maven extended pack ──
+        "MVN-010":  ["CC6.1"],
+        "MVN-011":  ["CC6.1"],
+        "MVN-012":  ["CC8.1"],
+        "MVN-013":  ["CC8.1"],
+        "MVN-014":  ["CC8.1"],
+        "MVN-015": ["CC8.1"],  # build-time plugin exec bound to lifecycle
+        "MVN-016": ["CC8.1"],  # gradle allowInsecureProtocol
+        "MVN-017": ["CC6.1"],  # settings.xml privateKey + plaintext passphrase
+        "MVN-018": ["CC8.1"],  # distributionManagement release accepts snapshots
+        "NPM-008":  ["CC6.8", "CC7.1", "CC8.1"],
+        "NPM-009":  ["CC8.1"],
+        "NPM-010":  ["CC6.8", "CC7.1", "CC8.1"],
+        "NPM-014":  ["CC6.8", "CC7.1", "CC8.1"],
+        "NPM-015":  ["CC6.8", "CC7.1", "CC8.1"],
+        "NPM-017":  ["CC6.8", "CC7.1", "CC8.1"],  # provenance built from a non-release ref
+        "NPM-018":  ["CC6.8", "CC7.1", "CC8.1"],  # latest release from a new publisher
+        "NPM-019":  ["CC6.8", "CC7.1", "CC8.1"],  # overrides / resolutions redirect
+        "NPM-020":  ["CC6.8", "CC7.1", "CC8.1"],  # .npmrc registry repoint
+        "NPM-016":  ["CC6.8", "CC7.1", "CC8.1"],
+        "PYPI-008": ["CC6.8", "CC7.1", "CC8.1"],
+        "PYPI-009": ["CC6.8", "CC7.1", "CC8.1"],
+        # ── PyPI extended pack ──
+        "PYPI-010": ["CC6.1"],                  # index URL embedded credentials
+        "PYPI-011": ["CC6.1"],                  # --trusted-host disables TLS
+        "PYPI-012": ["CC8.1"],                  # build-system requires floating
+        "PYPI-013": ["CC8.1"],                  # pyproject dynamic dependencies
+        "PYPI-014": ["CC6.1"],                  # custom source HTTP
+        # ── nuget (dep supply-chain) ─────────────────────────────
+        "NUGET-001": ["CC8.1"],
+        "NUGET-002": ["CC8.1"],
+        "NUGET-003": ["CC8.1"],
+        "NUGET-004": ["CC6.7", "CC8.1"],
+        "NUGET-005": ["CC6.8", "CC7.1", "CC8.1"],
+        "NUGET-006": ["CC8.1"],
+        "NUGET-007": ["CC8.1"],
+        "NUGET-008": ["CC6.8", "CC7.1", "CC8.1"],
+        "NUGET-009": ["CC6.8", "CC7.1", "CC8.1"],
+        "NUGET-010": ["CC6.1"],
+        # ── NuGet extended pack ──
+        "NUGET-011": ["CC8.1"],
+        "NUGET-012": ["CC8.1"],
+        "NUGET-013": ["CC8.1"],
+        "NUGET-014": ["CC6.1"],
+        "NUGET-015": ["CC8.1"],
+        "NUGET-016": ["CC8.1"],  # missing <clear/> inherits public gallery
+        "NUGET-017": ["CC8.1"],  # public gallery active alongside private feed, not disabled
+        "NUGET-018": ["CC8.1"],  # build-time MSBuild execution
+        "NUGET-019": ["CC8.1"],  # require mode, no trusted signers
+        # ── Go modules ──
+        "GOMOD-001": ["CC8.1"],                 # go.sum integrity manifest missing
+        "GOMOD-002": ["CC8.1"],                 # replace directive to local path
+        "GOMOD-003": ["CC8.1"],                 # replace directive to different module
+        "GOMOD-004": ["CC8.1"],                 # +incompatible direct require
+        "GOMOD-005": ["CC8.1"],                 # missing go toolchain directive
+        "GOMOD-006": ["CC8.1", "CC7.1"],        # known-compromised module version
+        # ── Go modules extended pack ──
+        "GOMOD-007": ["CC8.1"],
+        "GOMOD-008": ["CC8.1"],
+        "GOMOD-009": ["CC8.1"],
+        "GOMOD-010": ["CC8.1"],
+        "GOMOD-011": ["CC8.1"],  # tool directive build-time exec
+        "GOMOD-012": ["CC8.1"],  # insecure / non-canonical module host
+        # ── Cargo ──
+        "CARGO-001": ["CC8.1"],                 # floating Cargo.toml version spec
+        "CARGO-002": ["CC8.1"],                 # git dep with mutable ref (no rev)
+        "CARGO-003": ["CC8.1"],                 # missing Cargo.lock
+        "CARGO-004": ["CC8.1"],                 # local-path Cargo dependency
+        "CARGO-005": ["CC8.1"],                 # alternate-registry Cargo dependency
+        "CARGO-006": ["CC8.1", "CC7.1"],        # known-compromised crate version
+        # ── Cargo extended pack ──
+        "CARGO-007": ["CC8.1"],
+        "CARGO-008": ["CC8.1"],
+        "CARGO-009": ["CC8.1"],
+        "CARGO-010": ["CC8.1"],
+        "CARGO-011": ["CC8.1"],  # build.rs compile-time egress / exec
+        "CARGO-012": ["CC8.1"],  # .cargo/config.toml source override / build flags
+        "CARGO-013": ["CC8.1"],  # Cargo.lock off-crates.io source
+        "CARGO-014": ["CC8.1"],  # no supply-chain audit-gate config
+        # ── Composer / PHP ──
+        "COMPOSER-001": ["CC8.1"],
+        "COMPOSER-002": ["CC8.1"],
+        "COMPOSER-003": ["CC8.1", "CC6.1"],
+        "COMPOSER-012": ["CC8.1", "CC6.1"],  # disables Packagist / marks custom repo canonical
+        "COMPOSER-011": ["CC8.1", "CC6.1"],  # external VCS repository re-points a package
+        "COMPOSER-004": ["CC6.1"],
+        "COMPOSER-005": ["CC8.1"],
+        "COMPOSER-014": ["CC8.1"],  # minimum-stability without prefer-stable
+        "COMPOSER-006": ["CC8.1"],
+        "COMPOSER-007": ["CC8.1", "CC7.1"],
+        "COMPOSER-008": ["CC8.1"],
+        "COMPOSER-009": ["CC6.1"],
+        "COMPOSER-010": ["CC8.1", "CC6.1"],
+        "COMPOSER-013": ["CC8.1", "CC6.1"],  # config.disable-tls
+        # ── RubyGems / Bundler ──
+        "GEM-001": ["CC8.1"],
+        "GEM-002": ["CC8.1"],
+        "GEM-003": ["CC8.1", "CC6.1"],
+        "GEM-004": ["CC6.1"],
+        "GEM-005": ["CC8.1"],
+        "GEM-006": ["CC8.1", "CC7.1"],
+        "GEM-007": ["CC8.1"],
+        "GEM-008": ["CC8.1"],
+        "GEM-009": ["CC6.1"],
+        "GEM-010": ["CC8.1"],
+        "GEM-011": ["CC8.1"],  # Bundler plugin install-time exec
+        "GEM-012": ["CC8.1"],  # per-gem :source override
+        "GEM-013": ["CC8.1"],  # insecure git transport
+        # ── Pulumi ──
+        "PULUMI-001": ["CC6.1"],                # passphrase secretsprovider
+        "PULUMI-002": ["CC6.1"],                # secret-shaped config plaintext
+        "PULUMI-003": ["CC6.1"],                # hardcoded credentials in source
+        "PULUMI-011": ["CC6.1"],  # plugin from custom download server
+        "PULUMI-004": ["CC6.1", "CC8.1"],       # insecure state backend
+        "PULUMI-005": ["CC6.1"],                # wildcard IAM policy in source
+        "PULUMI-006": ["CC8.1"],                # StackReference unguarded
+        # ── Pulumi extended pack ──
+        "PULUMI-007": ["CC6.1"],                # public-access cloud resource
+        "PULUMI-008": ["CC6.1"],                # shell-exec with non-constant input
+        "PULUMI-013": ["CC6.1"],  # dynamic provider deploy-time code
+        "PULUMI-014": ["CC6.1"],  # ESC environment imported without a qualifier
+        "PULUMI-009": ["CC8.1"],                # runtime / source mismatch
+        "PULUMI-012": ["CC8.1"],  # plugin version unpinned
+        "PULUMI-010": ["CC6.1"],                # stack orphaned encryption salt
         # ── OCI image manifest gaps ──────────────────────────────
         "OCI-001":  ["CC8.1"],              # provenance annotations missing
         "OCI-002":  ["CC8.1"],              # build attestation missing
@@ -599,6 +880,7 @@ STANDARD = Standard(
         "OCI-005":  ["CC8.1"],              # missing image.licenses
         "OCI-006":  ["CC8.1"],              # excessive layer count (config drift)
         "OCI-007":  ["CC8.1"],              # legacy schemaVersion 1
+        "OCI-009":  ["CC8.1"],              # missing base-image annotations
         "OCI-008":  ["CC8.1"],              # weak digest algorithm
         # ── SLSA / in-toto attestation content ───────────────────
         "ATTEST-001": ["CC8.1"],            # untrusted SLSA builder identity
@@ -620,6 +902,7 @@ STANDARD = Standard(
         "TAINT-006": ["CC6.6", "CC6.8"],
         "TAINT-007": ["CC6.6", "CC6.8"],
         "TAINT-008": ["CC6.6", "CC6.8"],
+        "TAINT-009": ["CC6.1"],                  # env-protected secret flows to unprotected job
         # ── Dockerfile extras ───────────────────────────────────
         "DF-009":   ["CC8.1"],              # ADD where COPY suffices
         "DF-011":   ["CC8.1"],              # apt cache not cleaned (drift)
@@ -635,6 +918,14 @@ STANDARD = Standard(
         "HELM-006": ["CC8.1"],              # missing kubeVersion
         "HELM-007": ["CC8.1"],              # missing description
         "HELM-010": ["CC8.1"],              # missing appVersion
+        # ── Helm extended pack ──
+        "HELM-011": ["CC6.1"],              # dependency URL embedded creds
+        "HELM-012": ["CC8.1"],              # deprecated without successor
+        "HELM-013": ["CC8.1"],              # invalid chart type
+        "HELM-014": ["CC8.1", "CC7.1"],     # known-compromised dep
+        "HELM-015": ["CC8.1"],  # oci:// dependency not digest-pinned
+        "HELM-016": ["CC6.1"],  # default secret in values.yaml
+        "HELM-017": ["CC8.1"],  # tpl of an untrusted .Values value
         # ── Degraded-mode findings (API access failures) ─────────
         # Visibility gap = monitoring-for-anomalies failure (CC7.2)
         # plus a logical-access trail evidence gap on the security-
@@ -655,6 +946,49 @@ STANDARD = Standard(
         "SM-000":   ["CC7.2"],
         "SSM-000":  ["CC7.2"],
         "S3-000":   ["CC7.2"],
+        # supply-chain posture pack
+        "GHA-097":  ["CC8.1"],                   # recursive PR auto-merge loop
+        "GHA-098":  ["CC8.1", "CC6.8"],          # deploy without security scan gate
+        "GHA-099":  ["CC6.1"],                   # deploy env plaintext secret
+        "GHA-100":  ["CC8.1"],                   # cosign verify no identity binding
+        "GHA-102":  ["CC6.8"],                   # submodule checkout on PR trigger
+        "GHA-103":  ["CC6.8"],              # AI review bot on untrusted trigger
+        "GHA-104":  ["CC6.8"],              # AI agent auto-push without PR review
+        "GL-036":   ["CC6.1"],              # secret echoed to GitLab CI log
+        "GL-038":   ["CC6.1"],              # CI_DEBUG_TRACE dumps secrets to GitLab CI log
+        "BB-032":   ["CC6.1"],              # secret echoed to Bitbucket log
+        "ADO-031":  ["CC6.1"],              # secret echoed to Azure DevOps log
+        "ADO-032":  ["CC6.1"],              # checkout persistCredentials leaks token to .git/config
+        "CC-032":   ["CC6.1"],              # secret echoed to CircleCI log
+        "CC-034":   ["CC6.8"],              # trust_remote_code model load = code exec
+        "CC-035":   ["CC8.1"],              # model pulled without a pinned revision
+        "CC-036":   ["CC6.8"],              # unsafe pickle deser of fetched artifact = code exec
+        "CC-037":   ["CC6.8"],              # agentic CLI ingests untrusted context (prompt injection)
+        "CC-038":   ["CC8.1"],              # agentic CLI output lands without review
+        "SCM-048":  ["CC6.1"],                   # org codespace secrets scoped to all repos
+        "SCM-049":  ["CC6.1", "CC6.3"],          # classic PAT used where fine-grained suffices
+        "ORG-001":  ["CC6.1", "CC6.3"],          # org governance: 2FA not required org-wide
+        "ORG-002":  ["CC6.1", "CC6.3"],          # org governance: default member permission too broad
+        "ORG-003":  ["CC8.1"],                   # org governance: no Actions allow-list (any action runs)
+        "ORG-004":  ["CC6.1", "CC6.3"],          # org governance: default workflow token is write
+        "ORG-005":  ["CC8.1"],                   # org governance: Actions can approve PRs (review bypass)
+        "ORG-006":  ["CC6.1"],                   # org governance: Actions secret scoped to all repos
+        "ORG-007":  ["CC6.1"],                   # org governance: private-repo forking allowed (code exfiltration)
+        "GLGRP-001":  ["CC6.1", "CC6.3"],  # gitlab group: 2FA not required
+        "GLGRP-002":  ["CC6.1"],  # gitlab group: forking outside group allowed
+        "GLGRP-003":  ["CC6.1"],  # gitlab group: sharing projects outside the hierarchy
+        "GLGRP-004":  ["CC8.1"],  # gitlab group: default branch protection disabled for new projects
+        "GLGRP-005":  ["CC6.7"],  # gitlab group: group webhook over insecure transport
+        "GLGRP-006":  ["CC6.1"],  # gitlab group: group CI/CD variable holds a secret with a weak control
+        "ORG-008":  ["CC6.1"],                   # org governance: members can create public repos (code exposure)
+        "ORG-009":  ["CC6.6"],                   # org governance: self-hosted runner group exposed to public repos
+        "ORG-010":  ["CC6.1"],                   # org governance: new-repo secret-scanning push-protection default off
+        "ORG-011":  ["CC6.7"],                   # org governance: org webhook over insecure transport
+        "ORG-012":  ["CC7.1"],                   # org governance: new-repo Dependabot security-updates default off
+        "ORG-013":  ["CC8.1"],                   # org governance: org ruleset not enforced (evaluate/disabled)
+        "ORG-015":  ["CC8.1"],  # org: immutable releases not enforced org-wide
+        "ORG-014":  ["CC8.1"],  # org: native SHA-pinning policy not required
+        "NPM-012":  ["CC6.1", "CC8.1"],          # publish token missing restrictions
         # ── SCM posture (governance via the platform REST API) ──────
         # Branch protection / review controls map to CC8.1 (Change
         # Management) since the SOC 2 framing of source-code review
@@ -710,5 +1044,119 @@ STANDARD = Standard(
         "SCM-045": ["CC7.1"],               # default code scanning limited query suite
         "SCM-046": ["CC7.1"],               # default code scanning configured but paused
         "SCM-047": ["CC7.1"],               # repo language not covered
+        # ── Azure Cloud (Entra ID / Storage / Key Vault / ACR / Monitor) ──
+        "ENTRA-001": ["CC6.1"],                  # SP assigned Global Administrator
+        "ENTRA-002": ["CC6.3"],                  # app credential beyond 180 days
+        "ENTRA-003": ["CC6.1", "CC6.2"],         # SP uses password credential
+        "AZST-001":  ["CC6.6"],                  # public blob access
+        "AZST-002":  ["CC6.7"],                  # non-HTTPS traffic
+        "AZST-003":  ["CC6.1"],                  # no CMK encryption
+        "AKV-001":   ["CC6.1"],                  # soft delete not enabled
+        "AKV-002":   ["CC6.1"],                  # purge protection not enabled
+        "AKV-003":   ["CC6.6"],                  # network ACLs allow all
+        "ACR-001":   ["CC6.1", "CC6.2"],         # admin user enabled
+        "ACR-002":   ["CC6.6"],                  # public network access
+        "ACR-003":   ["CC8.1"],                  # content trust not enabled
+        "AZMON-001": ["CC7.2"],                  # no diagnostic setting
+        "AZMON-002": ["CC7.2"],                  # log retention < 365 days
+        "AZMON-003": ["CC7.2", "CC7.3", "CC7.4"],  # no alert rule
+        # ── GCP (IAM / GCS / KMS / Artifact Registry / Cloud Logging) ────
+        "GCIAM-001": ["CC6.1"],                  # SA has Owner/Editor role
+        "GCIAM-002": ["CC6.1", "CC6.3"],         # user-managed SA key
+        "GCIAM-003": ["CC6.1"],                  # token creator without condition
+        "GCS-001":   ["CC6.6"],                  # public bucket
+        "GCS-002":   ["CC6.1"],                  # no uniform access
+        "GCS-003":   ["CC7.2"],                  # versioning not enabled
+        "GCKMS-001": ["CC6.1"],                  # key rotation > 365 days
+        "GCKMS-002": ["CC6.1", "CC6.6"],         # public KMS key access
+        "GCKMS-003": ["CC6.1"],                  # no HSM protection
+        "GAR-001":   ["CC6.8"],                  # no vulnerability scanning
+        "GAR-002":   ["CC6.6"],                  # publicly readable repo
+        "GAR-003":   ["CC7.1"],                  # no cleanup policy
+        "GCLOG-001": ["CC7.2"],                  # audit logs not enabled
+        "GCLOG-002": ["CC7.2"],                  # no log sink
+        "GCLOG-003": ["CC7.2"],                  # log retention < 365 days
+        # ── Azure Cloud phase-2 ──────────────────────────────────────
+        "ENTRA-004": ["CC6.1"],                  # cond access MFA
+        "ENTRA-005": ["CC6.1", "CC6.2"],         # ext user restrict
+        "ENTRA-006": ["CC7.2", "CC7.3"],         # risky signin
+        "AZST-004":  ["CC6.7"],                  # min TLS
+        "AZST-005":  ["CC7.1"],                  # lifecycle
+        "AZST-006":  ["CC6.3"],                  # key rotation
+        "AKV-004":   ["CC6.3"],                  # key expiry
+        "AKV-005":   ["CC6.3"],                  # secret expiry
+        "AKV-006":   ["CC6.1"],                  # RBAC
+        "ACR-004":   ["CC6.8"],                  # defender scan
+        "ACR-005":   ["CC7.1"],                  # tag immutability
+        "AZMON-004": ["CC7.2"],                  # KV diagnostics
+        "AZMON-005": ["CC7.2"],                  # NSG flow retention
+        "AZMON-006": ["CC7.2"],                  # LAW retention
+        "AZMON-007": ["CC7.2", "CC7.3", "CC7.4"],  # svc health alert
+        "AZNW-001":  ["CC6.6"],                  # SSH/RDP internet (CRITICAL)
+        "AZNW-002":  ["CC7.2"],                  # flow logs
+        "AZNW-003":  ["CC6.6"],                  # WAF
+        "AZNW-004":  ["CC6.6"],                  # deny-all
+        "AZNW-005":  ["CC6.6"],                  # public IP VM
+        "AZAPP-001": ["CC6.7"],                  # HTTPS
+        "AZAPP-002": ["CC6.7"],                  # TLS
+        "AZAPP-003": ["CC6.1"],                  # managed identity
+        "AZAPP-004": ["CC6.6"],                  # remote debug
+        "AZAPP-005": ["CC6.6"],                  # FTP
+        "AZSQL-001": ["CC6.1"],                  # TDE CMK
+        "AZSQL-002": ["CC7.2"],                  # auditing
+        "AZSQL-003": ["CC6.6"],                  # public access
+        "AZSQL-004": ["CC6.1"],                  # AAD admin
+        "AZSQL-005": ["CC7.2", "CC7.3"],         # threat detect
+        "AZVM-001":  ["CC6.1"],                  # disk encrypt
+        "AZVM-002":  ["CC6.6"],                  # public IP
+        "AZVM-003":  ["CC6.6"],                  # JIT
+        "AZVM-004":  ["CC7.1"],                  # OS patch
+        "AZVM-005":  ["CC6.1"],                  # managed identity
+        # ── GCP phase-2 ──────────────────────────────────────────────
+        "GCIAM-004": ["CC6.1"],                  # default SA
+        "GCIAM-005": ["CC6.1"],                  # domain restrict
+        "GCIAM-006": ["CC6.3"],                  # SA key age
+        "GCS-004":   ["CC6.1"],                  # CMEK
+        "GCS-005":   ["CC7.2"],                  # access logging
+        "GCLOG-004": ["CC7.2"],                  # VPC flow logs
+        "GCLOG-005": ["CC7.2"],                  # firewall logging
+        "GCLOG-006": ["CC7.2"],                  # data access
+        "GCLOG-007": ["CC7.2", "CC7.3"],         # metric filter IAM
+        "GCLOG-008": ["CC7.2", "CC7.3"],         # metric filter firewall
+        "GCLOG-009": ["CC7.2", "CC7.3"],         # metric filter route
+        "GCLOG-010": ["CC7.2", "CC7.3"],         # metric filter SQL
+        "GCLOG-011": ["CC7.2", "CC7.3"],         # metric filter custom role
+        "GCNET-001": ["CC6.6"],                  # default network
+        "GCNET-002": ["CC6.6"],                  # deny-all
+        "GCNET-003": ["CC6.6"],                  # SSH/RDP (CRITICAL)
+        "GCNET-004": ["CC6.6"],                  # private access
+        "GCNET-005": ["CC6.6"],                  # Cloud NAT
+        "GCCE-001":  ["CC6.8"],                  # shielded VM
+        "GCCE-002":  ["CC6.1"],                  # OS Login
+        "GCCE-003":  ["CC6.6"],                  # serial port
+        "GCCE-004":  ["CC6.6"],                  # public IP
+        "GCCE-005":  ["CC6.6"],                  # project SSH keys
+        "GCSQL-001": ["CC6.6"],                  # public IP
+        "GCSQL-002": ["CC7.4"],                  # backups
+        "GCSQL-003": ["CC6.7"],                  # SSL
+        "GCSQL-004": ["CC6.1"],                  # IAM auth
+        "GCSQL-005": ["CC7.4"],                  # PITR
+        "GCRUN-001": ["CC6.6"],                  # unauth
+        "GCRUN-002": ["CC6.1"],                  # custom SA
+        "GCRUN-003": ["CC6.6"],                  # min instances
+        "GCRUN-004": ["CC6.6"],                  # VPC connector
+        "GCKMS-004": ["CC6.1"],                  # keyring IAM
+        "GCKMS-005": ["CC6.1"],                  # destroy sched
+        "GCKMS-006": ["CC6.1"],                  # imported key
+        # Developer-environment auto-execution (malware / untrusted-code vector)
+        "DEV-001":   ["CC6.8"],
+        "DEV-006":   ["CC6.8"],
+        "DEV-007":   ["CC6.8"],   # committed MCP config auto-launches a command server
+        "DEV-009":   ["CC6.8"],   # remote MCP config over plaintext HTTP
+        "DEV-010":   ["CC6.8"],   # committed MCP config blanket tool auto-approve
+        "DEV-002":   ["CC6.8"],
+        "DEV-003":   ["CC6.8"],
+        "DEV-004":   ["CC6.8"],
+        "DEV-005":   ["CC6.8"],
     },
 )

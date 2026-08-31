@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 from ..._primitives import remote_script_exec, tls_bypass
-from ...base import Finding, Severity
+from ...base import Finding, Location, Severity
 from ...rule import Rule
-from ..base import TektonContext, iter_step_scripts
+from ..base import TektonContext, doc_location, iter_step_scripts
 
 RULE = Rule(
     id="TKN-008",
@@ -41,11 +41,42 @@ RULE = Rule(
         "the step image and drop ``-k``, but per-task "
         "suppression via ``--ignore-file`` is the escape hatch.",
     ),
+    exploit_example=(
+        "# Vulnerable: ``curl | bash`` trusts the network path AND\n"
+        "# the installer host. A MITM (compromised proxy, malicious\n"
+        "# DNS) or a publisher compromise ships malicious code into\n"
+        "# the step's shell with the step's full credential set\n"
+        "# in scope (TaskRun ServiceAccount, mounted Secrets).\n"
+        "apiVersion: tekton.dev/v1\n"
+        "kind: Task\n"
+        "spec:\n"
+        "  steps:\n"
+        "    - name: install-cli\n"
+        "      image: alpine@sha256:abc123...\n"
+        "      script: |\n"
+        "        curl -fsSL https://installer.example.com/cli.sh | bash\n"
+        "\n"
+        "# Safe: download, verify against a known-good sha256, then\n"
+        "# execute. If the upstream content changes, the digest\n"
+        "# stops matching and the step fails loud.\n"
+        "apiVersion: tekton.dev/v1\n"
+        "kind: Task\n"
+        "spec:\n"
+        "  steps:\n"
+        "    - name: install-cli\n"
+        "      image: alpine@sha256:abc123...\n"
+        "      script: |\n"
+        "        set -e\n"
+        "        curl -fsSL https://installer.example.com/cli.sh -o /tmp/cli.sh\n"
+        "        echo 'a1b2c3d4...  /tmp/cli.sh' | sha256sum -c -\n"
+        "        bash /tmp/cli.sh"
+    ),
 )
 
 
 def check(ctx: TektonContext) -> Finding:
     offenders: list[str] = []
+    locations: list[Location] = []
     examined = 0
     for doc in ctx.docs:
         if doc.kind not in ("Task", "ClusterTask"):
@@ -56,11 +87,13 @@ def check(ctx: TektonContext) -> Finding:
                 offenders.append(
                     f"{doc.kind}/{doc.name} {sname}: curl-pipe-shell"
                 )
+                locations.append(doc_location(doc))
                 continue
             if tls_bypass.scan(script):
                 offenders.append(
                     f"{doc.kind}/{doc.name} {sname}: TLS bypass"
                 )
+                locations.append(doc_location(doc))
     if examined == 0:
         return Finding(
             check_id=RULE.id, title=RULE.title, severity=RULE.severity,
@@ -80,4 +113,5 @@ def check(ctx: TektonContext) -> Finding:
         check_id=RULE.id, title=RULE.title, severity=RULE.severity,
         resource="tekton", description=desc,
         recommendation=RULE.recommendation, passed=passed,
+        locations=locations,
     )

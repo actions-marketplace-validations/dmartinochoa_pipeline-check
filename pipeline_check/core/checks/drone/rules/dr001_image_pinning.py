@@ -52,11 +52,36 @@ RULE = Rule(
         "the floating-tag risk still applies to every public-"
         "registry pull.",
     ),
+    exploit_example=(
+        "# Vulnerable: ``golang:1.21`` is a mutable tag. Docker Hub\n"
+        "# (or any compromise of the publisher's account) repoints\n"
+        "# the tag at a new image on the next 1.21.x patch release\n"
+        "# and the next pipeline run pulls the swap silently.\n"
+        "kind: pipeline\n"
+        "type: docker\n"
+        "name: build\n"
+        "steps:\n"
+        "  - name: test\n"
+        "    image: golang:1.21\n"
+        "    commands:\n"
+        "      - go test ./...\n"
+        "\n"
+        "# Safe: pin to the content-addressable digest. Renovate /\n"
+        "# Dependabot bump the digest in reviewable PRs.\n"
+        "kind: pipeline\n"
+        "type: docker\n"
+        "name: build\n"
+        "steps:\n"
+        "  - name: test\n"
+        "    image: golang@sha256:abc123...\n"
+        "    commands:\n"
+        "      - go test ./..."
+    ),
 )
 
 
 def _classify_image(image: str) -> PinKind:
-    """Robust wrapper, tolerate non-string image fields gracefully."""
+    """Defensive wrapper, tolerate non-string image fields gracefully."""
     if not isinstance(image, str) or not image.strip():
         # An entirely missing ``image:`` is its own bug, but it
         # isn't this rule's bug, treat as pinned (NO finding) so

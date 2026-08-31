@@ -30,7 +30,7 @@ class BitbucketProvider(BaseProvider):
         return BitbucketContext.from_path(bitbucket_path)
 
     @property
-    def check_classes(self) -> list[type[BaseCheck]]:
+    def check_classes(self) -> list[type[BaseCheck[Any]]]:
         return [BitbucketPipelineChecks]
 
     def inventory(self, context: BitbucketContext) -> list[Component]:
@@ -38,7 +38,7 @@ class BitbucketProvider(BaseProvider):
         for pipe in context.pipelines:
             data = pipe.data if isinstance(pipe.data, dict) else {}
             top = data.get("pipelines") or {}
-            categories = sorted(k for k in top.keys() if isinstance(k, str))
+            categories = sorted(k for k in top if isinstance(k, str))
             out.append(Component(
                 provider=self.NAME,
                 type="pipeline",

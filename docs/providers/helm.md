@@ -86,7 +86,7 @@ unlocked dependency, or no maintainers.
 
 ## What it covers
 
-10 checks · 3 have an autofix patch (``--fix``).
+17 checks · 3 have an autofix patch (``--fix``).
 
 | Check | Title | Severity | Fix |
 |-------|-------|----------|-----|
@@ -100,6 +100,13 @@ unlocked dependency, or no maintainers.
 | [HELM-008](#helm-008) | Chart.lock generated more than 90 days ago | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
 | [HELM-009](#helm-009) | Chart home / sources URL uses a non-HTTPS scheme | <span class="pg-sev pg-sev--low">LOW</span> |  |
 | [HELM-010](#helm-010) | Chart.yaml appVersion field is empty or missing | <span class="pg-sev pg-sev--low">LOW</span> |  |
+| [HELM-011](#helm-011) | Chart dependency repository URL embeds plaintext credentials | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [HELM-012](#helm-012) | Chart marked deprecated without naming a successor | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
+| [HELM-013](#helm-013) | Chart.yaml type field set to an invalid value | <span class="pg-sev pg-sev--medium">MEDIUM</span> |  |
+| [HELM-014](#helm-014) | Chart dependency matches a known-compromised chart registry | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [HELM-015](#helm-015) | OCI chart dependency pinned only by a mutable tag | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [HELM-016](#helm-016) | values.yaml ships a default secret or credential | <span class="pg-sev pg-sev--high">HIGH</span> |  |
+| [HELM-017](#helm-017) | Template renders an untrusted value through tpl | <span class="pg-sev pg-sev--high">HIGH</span> |  |
 
 ---
 
@@ -230,7 +237,7 @@ Populate ``maintainers:`` in ``Chart.yaml`` with at least one entry carrying a `
 <span class="pg-sev pg-sev--low">LOW</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--esf">ESF-D-COMPAT</span> <span class="pg-tag pg-tag--cwe">CWE-1357</span>
 </div>
 
-The field is a string carrying a Helm-flavoured SemVer range. Empty / missing fails the rule. Whitespace-only values fail too, an obviously-blank key should not satisfy a posture check.
+The field is a string carrying a Helm-flavored SemVer range. Empty / missing fails the rule. Whitespace-only values fail too, an obviously-blank key should not satisfy a posture check.
 
 **Known false-positive modes**
 
@@ -325,6 +332,252 @@ Library charts (``Chart.yaml`` ``type: library``) legitimately don't have an ``a
 **Recommended action**
 
 Set ``appVersion:`` in ``Chart.yaml`` to the version of the application the chart packages (e.g. ``appVersion: "17.2"`` for a Postgres-17.2 chart at ``version: 1.4.2``). When the upstream application releases, bump ``appVersion`` and re-cut the chart. Helm's CLI displays ``appVersion`` alongside the chart version in ``helm list``, so downstream operators can see which app version is running where.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## HELM-011: Chart dependency repository URL embeds plaintext credentials { #helm-011 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-6</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-10</span> <span class="pg-tag pg-tag--esf">ESF-D-SECRETS</span> <span class="pg-tag pg-tag--cwe">CWE-798</span> <span class="pg-tag pg-tag--cwe">CWE-522</span>
+</div>
+
+Reads each ``Chart.yaml`` ``dependencies[].repository`` URL and fires when the authority component carries an ``<user>:<pass>@`` prefix. Empty-password forms (``https://user:@host``) and ``${VAR}`` placeholders are skipped — the former is an operator-flagged 'no credential intended' marker and the latter resolves at fetch time from the environment rather than the manifest text.
+
+Distinct from HELM-003 (non-HTTPS scheme), which catches the transport-side risk. This rule catches the credential-leakage risk: an HTTPS URL with embedded credentials passes HELM-003 cleanly but still leaks the credential into git.
+
+**Known false-positive modes**
+
+- Templated Chart.yaml files that materialize a placeholder credential form (``https://__USER__:__PASS__@host``) and substitute the real value at install time trip this rule by shape. Suppress per dependency when the placeholder marker is stable; the rule's placeholder skip-list only recognizes ``${...}``.
+
+**Seen in the wild**
+
+- Long-running pattern of internal chart-museum credentials leaking through Chart.yaml committed to public mirrors. The credential's audit trail (last rotated, who has it) is lost the moment the file lands in a clone an attacker controls; rotation costs scale with the number of consumers.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Move the credential out of the URL and into the consumer's Helm-side credential store. Three stable patterns:
+
+* Add the repo once with credentials: ``helm repo add <name> https://<host>/<path> --username <u> --password <p>``. The credentials land in the user's ``~/.config/helm/repositories.yaml`` (not in the repo) and the chart's ``Chart.yaml`` references the alias (``repository: @<name>``).
+* For CI/CD environments, inject credentials at chart-fetch time from environment variables (Helm 3 honors ``HELM_REGISTRY_USERNAME`` / ``HELM_REGISTRY_PASSWORD`` for OCI registries) and keep ``Chart.yaml`` clean.
+* For pure HTTPS chart repos, switch to OCI (``repository: oci://<registry>/<repo>``). OCI registries use the standard Docker credential helper chain, so credentials live in ``~/.docker/config.json`` or a managed credential helper, never in Chart.yaml.
+
+Credentials embedded in a committed ``Chart.yaml`` lock the password into git history. Rotation requires consumer-side updates *plus* history scrub before the leaked credential stops being useful to an attacker.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--medium" markdown>
+
+## HELM-012: Chart marked deprecated without naming a successor { #helm-012 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--medium">MEDIUM</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--esf">ESF-S-VERIFY-DEPS</span> <span class="pg-tag pg-tag--cwe">CWE-1104</span> <span class="pg-tag pg-tag--cwe">CWE-1357</span>
+</div>
+
+Reads ``Chart.yaml`` and fires on charts where ``deprecated: true`` is set AND none of the following successor-signal fields are populated:
+
+* ``home:`` (non-empty URL)
+* ``sources:`` (non-empty list of URLs)
+* annotations matching keys ``deprecation-guide``, ``migration-guide``, ``replacement``, ``successor``, ``replaced-by`` (case-insensitive substring match)
+
+Charts that are deprecated but still maintained (a security-fix-only mode) should populate ``home:`` with the maintenance policy URL so the rule passes.
+
+**Known false-positive modes**
+
+- Internal libraries that go through a 'soft-deprecation' phase before the successor lands sometimes mark ``deprecated: true`` without a successor name in the interim. The rule still fires; suppress per chart with a one-line rationale and a TODO to add the successor annotation when the replacement is ready.
+
+**Seen in the wild**
+
+- Long-running pattern in the Bitnami / community-charts ecosystem: a chart is marked deprecated, the maintainer moves on, consumers continue installing the deprecated version for years without knowing the replacement exists. The successor annotation (or a populated ``home:`` URL) closes the discovery gap.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+When marking a chart ``deprecated: true``, point consumers at the replacement. The two stable patterns are:
+
+* Set ``sources:`` to the successor repo URL and update ``home:`` to point at the migration guide:
+
+    deprecated: true
+    sources:
+      - https://github.com/example/myapp-chart-v2
+    home: https://example.com/docs/myapp-chart-migration
+
+* Add an explicit migration annotation:
+
+    annotations:
+      "helm.sh/migration-guide": "https://example.com/myapp-v2-migration"
+      "helm.sh/replacement": "corp-charts/myapp-v2"
+
+A deprecation flag without a successor strands every consumer at the deprecated version. Without active maintenance, security patches don't roll out; consumers either get stuck running known-vulnerable software or have to discover the replacement chart through ad-hoc channels (Slack, GitHub issues, internal wikis) that scale poorly across teams.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--medium" markdown>
+
+## HELM-013: Chart.yaml type field set to an invalid value { #helm-013 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--medium">MEDIUM</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--esf">ESF-S-VERIFY-DEPS</span> <span class="pg-tag pg-tag--cwe">CWE-1357</span>
+</div>
+
+Reads ``Chart.yaml`` ``type:`` and fires when the field is present but set to a value other than ``application`` / ``library`` (the two values defined by the Helm 3 chart schema; any other value is ignored by Helm at install time, the silent-failure mode the rule catches). A *missing* ``type:`` passes: Helm 3 defaults it to ``application``, so omitting it is legitimate and common.
+
+Helm 2 charts (``apiVersion: v1``) are skipped, the ``type:`` field doesn't exist in v1 and HELM-001 already catches the v1 shape.
+
+**Known false-positive modes**
+
+- Some chart-generation tools (early ``helm create`` templates, third-party scaffolders) omit ``type:`` deliberately to defer to Helm's default. The rule still fires; suppress per chart with a rationale, or — better — add the explicit ``type: application`` line.
+
+**Seen in the wild**
+
+- Common refactoring drift: a chart originally written as an ``application`` has its templates pulled out and the ``type:`` forgotten. ``helm install`` against the library-shaped result fails with a cryptic error that doesn't immediately point at the missing type declaration; the chart's review process didn't catch the change because no schema rule was in place.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Set ``type:`` to either ``application`` (the default for deployable charts) or ``library`` (for charts shipped as named templates other charts ``import``). Helm 3 treats missing ``type`` as ``application``, which is permissive but leaves the chart's purpose ambiguous at audit time. An explicit declaration:
+
+* Makes ``helm install`` reject library charts at install time (they have no templates that produce manifests).
+* Documents the chart's role for consumers reviewing ``helm search`` output.
+* Catches accidental templates added to a library chart during refactor (the install-time rejection surfaces the mistake).
+
+Example:
+
+    apiVersion: v2
+    name: myapp
+    version: 1.0.0
+    type: application   # or 'library' for template-only
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## HELM-014: Chart dependency matches a known-compromised chart registry { #helm-014 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-7</span> <span class="pg-tag pg-tag--esf">ESF-S-VERIFY-DEPS</span> <span class="pg-tag pg-tag--cwe">CWE-1357</span> <span class="pg-tag pg-tag--cwe">CWE-829</span>
+</div>
+
+Reads the curated registry under ``pipeline_check.core.checks.helm._compromised_charts`` (table of ``(chart_name, malicious_versions, advisory)`` entries) and fires when any ``Chart.yaml`` dependency matches. Registry is hand-curated and append-only; adding an entry is a one-line table edit plus the citing advisory in the commit message.
+
+Mirrors NPM-006 / PYPI-006 / MVN-006 / NUGET-005 / GOMOD-006 / CARGO-006: the rule fires on exact-version equality (with optional regex-fallback patterns shared via ``_primitives/compromised.py``). Coverage is necessarily incomplete; the value is the audit-trail-locked post-incident detection of a published advisory.
+
+**Known false-positive modes**
+
+- Patched fork-and-pin remediation paths sometimes legitimately leave the original chart name pinned at an affected version (with the actual install pointing at a fork). The rule still fires on the Chart.yaml entry; suppress per dependency with a one-line rationale naming the fork and the advisory the patch covers.
+
+**Seen in the wild**
+
+- Future entries follow the same shape as the seeded examples: append ``(chart_name, version, advisory)`` to _compromised_charts.py with the citing advisory in the commit message. Real entries land when public Helm-chart advisories surface.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Bump the offending dependency to a patched version named in the cited advisory and run ``helm dependency update`` to refresh ``Chart.lock`` with the new digests. If the advisory has no patched release, pin to the last known-good version and add a follow-up TODO so the dependency is replaced or removed in the next maintenance cycle. After the bump, re-run the scan; HELM-014 should clear. If the rule still fires, an indirect subchart is pulling the bad version back in; inspect ``Chart.lock`` for the dependency path.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## HELM-015: OCI chart dependency pinned only by a mutable tag { #helm-015 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-3</span> <span class="pg-tag pg-tag--esf">ESF-S-PIN-DEPS</span> <span class="pg-tag pg-tag--esf">ESF-S-VERIFY-DEPS</span> <span class="pg-tag pg-tag--cwe">CWE-353</span> <span class="pg-tag pg-tag--cwe">CWE-494</span>
+</div>
+
+Fires on a v2-chart dependency whose ``repository`` is an ``oci://`` URL that is bound only by a mutable tag: its ``version`` is not a ``sha256:`` digest AND no valid ``sha256`` ``digest`` for it exists in ``Chart.lock``.
+
+Sharpens HELM-003 (which accepts every ``oci://`` repo unconditionally on the transport axis) and complements HELM-002 / HELM-004: HELM-004 flags a floating SemVer range and HELM-002 flags a missing lockfile digest for any dependency, while this rule is the OCI-specific, HIGH-severity signal that an OCI tag, even an exact one, is registry-mutable until a digest binds the content. Reuses HELM-002's digest-shape helper; no new plumbing.
+
+**Known false-positive modes**
+
+- A chart that already commits a ``Chart.lock`` with a sha256 digest for the dependency passes (the content is bound). A development chart pulling an internal OCI chart from a trusted registry may accept the lower assurance; suppress per dependency with a rationale, but the durable fix is a committed Chart.lock digest.
+
+**Seen in the wild**
+
+- Mutable-reference supply-chain class: an OCI tag re-pushed to point at different chart content after the reference was audited, the Helm-registry analog of the mutable container-image-tag problem the K8s / OCI rules flag.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Bind every ``oci://`` chart dependency to immutable content. An OCI registry tag (the ``version:`` of an ``oci://`` dependency) is mutable: the registry can serve different chart bytes under the same ``name`` + ``version`` at any time, unlike a classic chart-museum ``index.yaml`` entry. Commit a ``Chart.lock`` whose entry for this dependency carries a ``sha256:`` ``digest`` (run ``helm dependency update``), so ``helm dependency build`` verifies the pulled archive against a fixed hash. An exact SemVer (HELM-004) is necessary but not sufficient for OCI: the tag is still rewritable until a digest binds it.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## HELM-016: values.yaml ships a default secret or credential { #helm-016 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-6</span> <span class="pg-tag pg-tag--esf">ESF-D-SECRETS</span> <span class="pg-tag pg-tag--cwe">CWE-798</span> <span class="pg-tag pg-tag--cwe">CWE-258</span>
+</div>
+
+Walks the chart's ``values.yaml`` and fires when a secret-named key (``password`` / ``passwd`` / ``passphrase`` suffixes, or ``token`` / ``apiKey`` / ``secretKey`` / ``privateKey`` / ``accessKey`` / ``clientSecret``) carries a non-empty, non-placeholder literal value. Reference-style keys (``existingSecret``, ``secretName``, ``*KeyRef``) are skipped, as are empty defaults, template / env interpolations (``{{ ... }}`` / ``${...}``), ``<placeholder>`` forms, and common dummy values (``changeme``, ``password``, ``example`` …).
+
+Catches what the K8s render pass misses: when the value is consumed via ``{{ .Values.x | b64enc }}`` into a Secret, the secret material lives in the chart defaults, not the rendered manifest a Secret-detection rule would inspect.
+
+**Known false-positive modes**
+
+- A chart that defaults the key to an empty string (the operator must supply the real value) passes. A clearly-marked placeholder that matches the dummy-value list also passes. If a chart genuinely ships a throwaway credential for a local-only demo, suppress per chart with a rationale; production charts should default secrets to empty.
+
+**Seen in the wild**
+
+- Default-credential class (CWE-798 / CWE-1392): shipped charts and images that install with a known baked-in password are a recurring breach vector, the attacker reads the published default and walks in.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Never ship a real password / token / key as a chart default. A credential baked into ``values.yaml`` installs into the cluster on a plain ``helm install`` (the rendered Secret carries it verbatim), and because the chart is committed and often published, the value leaks to every consumer and lives in git history indefinitely. Default the key to an empty string and require the operator to supply it (``--set`` / a values override / a sealed Secret), or reference an out-of-band Secret via an ``existingSecret`` pattern. If a value must ship, make it a clearly-marked placeholder the chart refuses to run with.
+
+</div>
+
+</div>
+
+<div class="pg-rule pg-rule--high" markdown>
+
+## HELM-017: Template renders an untrusted value through tpl { #helm-017 }
+
+<div class="pg-rule__tags">
+<span class="pg-sev pg-sev--high">HIGH</span> <span class="pg-tag pg-tag--owasp">CICD-SEC-4</span> <span class="pg-tag pg-tag--esf">ESF-S-VERIFY-DEPS</span> <span class="pg-tag pg-tag--cwe">CWE-1336</span> <span class="pg-tag pg-tag--cwe">CWE-94</span>
+</div>
+
+Scans each chart's ``templates/`` files for a Go-template action that calls ``tpl`` on a ``.Values`` expression (``{{ tpl .Values.x . }}``, ``{{ tpl (printf ... .Values.x) . }}``, etc.). ``tpl`` of a constant string literal or a non-``.Values`` expression is not flagged.
+
+A chart SSTI sink the K8s render pass can't see: by the time ``helm template`` has run, the injection has already been evaluated, so the risk is only visible in the unrendered template source this rule reads.
+
+**Known false-positive modes**
+
+- A chart that uses ``tpl`` on a value it fully controls (a constant default the operator is not expected to override) is lower risk. The rule still flags it because the ``.Values`` indirection makes the value override-able; suppress per template with a rationale once you've confirmed the value can't carry attacker input.
+
+**Seen in the wild**
+
+- Helm chart SSTI class: passing operator-supplied values through ``tpl`` lets a values override inject template logic that exfiltrates other rendered values (including secrets) or reshapes the manifest, the chart-template analog of server-side template injection.
+
+<div class="pg-rule__rec" markdown>
+
+**Recommended action**
+
+Don't pass a ``.Values``-derived string through ``tpl``. ``{{ tpl .Values.x . }}`` re-evaluates the value as a Go template with the full chart context, so any operator (or anyone who can influence the values supplied at install time) who sets ``x`` to a template expression gets it executed: a server-side template-injection sink that can read other ``.Values`` (including rendered secrets), call template functions, and shape arbitrary manifest output. Render the value as plain data instead (``{{ .Values.x }}`` with the appropriate quoting / ``toYaml``), or, if dynamic templating is genuinely required, restrict it to a chart-internal constant string, never a user-supplied value.
 
 </div>
 

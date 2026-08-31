@@ -87,8 +87,12 @@ PAIRS: list[tuple[str, str]] = [
     ("minimising", "minimizing"),
     ("modelled", "modeled"),
     ("modelling", "modeling"),
+    ("neighbour", "neighbor"),
+    ("neighbours", "neighbors"),
+    ("neighbouring", "neighboring"),
     ("normalise", "normalize"),
     ("normalised", "normalized"),
+    ("normalises", "normalizes"),
     ("normalising", "normalizing"),
     ("normalisation", "normalization"),
     ("offence", "offense"),
@@ -99,8 +103,15 @@ PAIRS: list[tuple[str, str]] = [
     ("organised", "organized"),
     ("organising", "organizing"),
     ("organisation", "organization"),
+    ("organisations", "organizations"),
+    ("organisational", "organizational"),
     ("parametrise", "parameterize"),
     ("parametrised", "parameterized"),
+    ("parameterise", "parameterize"),
+    ("parameterised", "parameterized"),
+    ("parameterises", "parameterizes"),
+    ("parameterising", "parameterizing"),
+    ("unparameterised", "unparameterized"),
     ("penalise", "penalize"),
     ("penalised", "penalized"),
     ("practise", "practice"),
@@ -121,6 +132,13 @@ PAIRS: list[tuple[str, str]] = [
     ("authorisation", "authorization"),
     ("authorisations", "authorizations"),
     ("rumour", "rumor"),
+    ("sanitise", "sanitize"),
+    ("sanitised", "sanitized"),
+    ("sanitises", "sanitizes"),
+    ("sanitiser", "sanitizer"),
+    ("sanitisers", "sanitizers"),
+    ("sanitising", "sanitizing"),
+    ("sanitisation", "sanitization"),
     ("serialise", "serialize"),
     ("serialised", "serialized"),
     ("signalled", "signaled"),
@@ -129,6 +147,21 @@ PAIRS: list[tuple[str, str]] = [
     ("summarised", "summarized"),
     ("synchronise", "synchronize"),
     ("synchronised", "synchronized"),
+    ("tokenise", "tokenize"),
+    ("tokenised", "tokenized"),
+    ("tokenises", "tokenizes"),
+    ("tokeniser", "tokenizer"),
+    ("tokenisers", "tokenizers"),
+    ("tokenising", "tokenizing"),
+    ("tokenisation", "tokenization"),
+    ("generalise", "generalize"),
+    ("generalised", "generalized"),
+    ("generalises", "generalizes"),
+    ("generalising", "generalizing"),
+    ("specialise", "specialize"),
+    ("specialised", "specialized"),
+    ("specialises", "specializes"),
+    ("specialising", "specializing"),
     ("travelling", "traveling"),
     ("utilise", "utilize"),
     ("utilised", "utilized"),
@@ -139,6 +172,21 @@ PAIRS: list[tuple[str, str]] = [
     ("forwards", "forward"),
     ("upwards", "upward"),
     ("downwards", "downward"),
+    # Stems a 2026-06-05 review found in source/docs that the
+    # boundary-anchored forms above missed (e.g. ``catalogue`` was
+    # listed but ``catalogued`` was not).
+    ("catalogued", "cataloged"),
+    ("flavoured", "flavored"),
+    ("serialising", "serializing"),
+    ("finalise", "finalize"),
+    ("finalised", "finalized"),
+    ("finalising", "finalizing"),
+    ("fulfil", "fulfill"),
+    ("fulfils", "fulfills"),
+    ("fulfilment", "fulfillment"),
+    ("neutralise", "neutralize"),
+    ("neutralised", "neutralized"),
+    ("neutralising", "neutralizing"),
 ]
 
 # Files exempt from the scan. Both files intentionally carry the
@@ -174,23 +222,85 @@ def _scan_files() -> list[Path]:
     return out
 
 
-@pytest.mark.parametrize("british,american", PAIRS)
-def test_no_british_spelling(british: str, american: str):
-    """Fail if any tracked source or doc file uses the *british* form."""
-    pattern = re.compile(rf"\b{re.escape(british)}\b", re.IGNORECASE)
-    offenders: list[str] = []
+# One alternation over every British form, whole-word and
+# case-insensitive. Scanning the corpus once with this and bucketing
+# each hit by the form it matched is equivalent to running each pair's
+# ``\bform\b`` scan independently (the ``\b`` anchors make the
+# alternation order-independent: a shorter prefix form fails its
+# trailing boundary when a longer form is present). That equivalence is
+# pinned by ``test_combined_scan_matches_naive``. The win: one pass over
+# ~2,600 files instead of one pass per pair (~160x fewer scans), which
+# is the dominant cost in the meta-test slice.
+_COMBINED_RE = re.compile(
+    r"\b(?:" + "|".join(re.escape(b) for b, _ in PAIRS) + r")\b",
+    re.IGNORECASE,
+)
+
+
+def _british_offenders(
+    texts: list[tuple[str, str]],
+) -> dict[str, list[str]]:
+    """Bucket every British-form hit across *texts* by the lower-cased
+    form it matched. *texts* is a list of ``(label, text)`` pairs."""
+    buckets: dict[str, list[str]] = {b: [] for b, _ in PAIRS}
+    for label, text in texts:
+        for m in _COMBINED_RE.finditer(text):
+            key = m.group(0).lower()
+            line_no = text.count("\n", 0, m.start()) + 1
+            buckets.setdefault(key, []).append(
+                f"{label}:{line_no}: '{m.group(0)}'"
+            )
+    return buckets
+
+
+@pytest.fixture(scope="module")
+def repo_offenders() -> dict[str, list[str]]:
+    """Scan every in-scope file once, returning offenders bucketed by
+    British form. Computed once and shared across all ~160 parametrized
+    cases (without this the test re-walked the tree and re-read every
+    file per pair, the dominant cost in the meta-test slice)."""
+    texts: list[tuple[str, str]] = []
     for p in _scan_files():
         try:
-            text = p.read_text(encoding="utf-8")
+            texts.append((str(p.relative_to(REPO)), p.read_text(encoding="utf-8")))
         except (OSError, UnicodeDecodeError):
             continue
-        for m in pattern.finditer(text):
-            line_no = text.count("\n", 0, m.start()) + 1
-            rel = p.relative_to(REPO)
-            offenders.append(f"{rel}:{line_no}: '{m.group(0)}'")
+    return _british_offenders(texts)
+
+
+@pytest.mark.parametrize("british,american", PAIRS)
+def test_no_british_spelling(
+    british: str, american: str, repo_offenders: dict[str, list[str]]
+):
+    """Fail if any tracked source or doc file uses the *british* form."""
+    offenders = repo_offenders.get(british, [])
     assert not offenders, (
         f"\nFound {len(offenders)} use(s) of British '{british}'. "
         f"Use '{american}' instead (see CLAUDE.md). Offenders:\n  "
         + "\n  ".join(offenders[:20])
         + ("\n  ..." if len(offenders) > 20 else "")
     )
+
+
+def test_combined_scan_matches_naive():
+    """The single-pass combined scan must match a naive per-pair scan.
+
+    Guards the optimization in ``_british_offenders`` against the
+    tricky prefix families (analyse / analysed / analyses / analyser,
+    centre / centred, colour / coloured / colours) and mixed case.
+    """
+    corpus = [
+        ("a.py", "We analyse, we analysed, and we keep analysing analyses."),
+        ("b.md", "An analyser centred in the centre, coloured grey."),
+        ("c.txt", "Colour and colours and behaviour vs Behaviour."),
+        ("d.py", "towards the centre; finalise and finalised the catalogue."),
+        ("e.md", "no british here, just plain ascii text and numbers 123."),
+    ]
+    naive: dict[str, list[str]] = {b: [] for b, _ in PAIRS}
+    for label, text in corpus:
+        for british, _ in PAIRS:
+            pat = re.compile(rf"\b{re.escape(british)}\b", re.IGNORECASE)
+            for m in pat.finditer(text):
+                line_no = text.count("\n", 0, m.start()) + 1
+                naive[british].append(f"{label}:{line_no}: '{m.group(0)}'")
+    assert _british_offenders(corpus) == naive

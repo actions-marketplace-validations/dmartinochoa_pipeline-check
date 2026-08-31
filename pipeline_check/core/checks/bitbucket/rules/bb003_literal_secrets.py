@@ -6,7 +6,7 @@ from typing import Any
 from ...base import Finding, Severity
 from ...rule import Rule
 from ..base import iter_steps
-from ._helpers import AWS_KEY_RE, SECRETISH_KEY_RE
+from ._helpers import SECRETISH_KEY_RE, aws_key_in, is_placeholder_value
 
 RULE = Rule(
     id="BB-003",
@@ -27,6 +27,33 @@ RULE = Rule(
         "VALUE is a literal string. AWS access keys are detected by "
         "value shape regardless of key name."
     ),
+    exploit_example=(
+        "# Vulnerable: literal AWS access key in\n"
+        "# ``definitions.variables``. The ``bitbucket-pipelines.yml``\n"
+        "# is committed to git; the build log echoes the value on\n"
+        "# any step that prints env vars.\n"
+        "definitions:\n"
+        "  variables:\n"
+        "    AWS_ACCESS_KEY_ID: AKIAZ3MHALF2TESTHIJK\n"
+        "    AWS_SECRET_ACCESS_KEY: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n"
+        "pipelines:\n"
+        "  default:\n"
+        "    - step:\n"
+        "        script:\n"
+        "          - aws s3 cp ./build s3://bucket/\n"
+        "\n"
+        "# Safe: store the credentials as Repository / Workspace\n"
+        "# variables marked ``secured`` in Bitbucket Settings.\n"
+        "# The pipeline file references the env names; the values\n"
+        "# resolve at runtime and are masked in logs.\n"
+        "pipelines:\n"
+        "  default:\n"
+        "    - step:\n"
+        "        script:\n"
+        "          # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY are\n"
+        "          # configured as Repository Variables (secured)\n"
+        "          - aws s3 cp ./build s3://bucket/"
+    ),
 )
 
 
@@ -39,9 +66,13 @@ def check(path: str, doc: dict[str, Any]) -> Finding:
         for key, value in varmap.items():
             if not isinstance(key, str) or not isinstance(value, str):
                 continue
-            if AWS_KEY_RE.search(value):
+            if aws_key_in(value):
                 offenders.append(f"{where}.{key} (AWS access key)")
-            elif SECRETISH_KEY_RE.search(key) and value and "$" not in value:
+            elif (
+                SECRETISH_KEY_RE.search(key)
+                and value and "$" not in value
+                and not is_placeholder_value(value)
+            ):
                 offenders.append(f"{where}.{key}")
 
     defs = doc.get("definitions")

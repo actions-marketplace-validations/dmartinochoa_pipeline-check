@@ -19,10 +19,15 @@ from ..base import iter_workflow_jobs
 #: workflow-binding layer. Detection signal is intentionally name-
 #: based, every common AWS / Azure / GCP CircleCI orb uses one of
 #: these conventions and the parameter shape is stable.
+#: Both hyphenated and underscore forms are listed; orbs accept either.
 _OIDC_ROLE_PARAMS = (
+    "role-arn",
     "role_arn",
+    "aws-role-arn",
     "aws_role_arn",
+    "oidc-role-arn",
     "oidc_role_arn",
+    "aws-oidc-role-arn",
     "aws_oidc_role_arn",
 )
 
@@ -94,6 +99,41 @@ RULE = Rule(
         "and is HIGH because role-bound credentials reach further "
         "than the project-scoped secrets in a context."
     ),
+    exploit_example=(
+        "# Vulnerable: ``aws-cli/oidc-assume-role`` runs from a\n"
+        "# job with no branch filter and no approval gate. The\n"
+        "# AWS trust policy on the assumed role accepts any OIDC\n"
+        "# token from the project, including tokens minted by\n"
+        "# PR builds. A fork-PR build assumes the prod role and\n"
+        "# does whatever the role permits.\n"
+        "version: 2.1\n"
+        "orbs:\n"
+        "  aws-cli: circleci/aws-cli@4.1.3\n"
+        "workflows:\n"
+        "  deploy:\n"
+        "    jobs:\n"
+        "      - aws-cli/oidc-assume-role:\n"
+        "          role-arn: arn:aws:iam::123:role/prod-deploy\n"
+        "          # no branch filter, no approval gate\n"
+        "\n"
+        "# Safe: branch-filter to ``main`` (or the release\n"
+        "# branches you trust) AND add a hold step requiring\n"
+        "# human approval. The OIDC token mint is now gated\n"
+        "# behind both source-branch and human gates.\n"
+        "version: 2.1\n"
+        "orbs:\n"
+        "  aws-cli: circleci/aws-cli@4.1.3\n"
+        "workflows:\n"
+        "  deploy:\n"
+        "    jobs:\n"
+        "      - hold:\n"
+        "          type: approval\n"
+        "          filters: { branches: { only: main } }\n"
+        "      - aws-cli/oidc-assume-role:\n"
+        "          requires: [hold]\n"
+        "          role-arn: arn:aws:iam::123:role/prod-deploy\n"
+        "          filters: { branches: { only: main } }"
+    ),
 )
 
 
@@ -101,6 +141,10 @@ def check(path: str, doc: dict[str, Any]) -> Finding:
     offenders: list[str] = []
     approvals_by_workflow: dict[str, set[str]] = {}
     for wf_name, job_name, job_cfg in iter_workflow_jobs(doc):
+        # An approval job executes no steps, so it can't assume a role
+        # (same carve-out CC-030 applies).
+        if job_cfg.get("type") == "approval":
+            continue
         if not _has_oidc_role_param(job_cfg):
             continue
         if _has_branch_filter(job_cfg):

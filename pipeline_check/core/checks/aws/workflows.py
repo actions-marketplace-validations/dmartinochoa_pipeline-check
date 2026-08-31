@@ -13,10 +13,13 @@ of every dependent rule emitting its own copy.
 """
 from __future__ import annotations
 
-import boto3
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import boto3
 
 from ..base import Finding, Severity
-from ..rule import apply_rule_metadata, discover_rules
+from ..rule import apply_rule_metadata, as_finding_list, discover_rules
 from ._catalog import ResourceCatalog
 from .base import AWSBaseCheck
 
@@ -144,8 +147,12 @@ class AWSRuleChecks(AWSBaseCheck):
         pending: list[tuple[str, list[Finding]]] = []
         for rule, check_fn in self._rules:
             try:
-                batch = check_fn(catalog) or []
-            except Exception as exc:  # noqa: BLE001
+                # ``_guard_check`` degrades a crashing rule to a single
+                # ``Finding``; normalize it (and the normal ``list``) so
+                # the ``for f in batch`` below can't raise on the lone
+                # finding and drop the whole provider.
+                batch = as_finding_list(check_fn(catalog))
+            except Exception as exc:
                 prefix = rule.id.split("-", 1)[0]
                 svc = _RULE_PREFIX_TO_SERVICE.get(prefix, prefix.lower())
                 catalog.errors.setdefault(svc, f"{type(exc).__name__}: {exc}")

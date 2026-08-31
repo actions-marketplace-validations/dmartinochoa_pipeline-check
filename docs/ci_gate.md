@@ -141,12 +141,17 @@ longer applies and the gate summary emits:
 [gate] ignore rule expired on 2026-06-30: GHA-001:.github/workflows/release.yml (no longer suppressing)
 ```
 
-Suppressions within 14 days of expiry surface an advance warning in
-the same place so the team schedules a revisit before the gate flips:
+Suppressions within the forewarning window (14 days by default) surface
+an advance warning in the same place so the team schedules a revisit
+before the gate flips:
 
 ```
 [gate] ignore rule expires in 5 days on 2026-06-30: GHA-001:.github/workflows/release.yml (still suppressing, but plan to revisit)
 ```
+
+Tune the window with `--warn-expiring-suppressions DAYS` (accepts `7` or
+`7d`; `0` or `off` disables the forewarning). Already-expired rules are
+always reported regardless of the window.
 
 This forces a review rather than letting suppressions rot silently.
 `reason` is free-form metadata for reviewers.
@@ -219,6 +224,49 @@ the policy declared without rewriting the YAML.
 When a policy loads, a `[policy] loaded '<name>' from <path>` line
 prints to stderr so the active profile is visible in CI logs.
 
+### Built-in packs
+
+Five curated packs ship with the tool, so the common gates work by
+name without authoring a file:
+
+| Pack | Gate | Standards focus |
+|------|------|-----------------|
+| `pr-gate` | fail on HIGH+ | full pack |
+| `release-gate` | fail on MEDIUM+, grade B+ | full pack |
+| `slsa-l3` | fail on HIGH+ | SLSA + OWASP CI/CD |
+| `pci-dss` | fail on HIGH+ | PCI DSS v4.0 + OWASP CI/CD |
+| `supply-chain-strict` | fail on MEDIUM+, grade B+, unpinned action (`GHA-001`) promoted to CRITICAL | OWASP CI/CD + SLSA + CIS Supply Chain + S2C2F |
+
+```bash
+pipeline_check --policy slsa-l3              # batteries-included SLSA gate
+pipeline_check --policy supply-chain-strict  # strict supply-chain gate
+```
+
+A local `./policies/<name>.yml` of the same name shadows the built-in,
+so a team can start from a pack and override it by dropping a file of
+the same name. The `standards` focus only narrows the compliance
+annotation on findings (the full rule pack still runs and scores), so a
+framework pack sharpens the evidence without reducing coverage.
+`--list-policies` shows the built-ins alongside any local files.
+
+### Shareable packs (path or URL)
+
+`--policy` also accepts a literal path or an `https://` URL, so an
+organization can publish one gate and have every repo consume it:
+
+```bash
+pipeline_check --policy ./gates/fintech-strict.yml          # explicit path
+pipeline_check --policy https://policies.acme.internal/pci.yml   # shared pack
+```
+
+A remote pack is fetched over HTTPS (redirects are pinned to HTTPS, the
+response is size-capped) and cached, so a later offline run still
+resolves the gate. A remote policy can only *configure* the gate
+(thresholds, rule / standards filters, severity overrides), never run
+code, but note it can also *weaken* the gate, the source URL is printed
+on the `[policy] loaded … from <url>` line so the choice is auditable in
+CI logs.
+
 ## Gate summary on stderr
 
 Unless `--output json` is active (stdout must stay clean), every run
@@ -286,6 +334,12 @@ everything in CI.
 - **`aws`**: rejected with a clear error. Live AWS resources aren't
   bound to git refs; narrow the scope with `--target NAME` instead.
 
+`--diff-base` answers "scan less" by trimming the file set on a
+single run. For the related "what *new* findings did this PR
+introduce vs. the base ref?" question, see
+[`--pr-diff`](pr_diff.md), which runs two scans (one per ref) and
+emits a Markdown delta report shaped for a PR-review comment.
+
 ## Baseline from a git ref: `--baseline-from-git REF:PATH`
 
 `--baseline` reads a JSON report from disk. When baselines are stored
@@ -314,7 +368,7 @@ pipeline_check --pipeline github --fix | git apply
 ```
 
 The tool never modifies files directly by default, review the patch,
-apply or discard. **111 fixers** are registered across every provider
+apply or discard. **120 fixers** are registered across every provider
 covering pinning, credential redaction, timeouts, TLS-bypass commenting,
 script-injection env-binding, Docker insecure flags, Kubernetes
 `securityContext`, and curl-pipe commenting. The full per-check matrix
@@ -371,10 +425,36 @@ pipeline_check --pipeline gitlab --checks 'GL-00[12]'
 
 Exact IDs (`--checks GHA-001`) still work unchanged.
 
+## Selecting checks: incident-driven worklist
+
+`--only-known-attacked` filters the rule set to rules whose detection
+shape is anchored to a documented real-world incident, CVE, or vendor
+disclosure (`Rule.incident_refs` non-empty, 225 rules today). Useful for
+burning down the incident-driven worklist on a fresh repo without the
+full pack noise.
+
+```bash
+# Only run rules with documented incidents
+pipeline_check --pipeline github --only-known-attacked
+```
+
+Composes with `--checks`: if both are set, the intersection runs.
+
+```bash
+# Known-attacked GHA-only rules
+pipeline_check --pipeline github --only-known-attacked --checks 'GHA-*'
+
+# Known-attacked rules from the secret-scanning family
+pipeline_check --pipeline github --only-known-attacked --checks '*-008'
+```
+
+If the intersection is empty, a stderr warning surfaces the situation
+rather than the scan silently producing no findings.
+
 ## Custom secret patterns
 
 The secret-scanning checks (`GHA-008`, `GL-008`, `BB-008`, `ADO-008`,
-`JF-008`, `CC-008`, `DR-004`, …) ship with **46 named vendor-token
+`JF-008`, `CC-008`, `DR-004`, …) ship with **49 named vendor-token
 detectors**. Sample of the catalog:
 
 | Detector              | Matches                                                          |
@@ -397,7 +477,7 @@ detectors**. Sample of the catalog:
 | `replicate_token`     | `r8_…` (40 trailing)                                             |
 | `asana_pat`           | `1/<account-id>:<32-hex>`                                        |
 | `square_access_token` | `sq0(atp\|csp)-…`                                                |
-| `…`                   | plus 28 more (Twilio, Mailchimp, Shopify, Databricks, HuggingFace, Linear, PlanetScale, New Relic, Grafana, Telegram, Atlassian, GitLab Runner / CI, Supabase, Fly, Pulumi, Doppler, Netlify, Railway, Render, Prefect, Neon, age, …) |
+| `…`                   | plus 31 more (Twilio, Mailchimp, Shopify, Databricks, HuggingFace, Linear, PlanetScale, New Relic, Grafana, Telegram, Atlassian, GitLab Runner / CI, Supabase, Fly, Pulumi, Doppler, Netlify, Railway, Render, Prefect, Neon, age, Postman, Tailscale, Sentry, …) |
 
 Plus a multi-line `private_key` detector that fires on any
 `-----BEGIN PRIVATE KEY-----` block (RSA, DSA, EC, OPENSSH, PGP, and
